@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { encodeWav } from "@unworklet/offline";
-import type { RenderOfflineResult } from "@unworklet/offline";
+import type { RenderResultLike } from "./index.ts";
 import { expect, test } from "vite-plus/test";
 
 const filled = (length: number, value: number): Float32Array => {
@@ -25,7 +25,7 @@ const filled = (length: number, value: number): Float32Array => {
   return a;
 };
 
-const monoResult = (channel: Float32Array, portName = "main"): RenderOfflineResult => ({
+const monoResult = (channel: Float32Array, portName = "main"): RenderResultLike => ({
   outputs: { [portName]: [channel] },
   events: [],
   state: new Uint8Array(0),
@@ -90,7 +90,7 @@ test("`toMatchEvents` (chain) happy = empty arrays match (= Phase 4 subset)", ()
 });
 
 test("`toMatchEvents` (chain) fail = length mismatch", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
     state: new Uint8Array(0),
@@ -104,7 +104,7 @@ test("`toMatchState` (chain) happy = empty blobs match (= Phase 4 subset)", () =
 });
 
 test("`toMatchState` (chain) fail = byte mismatch", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [],
     state: new Uint8Array([1, 2, 3]),
@@ -198,7 +198,7 @@ test("`toHaveDcOffsetUnder` (chain) happy + fail", () => {
 });
 
 test("`toHaveEventCount` (chain) happy + fail", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 0 }],
     state: new Uint8Array(0),
@@ -209,7 +209,7 @@ test("`toHaveEventCount` (chain) happy + fail", () => {
 });
 
 test("`toContainEvents` (chain) happy + fail", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [{ name: "peak", payload: {}, atSample: 10 }],
     state: new Uint8Array(0),
@@ -220,7 +220,7 @@ test("`toContainEvents` (chain) happy + fail", () => {
 });
 
 test("`toEmitMidi` (chain) happy + fail", () => {
-  const result: RenderOfflineResult = {
+  const result: RenderResultLike = {
     outputs: {},
     events: [
       {
@@ -237,7 +237,7 @@ test("`toEmitMidi` (chain) happy + fail", () => {
 });
 
 test("`toHaveBalancedMidi` (chain) happy + fail", () => {
-  const balanced: RenderOfflineResult = {
+  const balanced: RenderResultLike = {
     outputs: {},
     events: [
       {
@@ -255,7 +255,7 @@ test("`toHaveBalancedMidi` (chain) happy + fail", () => {
     sampleRate: 48000,
   };
   expect(balanced).toHaveBalancedMidi("out");
-  const hanging: RenderOfflineResult = {
+  const hanging: RenderResultLike = {
     outputs: {},
     events: [
       {
@@ -269,7 +269,7 @@ test("`toHaveBalancedMidi` (chain) happy + fail", () => {
   };
   expect(() => expect(hanging).toHaveBalancedMidi("out")).toThrow(/hanging/);
   // A stray noteOff always fails (same on the chain path).
-  const stray: RenderOfflineResult = {
+  const stray: RenderResultLike = {
     outputs: {},
     events: [
       {

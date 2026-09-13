@@ -165,21 +165,131 @@ function collectUsedCoreExports(node: ts.Node): Set<string> {
   return used;
 }
 
+/** The module an import declaration names, or undefined when it is not a literal. */
+function moduleSpecifierOf(decl: ts.ImportDeclaration): string | undefined {
+  const spec = decl.moduleSpecifier;
+  return ts.isStringLiteral(spec) ? spec.text : undefined;
+}
+
 /** The local binding names a user import introduces (default / namespace / named,
  * each as its in-scope alias). The injected core import drops these so a name the
  * user imports explicitly is never double-bound (e.g. `import { state }`). */
-function importBoundNames(imports: readonly ts.ImportDeclaration[]): Set<string> {
+function importBoundNames(
+  imports: readonly ts.ImportDeclaration[],
+  /**
+   * Skip the names a type-only import binds. Those carry no runtime value, so
+   * they cannot stand in for a binding the generated code calls — but they do
+   * occupy the name, which is why the reserved-binding check counts them.
+   */
+  options?: { valuesOnly?: boolean },
+): Set<string> {
   const names = new Set<string>();
   for (const decl of imports) {
     const clause = decl.importClause;
     if (clause === undefined) continue;
+    if (options?.valuesOnly === true && clause.isTypeOnly) continue;
     if (clause.name !== undefined) names.add(clause.name.text);
     const bindings = clause.namedBindings;
     if (bindings === undefined) continue;
     if (ts.isNamespaceImport(bindings)) {
       names.add(bindings.name.text);
     } else {
-      for (const el of bindings.elements) names.add(el.name.text);
+      for (const el of bindings.elements) {
+        if (options?.valuesOnly === true && el.isTypeOnly) continue;
+        names.add(el.name.text);
+      }
+    }
+  }
+  return names;
+}
+
+/**
+ * Names imported from the core module as VALUES under their own name — the only
+ * imports that can stand in for a binding the lowering generates. An alias
+ * (`{ defineProcessor as audioInput }`) binds a different export under the name,
+ * and a namespace or default import binds the module rather than the export.
+ */
+function unaliasedCoreValueImports(
+  imports: readonly ts.ImportDeclaration[],
+  coreModule: string,
+): Set<string> {
+  const names = new Set<string>();
+  for (const decl of imports) {
+    if (moduleSpecifierOf(decl) !== coreModule) continue;
+    const clause = decl.importClause;
+    if (clause === undefined || clause.isTypeOnly) continue;
+    const bindings = clause.namedBindings;
+    if (bindings === undefined || ts.isNamespaceImport(bindings)) continue;
+    for (const el of bindings.elements) {
+      if (el.isTypeOnly) continue;
+      if (el.propertyName !== undefined && el.propertyName.text !== el.name.text) continue;
+      names.add(el.name.text);
+    }
+  }
+  return names;
+}
+
+/** Every name a binding pattern introduces (`a`, `{ b }`, `[c, ...d]`). */
+function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    into.add(name.text);
+    return;
+  }
+  // ObjectBindingPattern | ArrayBindingPattern — array holes are
+  // OmittedExpression, not BindingElement, so they are skipped.
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) collectBindingNames(element.name, into);
+  }
+}
+
+/**
+ * `var` names declared anywhere inside `node`'s own body — `var` is scoped to
+ * the enclosing function, not the block it sits in, so `{ var input = 1; }` and
+ * a later `return input` are the same binding. Nested functions own theirs.
+ */
+function collectFunctionScopedVars(node: ts.Node, into: Set<string>): void {
+  const walk = (n: ts.Node): void => {
+    // A function, a class static block and a namespace each open their own
+    // `var` scope, so a `var` inside one is not the outer scope's.
+    if (
+      ts.isFunctionLike(n) ||
+      ts.isClassStaticBlockDeclaration(n) ||
+      ts.isModuleDeclaration(n) ||
+      ts.isModuleBlock(n)
+    ) {
+      return;
+    }
+    if (
+      ts.isVariableDeclarationList(n) &&
+      (n.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0
+    ) {
+      for (const d of n.declarations) {
+        collectBindingNames(d.name, into);
+      }
+    }
+    ts.forEachChild(n, walk);
+  };
+  ts.forEachChild(node, walk);
+}
+
+/** The names a statement list binds in the scope it belongs to. */
+function statementBoundNames(statements: readonly ts.Statement[]): Set<string> {
+  const names = new Set<string>();
+  for (const stmt of statements) {
+    if (ts.isVariableStatement(stmt)) {
+      for (const d of stmt.declarationList.declarations) collectBindingNames(d.name, names);
+    } else if (
+      (ts.isFunctionDeclaration(stmt) ||
+        ts.isClassDeclaration(stmt) ||
+        ts.isEnumDeclaration(stmt) ||
+        ts.isModuleDeclaration(stmt) ||
+        // `import helper = Source.helper` binds `helper` here the way an
+        // ordinary import binds it at module scope.
+        ts.isImportEqualsDeclaration(stmt)) &&
+      stmt.name !== undefined &&
+      ts.isIdentifier(stmt.name)
+    ) {
+      names.add(stmt.name.text);
     }
   }
   return names;
@@ -395,7 +505,8 @@ export function lower(source: string, options: LowerOptions = {}): string {
       );
     }
     const used = collectUsedCoreExports(sf);
-    for (const name of importBoundNames(userImports)) used.delete(name);
+    for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
+    for (const name of statementBoundNames(declarations)) used.delete(name);
     const importDecl = makeCoreImport([...used].sort(), coreModule);
     const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, ...declarations]);
     const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
@@ -408,31 +519,20 @@ export function lower(source: string, options: LowerOptions = {}): string {
     );
   }
 
+  if (declarations.some(isExportedStatement)) {
+    throw new LowerError(
+      "uwk-export-unsupported",
+      "A processor .uwk.ts with process() cannot contain authored module exports. " +
+        "Move shared values and types to a separate shared module and import them into the processor. " +
+        "A library-only .uwk.ts without process() can export values and types.",
+    );
+  }
+
   // Reject options() / migrations() that reference a processor-body binding: the
   // declarations are moved into the defineProcessor callback, but the options
   // argument is attached outside it, so such a reference would be out of scope at
   // module evaluation. (Reported by @codex on #12.)
-  const bodyBindings = new Set<string>();
-  const collectBindingNames = (name: ts.BindingName): void => {
-    if (ts.isIdentifier(name)) {
-      bodyBindings.add(name.text);
-      return;
-    }
-    // ObjectBindingPattern | ArrayBindingPattern — recurse into each element
-    // (array holes are OmittedExpression, not BindingElement, so they are skipped).
-    for (const el of name.elements) {
-      if (ts.isBindingElement(el)) collectBindingNames(el.name);
-    }
-  };
-  for (const decl of declarations) {
-    if (ts.isVariableStatement(decl)) {
-      for (const d of decl.declarationList.declarations) collectBindingNames(d.name);
-    } else if (ts.isFunctionDeclaration(decl) && decl.name !== undefined) {
-      bodyBindings.add(decl.name.text);
-    } else if (ts.isClassDeclaration(decl) && decl.name !== undefined) {
-      bodyBindings.add(decl.name.text);
-    }
-  }
+  const bodyBindings = statementBoundNames(declarations);
   const optionRefs = (expr: ts.Expression | undefined): string[] => {
     if (expr === undefined) return [];
     const hits = new Set<string>();
@@ -467,6 +567,53 @@ export function lower(source: string, options: LowerOptions = {}): string {
   }
   const allDeclarations = [...ambient, ...declarations];
 
+  // The lowering writes code of its own: the `defineProcessor` wrapper, and —
+  // when the file declares no audio I/O — the ambient `input` / `out` and the
+  // factories they call. A file that binds one of those names would have the
+  // generated code resolve to ITS binding, exporting something that is not a
+  // processor or wiring I/O that is not the DSL's. Refuse instead: the name is
+  // only reserved when the lowering is actually about to generate it, so
+  // `const out = audioOutput(...)` — which suppresses the injection — is
+  // unaffected.
+  const generatedBindings = new Set<string>(["defineProcessor"]);
+  if (needInput) {
+    generatedBindings.add("input");
+    generatedBindings.add("audioInput");
+  }
+  if (needOutput) {
+    generatedBindings.add("out");
+    generatedBindings.add("audioOutput");
+  }
+  // Any local binding of a generated name collides — a declaration, an import
+  // from elsewhere, or a type-only import (erased, so it supplies no value, yet
+  // it still occupies the name beside the injected import). The one exception
+  // is a VALUE import of the same name from the core: that is the very binding
+  // the generated code wants, and the injected import stands down for it.
+  // That exemption requires the local name and the imported export to be the
+  // SAME: `{ defineProcessor as audioInput }` binds `audioInput` to the wrong
+  // factory, and the ambient declaration would call it.
+  const coreValueImports = unaliasedCoreValueImports(userImports, coreModule);
+  const boundHere = statementBoundNames(declarations);
+  // A `var` nested in a control statement binds at module scope and, once the
+  // statement moves into the callback, shadows the injected import there.
+  for (const stmt of declarations) {
+    if (ts.isFunctionLike(stmt)) continue;
+    collectFunctionScopedVars(stmt, boundHere);
+  }
+  for (const name of importBoundNames(userImports)) {
+    if (!coreValueImports.has(name)) boundHere.add(name);
+  }
+  const reserved = [...generatedBindings].find((name) => boundHere.has(name));
+  if (reserved !== undefined) {
+    throw new LowerError(
+      "uwk-reserved-binding",
+      `\`${reserved}\` is generated by the lowering in this file, so binding that name here — ` +
+        `by declaration or by import from another module — would take its place. Rename it, or ` +
+        `import it under an alias. (The ambient \`input\` / \`out\` and their factories are only ` +
+        `generated when the file declares no audio I/O of its own.)`,
+    );
+  }
+
   const used = collectUsedCoreExports(sf);
   if (needInput) used.add("audioInput");
   if (needOutput) used.add("audioOutput");
@@ -474,7 +621,9 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // Drop any name the user imports explicitly so the injected core import never
   // double-binds it (their import provides it). This also strips the user
   // import's own specifier identifiers, which `collectUsedCoreExports` counts.
-  for (const name of importBoundNames(userImports)) used.delete(name);
+  for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
+  // A declaration inside the wrapper shadows the import for the whole body.
+  for (const name of statementBoundNames(declarations)) used.delete(name);
   const importDecl = makeCoreImport([...used].sort(), coreModule);
   const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
   const exported = makeDefineProcessor(

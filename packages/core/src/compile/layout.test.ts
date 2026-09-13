@@ -14,6 +14,110 @@ import type { CapturedGraph } from "./ast.ts";
 import { layout } from "./layout.ts";
 import type { Layout } from "./layout.ts";
 
+for (const kind of ["message", "event"] as const) {
+  for (const capacity of [16, 32, 256, 512, 16384]) {
+    test(`${kind} payload content reserves every declared ring slot (${capacity})`, () => {
+      const result = layout({
+        declarations: [
+          {
+            kind,
+            name: "upload",
+            capacity,
+            payloadCapacity: 9,
+            fields: [{ name: "samples", wireType: "i32", payloadElementType: "f64" }],
+          },
+        ],
+        statements: [],
+      });
+      const slots =
+        kind === "event"
+          ? result.regions.payloadContent.eventSlots
+          : result.regions.payloadContent.messageSlots;
+      const content = slots.upload!;
+      expect(content.chunks).toBe(capacity);
+      expect(content.capacity).toBe(capacity * 16);
+      expect(content.base % 8).toBe(0);
+    });
+  }
+}
+
+test("default typed payload capacity reserves 64 KiB for each of 256 slots", () => {
+  const result = layout({
+    declarations: [
+      {
+        kind: "message",
+        name: "upload",
+        capacity: 256,
+        fields: [{ name: "samples", wireType: "i32", payloadElementType: "f32" }],
+      },
+    ],
+    statements: [],
+  });
+  expect(result.regions.payloadContent.messageSlots.upload!.capacity).toBe(16 * 1024 * 1024);
+});
+
+test("scalar-only channels reserve no payload storage", () => {
+  const result = layout({
+    declarations: [
+      {
+        kind: "message",
+        name: "control",
+        capacity: 256,
+        fields: [{ name: "value", wireType: "f32" }],
+      },
+      { kind: "event", name: "meter", capacity: 256, fields: [{ name: "value", wireType: "f32" }] },
+    ],
+    statements: [],
+  });
+  expect(result.regions.payloadContent.eventSlots).toEqual({});
+  expect(result.regions.payloadContent.messageSlots).toEqual({});
+  expect(result.totalBytes).toBe(2 * 12 + 256 * (4 + 8));
+});
+
+test("typed payload regions align every element width following an odd-sized byte buffer", () => {
+  const result = layout({
+    declarations: [
+      { kind: "buffer", name: "bytes", type: "u8", size: 5 },
+      ...(["u8", "f32", "f64", "i64"] as const).map((type) => ({
+        kind: "event" as const,
+        name: type,
+        capacity: 32,
+        payloadCapacity: 9,
+        fields: [{ name: "data", wireType: "i32" as const, payloadElementType: type }],
+      })),
+    ],
+    statements: [],
+  });
+  const memory = new ArrayBuffer(result.totalBytes);
+  for (const [type, ctor] of [
+    ["u8", Uint8Array],
+    ["f32", Float32Array],
+    ["f64", Float64Array],
+    ["i64", BigInt64Array],
+  ] as const) {
+    const content = result.regions.payloadContent.eventSlots[type]!;
+    for (let slot = 0; slot < 32; slot++) {
+      const offset = content.base + (slot * content.capacity) / content.chunks;
+      expect(() => new ctor(memory, offset, 1)).not.toThrow();
+    }
+  }
+});
+
+for (const kind of ["midiInput", "midiOutput"] as const) {
+  test(`${kind} sysex content reserves all 512 declared slots`, () => {
+    const result = layout({
+      declarations: [{ kind, name: "midi", capacity: 512 }],
+      statements: [{ kind: "midiOnEvent", port: "midi", eventType: "sysex", body: [] }],
+    });
+    expect(result.regions.sysexContent.slots.midi).toEqual({
+      base: result.regions.sysexContent.base,
+      perChunk: 1024,
+      chunks: 512,
+    });
+    expect(result.totalBytes - result.regions.sysexContent.base).toBe(512 * 1024);
+  });
+}
+
 // The 9 regions not filled in Phase 3 share the same shape across all fixtures:
 // base = totalBytes. This helper builds that shape per fixture.
 const emptyTail = (

@@ -417,3 +417,34 @@ test("comments and whitespace between tokens are preserved verbatim", () => {
   expect(c).toContain("// keep me");
   expect(c).toContain("// trailing");
 });
+
+test.each(["emit", "emitIf"])("a shorthand state payload is read for %s", (method) => {
+  const args = method === "emitIf" ? "true, " : "";
+  const result = code(
+    mono(
+      'const peak = state.f32(0);\nconst ev = event<{ peak: number }>({ to: "main", name: "ev" });',
+      `ev.${method}(${args}{ atSample: i, peak });`,
+    ),
+  );
+  expect(result).toContain("peak: peak.read()");
+});
+
+test.each(["const copy = { peak };", "consume({ peak });", "logger.info({ peak });"])(
+  "a state shorthand outside an event payload remains an object value: %s",
+  (body) => {
+    const result = code(mono("const peak = state.f32(0);", body));
+    expect(result).toContain(body);
+    expect(result).not.toContain("peak: peak.read()");
+  },
+);
+
+test("a JavaScript-guarded event emit remains authored control flow", () => {
+  const result = code(
+    mono(
+      'const ev = event<{ level: number }>({ to: "main", name: "ev" });',
+      "if (true) ev.emit({ atSample: i, level: f32(1) });",
+    ),
+  );
+  expect(result).toContain("if (true) ev.emit(");
+  expect(result).not.toContain("emitIf");
+});

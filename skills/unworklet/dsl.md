@@ -1,4 +1,4 @@
-| `node.midi.<name>` | direction-narrowed: `{ from: "main" }` → `send(event, atTime?)` / `connectFromWebMIDI(input)` / `diagnostics`; `{ to: "main" }` → `onEvent(type, handler)` / `diagnostics`# unworklet — DSL / API reference
+# unworklet — DSL / API reference
 
 TypeScript-first declarative Audio Worklet DSP, compiled to WebAssembly. You
 declare ports/params/state and write a per-sample `process` body; the toolchain
@@ -10,7 +10,7 @@ Two authoring forms, **same compiled result**:
 - **`.uwk.ts` — the primary, recommended form.** No imports, no wrapper; infix
   operators and `x[i]` index sugar. The plugin _lowers_ it to a plain
   `@unworklet/core` module that makes the exact same DSL calls a hand-written
-  core processor makes, so it compiles byte-identically. — `packages/lang/src/lower.ts:310`
+  core processor makes, so it compiles byte-identically. — `lower()` in `packages/lang/src/lower.ts`
 - **`.processor.ts` — the explicit, lower-level alternative (§6).** Plain `.ts`
   with `defineProcessor` + method chains + explicit imports. Use it only for a
   surface `.uwk.ts` does not expose (e.g. SIMD).
@@ -48,16 +48,34 @@ Rules (all in `packages/lang/src/lower.ts`):
   into `export default defineProcessor((ctx) => { …decls; return { process } })`
   (or `export const <name> = …` when an export name is given). Zero `process` +
   no export → throws `uwk-empty`; more than one → `uwk-multiple-process`. —
-  `lower.ts:187,328,364,391`
+  `lower()` / `callbackBody()` in `lower.ts`
 - **DSL names are ambient — write no imports.** Lowering injects the
-  `@unworklet/core` import listing only the names actually used. — `lower.ts:138,457`
+  `@unworklet/core` import listing only the names actually used. — `collectUsedCoreExports()` in `lower.ts`
 - **Ambient stereo I/O is injected when omitted:** with no `audioInput`
   referenced, `const input = audioInput({ channels: 2, name: "input" })` is
-  added (same for `out`). An explicit declaration suppresses it. — `lower.ts:445`
+  added (same for `out`). An explicit declaration suppresses it. — `makeAudioDecl()` in `lower.ts`
 - **`ctx` is ambient** — it is the `defineProcessor((ctx) => …)` parameter, so
-  `ctx.sampleRate` reaches the host rate. — `lower.ts:207`
+  `ctx.sampleRate` reaches the host rate. — `makeDefineProcessor()` in `lower.ts`
 - **Your own `import`s survive** at module scope (shared consts, sibling
-  subgraph files). — `lower.ts:350`
+  subgraph files). Write relative imports WITH the file extension
+  (`./tables.ts`, not `./tables`): the build path evaluates processor modules
+  under Node ESM resolution, which demands explicit extensions — an
+  extensionless specifier fails the build (the error names the exact suffix to
+  add). — `lower()` in `lower.ts`
+- **A processor file cannot export additional declarations.** A `.uwk.ts`
+  containing `process()` rejects authored module-level exports with
+  `uwk-export-unsupported`, including values, types, default exports, and
+  re-exports. Put shared constants, types, and helpers in a separate `.ts` or
+  library-only `.uwk.ts` file and import them into the processor. A library-only
+  `.uwk.ts` has no `process()` and keeps its exports. The lowering does not move
+  declarations across statements or predict callbacks' effects. Expose runtime
+  DSP values through the processor surface (param / state / event).
+- **The names the lowering generates are reserved** — `defineProcessor` always,
+  and the ambient `input` / `out` plus `audioInput` / `audioOutput` when the
+  file declares no audio I/O of its own. Declaring one is
+  `uwk-reserved-binding`, because the generated code would resolve to your
+  binding instead. Declaring your own output (`const out = audioOutput({...})`)
+  suppresses the injection, so that canonical line is unaffected.
 - **Type-checking:** add `// @ts-nocheck` at the top, OR use the editor plugin /
   `unworklet-tsc` (see `ide-and-typecheck.md`). The `// @ts-nocheck` is needed _only_ without
   the editor plugin.
@@ -207,6 +225,19 @@ plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
 - A `Node<'bool'>` `if` outside the 3 shapes → `uwk-unsupported-if`; use `select`.
 - `migrations()` / `options()` are processor-only and cannot reference a
   process-body binding → `uwk-options-binding` / `uwk-options-without-process`.
+- `options({ id: "my-synth" })` sets the processor's stable IDENTITY (also
+  `defineProcessor(body, { id })` in `.processor.ts`). It is stamped into every
+  snapshot blob: `schemaHash` covers declarations only, so two different
+  processors with the same slot schema share a hash — without an id, a preset
+  from one restores "successfully" into the other and corrupts its state. When
+  both a blob and a processor carry an id, a mismatch makes `restore()` return
+  `{ ok: false, error: { step: "identity" } }` (stable ID `processor-mismatch`;
+  `renderOffline`'s `config.restore` throws instead — a cross-processor restore
+  in a test is a test bug). Id-less blobs and processors keep the legacy
+  hash-and-name matching. Set it for any processor whose presets you save, and
+  KEEP IT STABLE — renaming orphans saved blobs the way a schema change without
+  a migration does. `replaceProcessor` across two DIFFERENT ids refuses the
+  same way (its dev-flow use — reloading an edited processor — keeps one id).
 - **No SIMD in `.uwk.ts`** (only the `Node<"f32x4">` type alias exists). Use
   `.processor.ts` + `@unworklet/core/simd` (§6).
 
@@ -279,14 +310,31 @@ state.buffer.f32({ size: number }): Buffer<"f32">
 - Handle: `.read(i) → Node<T>`, `.write(i, v)`,
   `.readInterpolated(pos: Node<"f32"> | number) → Node<T>` (2-tap), order-free
   `.named(name)` / `.expose(options)`. — `declarations.ts:357,450,620`
-- Literal indexes are range-checked at graph-capture time; a `Node<"i32">` index
-  is the caller's responsibility.
-- **Default snapshot policy is `"transient"`** — the buffer is NOT captured by
-  `node.snapshot()` and is re-zeroed on `restore()`. A `state.buffer.f32({
-size }).named("tape")` on its own restores to silence, which surprises
-  delay / sampler / reverb authors expecting audio content to survive. Opt in
-  explicitly: `.expose({ snapshot: "persistent" })`. Same default (and same
-  opt-in) applies to scalar `state.<type>` (§Scalar state).
+- Literal indexes are range-checked at graph-capture time. A runtime
+  `Node<"i32">` index SATURATES to the buffer bounds — `[0, size-1]` for scalar
+  `read`/`write`, `[0, size-4]` for the 4-lane `loadVec`/`storeVec` — instead of
+  trapping or touching a neighboring region. Out-of-range reads return the
+  nearest element's value; wrap-around (a circular delay line) is still yours to
+  express with `% size`.
+- `loadVec` / `storeVec` require `size >= 4`. A lane window covers 4 elements,
+  so a smaller buffer has no in-bounds offset to saturate to — the declaration
+  rejects the call at capture (`simd-buffer-too-small`) rather than emit a
+  16-byte access that crosses into the next region.
+- Float buffer stores flush subnormals to `0` (|v| < 1e-30), the same policy as
+  scalar state stores — a decaying feedback tail (delay line / comb / reverb)
+  cannot park in the denormal range and spike the audio-thread CPU. Applies to
+  `write`, and lane-wise to `storeVec`.
+- Audio OUTPUT samples are scrubbed at the write: a NaN / ±Inf produced by the
+  DSP (`0/0`, `x/0`, runaway accumulator) is replaced with `0` instead of
+  propagating silence/clicks through the Web Audio graph downstream. Each
+  replacement is counted — read it as `renderOffline(...).diagnostics
+.scrubbedSamples` in tests (a healthy render reports `0`). The value itself is
+  unchanged inside expressions; only the output boundary scrubs.
+- **Buffers default to `"transient"`** and are omitted from snapshots. Use
+  `.expose({ snapshot: "persistent" })` to save their content. Named scalar
+  states default to `"persistent"`. Restoring on a running node does not clear
+  an omitted buffer; a fresh processor instance starts with its declared
+  initial content.
 - In `.uwk.ts`: `buf[i]` (read) / `buf[i] = v` (write).
 - Capacity sizes for messaging rings are the `CAPACITY_16` … `CAPACITY_16384`
   constants (values live at `packages/core/src/dsl/constants.ts:11-23`, re-exported
@@ -307,8 +355,12 @@ type ExposeOptions = {
 ```
 
 - `publish` is allowed only on `state.f32` / `state.i32` / `state.bool`, requires
-  a user-defined name, and `rateFps` must be positive finite. `snapshot:
-"persistent"` also requires a user-defined name. — `declarations.ts:229,240`
+  a user-defined name, and `rateFps` must be positive finite. On a BUFFER,
+  `publish` is rejected at graph capture (stable ID `buffer-publish-unsupported`;
+  the type surface `BufferExposeOptions` omits it too) — the publish pipeline is
+  scalar-only, so fan values out into scalar state slots to observe a buffer
+  live, or read it back via `node.snapshot()`. `snapshot: "persistent"` also
+  requires a user-defined name. — `declarations.ts:229,240`
 - A published slot is read on the main thread as `node.state.<name>` (§5).
 
 ### Events — `event<T>` (typed message ports)
@@ -329,11 +381,21 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   process body and the if-sugar (§2) rewrites it to `emitIf`. —
   `declarations.ts:951,955`
 - Main-thread side is `node.events.<name>` (§5). — `declarations.ts:828,1466`
-- Every outbound payload has an implicit `atSample: number` field the worklet
-  must fill in (the sample index within the current quantum). The type-checker
-  requires it and the runtime uses it for main-thread ordering:
-  `port.emitIf(cond, { atSample: i, ...userFields })`. In `forSample((i) =>
-…)` bodies, pass the loop's `i` as `atSample`.
+- Outbound `atSample` is optional. Omission uses the enclosing `forSample`
+  index, or zero at block level. Set it explicitly with
+  `port.emitIf(cond, { atSample: i, ...userFields })` when another offset is
+  intended. It is a sample index within the render quantum.
+- **Payload retention and memory:** each typed-array ring reserves one content
+  chunk per `capacity` slot. `payloadCapacity` is the byte budget for one
+  payload, rounded to its element alignment; the default is 65,536 bytes.
+  With default `capacity: 256`, this reserves 16 MiB of WASM content per typed
+  ring. Shared transport buffers, main-thread snapshots, and bounded input
+  staging use additional memory. Set `payloadCapacity` to the largest payload
+  you need, such as 512 bytes for 128 float samples. `capacity` controls queued
+  message count independently of payload length; variable-length payloads do
+  not share storage while retained. Payloads larger than their per-message
+  budget are truncated to that budget. The memory-budget diagnostic rejects
+  layouts beyond the WASM address-space limit without allocating them.
 - **Payload field wire types** — a declared `T = { foo: number; ... }`
   maps each `number` field to the **f32 wire** by default (that's what
   the worklet-side capture sees + what the main-thread type surfaces as
@@ -345,10 +407,10 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   the moment the field flows into a boolean position (a `boolean` state
   write, a `select` cond, a `not()`, an `emitIf` cond, etc.). Forwarding a
   field straight into another `emit` is not a boolean position: a field
-  that is only ever forwarded, never consumed, stays on the f32 wire on
-  both sides. That is harmless — it round-trips 0/1 unchanged — but if you
-  want the `bool` wire on a pass-through, consume it once (for example
-  `emitIf(f.on, ...)` or `select(f.on, a, b)`).
+  that is only forwarded stays on the f32 wire and arrives as numeric 0/1.
+  Use `bool(f.on)` in the outbound payload when the receiver needs a JavaScript
+  boolean, or consume the inbound field in a boolean position such as
+  `emitIf(f.on, ...)`.
 
 ### MIDI ports — `event.midi`
 
@@ -368,8 +430,25 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
   - `"programChange"` — `{ channel, program, atSample }`
   - `"channelPressure"` — `{ channel, pressure, atSample }`
   - `"aftertouch"` (poly key pressure) — `{ channel, note, pressure, atSample }`
-  - `"sysex"` — `{ bytes, atSample }` where `bytes` is a byte-array field
+  - `"sysex"` — `{ data, length, atSample }`; `data` is a read-only byte field
+    and `length` is a `Node<"i32">`
   - `"systemRealtime"` — `{ status, atSample }` (status = 0xF8..0xFF)
+- Sysex boundaries: a port accepts/produces sysex only when the processor
+  handles or emits sysex on it (that is what allocates its content region);
+  `node.midi.<name>.send()` THROWS on sysex to a port without one (stable ID
+  `sysex-unsupported-port`). One sysex message holds at most **1020 bytes**
+  (including 0xF0/0xF7): `send()` throws past the limit rather than
+  truncate-and-deliver a terminator-less message (stable ID
+  `sysex-payload-too-large`). `renderOffline` rejects oversized input on a
+  declared sysex port with the same diagnostic. Sysex storage reserves 1024
+  bytes per ring slot (256 KiB for default capacity 256), including a four-byte
+  length prefix. An outbound `emitIf` follows the same rule on its
+  `length`: a build-time-known length past 1020 bytes — or past its own source
+  `buffer.u8` — is a build error (stable ID `sysex-emit-exceeds-chunk`), and a
+  length computed at runtime that overruns either bound drops the whole message
+  and counts it in `renderOffline(...).diagnostics.droppedSysexMessages`. The
+  buffer itself may be any size; the emitted `length` is what has to fit. Split
+  larger transfers into multiple messages.
 - Outbound: worklet sends with `.emitIf(cond, event)` only — same rule as
   typed `event<T>` above (no bare `.emit` on the worklet-side handle). The
   MIDI event must include `atSample: number` (the sample index within the
@@ -553,7 +632,7 @@ per host rate from this value.
 
 A `.uwk.ts` with **no `process()` but ≥1 export** is a library module: its
 exports are emitted verbatim at module scope, subgraph-body sugar still lowers,
-and there is no `defineProcessor` wrap / no ambient I/O. — `lower.ts:364`
+and there is no `defineProcessor` wrap / no ambient I/O. — the library-module branch of `lower()`
 
 ```ts
 // onepole.uwk.ts
@@ -623,6 +702,24 @@ context+url), compiles the WASM, picks the transport (`"sab"` when
 `AudioWorkletNode`, and resolves on a `ready` port message (rejects on init error
 / `processorerror` / 10 s timeout).
 
+`"postMessage"` is a compatibility transport with bounded egress buffer reuse.
+Receiving messages and recycling transferred buffers can allocate on the audio
+thread, so this path is outside the allocation-free and GC-free guarantee.
+The emitted DSP's fixed-memory, bounded-work constraints apply to both paths.
+Neither transport waits for the main thread while processing audio. Shared
+out-ring publication uses a single try-acquire; contention postpones publication
+while DSP continues. A full WASM ring follows its drop-oldest policy and reports
+overflow through the ring's diagnostics.
+
+For shared inbound events and MIDI, `emit` / `send` copies caller data
+synchronously into bounded main-thread staging. Publication retries if the
+audio thread owns the shared ring. Audio takes ownership of copied entries in
+its own bounded WASM ring, acknowledges that transfer, and runs handlers without
+holding the shared ring. Staging, the shared ring, and the WASM ring each retain
+at most the declared capacity; overflow counts actual entries discarded at those
+stages. In-flight copies can therefore use additional storage. Disposal cancels
+pending retries.
+
 ```ts
 const ctx = new AudioContext({ sampleRate: 48000 });
 const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
@@ -642,9 +739,10 @@ new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate: 48000 });
 
 ### `UnworkletNode<C>` surface
 
-`packages/core/src/types.ts:908`, built in `client.ts:1711`. `C` may be the config
-or a `CompiledProcessor`, so `UnworkletNode<typeof import("./x.uwk.ts?worklet")>`
-names the type.
+`C` may be the config, a `CompiledProcessor`, or a module namespace whose default
+export is a processor. `UnworkletNode<typeof import("./x.uwk.ts?worklet")>` and
+`UnworkletNode<typeof processor>` both name the type of the node created from
+that default import, including its declared parameters and message payloads.
 
 | member                    | type / behavior                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -679,8 +777,14 @@ const off = node.onError((e) => errors.push(e));
 ### `inspect(blob)`
 
 Pure, non-realtime blob decode — needs no `AudioContext` or live node.
-`InspectionResult = { version; schemaHash; profile; slots }`. — `client.ts:1824`,
-`types.ts:994`
+`InspectionResult = { version; schemaHash; profile; processorId; slots }`.
+`processorId` is the identity a v2 blob carries, `null` for an id-less or v1
+blob. — `client.ts:1996`, `types.ts:1121`
+
+Buffer inspection reports logical element counts and a preview of up to 64
+elements. Boolean buffers use `0` and `1` at their declared indexes. Migration
+helpers read and write boolean buffers as `Uint8Array` values; the snapshot's
+four-byte storage per boolean is handled by the codec.
 
 (`replaceProcessor` live-swaps a processor while preserving state; it is exported
 but out of scope here.)

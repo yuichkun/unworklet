@@ -8,6 +8,10 @@ suite if they ever disagree.
 ## The bar
 
 - `vp check` clean at the repo root and `vp test run` green.
+- Each published package passes `vp test run --coverage --maxWorkers=2` from its
+  own directory, with branch coverage at least 98%. Build all packages first and
+  set `UWK_DISTS_BUILT=1` during those runs so parallel verification does not
+  delete another suite's build artifacts. An unmeasured package is not a pass.
 - The browser suites pass. `packages/core/src/__tests__/browser/` covers the real
   worklet thread on Chromium in CI, and `examples/demo` covers the plugin pipeline.
   **Firefox and Safari are not run anywhere yet** — a release carries that gap
@@ -15,6 +19,10 @@ suite if they ever disagree.
 - The agent guide matches reality. `skills/unworklet/` is what consumers' agents
   read; if the release changes behaviour, the guide changed with it. Re-run the
   `guidance-dogfood` skill when a release touches the authoring surface.
+- A transport release passes `vp exec node scripts/release-soak/run.mjs`:
+  30 minutes each on SAB and postMessage, with real hidden/visible transitions.
+  Keep the JSON result with the release evidence. A shorter preflight is not a
+  substitute for the full duration.
 
 ## Cutting a release (manual)
 
@@ -36,7 +44,13 @@ builds it used to pass, all force the minor. To cut a release:
    `vp test run` so the guard confirms it. `vp dlx bumpp packages/*/package.json`
    does it; a bare `vp dlx bumpp` bumps only the private monorepo root and none of
    the publishable packages, so name the files explicitly.
-4. Commit the bump and tag: `git tag vX.Y.Z`.
+4. Replace the target version's `unreleased` marker in `CHANGELOG.md` with the
+   release date (`YYYY-MM-DD`). Commit the version and changelog preparation,
+   merge the release PR after its checks pass, and create `git tag vX.Y.Z` on
+   that clean `main` commit. The tagged changelog must not say `unreleased` for
+   the version being published. Keep one-run validation reports outside the
+   repository; preserve their results in CI artifacts or the PR, and keep
+   consumer-facing explanations in the changelog and package guides.
 5. Publish from a clean `main` with **pnpm, recursively**: `vp pm publish -r`
    (`pnpm -r publish`) — **never `npm publish`**. The `-r` is required: `pnpm publish`
    (singular) at the repo root targets the private monorepo root and publishes none

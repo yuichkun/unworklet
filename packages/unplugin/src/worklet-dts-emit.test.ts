@@ -124,3 +124,38 @@ test("re-loading a `?worklet` rewrites neither tsconfig nor an unchanged witness
   expect(statSync(tsconfig).mtimeMs).toBe(tsconfigMtime);
   expect(statSync(witness).mtimeMs).toBe(witnessMtimeAfterFirst);
 });
+
+test("loading a processor recreates a witness removed by a clean task", async () => {
+  const plugin = unworklet();
+  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
+  const witness = path.join(root, ".unworklet", "worklets.d.ts");
+  rmSync(witness);
+  await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
+  expect(readFileSync(witness, "utf8")).toContain("gain");
+});
+
+test("an unrelated edit does not rewrite types or invalidate processor modules", async () => {
+  const plugin = unworklet();
+  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
+  const witness = path.join(root, ".unworklet", "worklets.d.ts");
+  const timestamp = statSync(witness).mtimeMs;
+  let invalidated = false;
+  const result = await (plugin.handleHotUpdate as unknown as HotFn)({
+    file: path.join(root, "unrelated.css"),
+    server: {
+      moduleGraph: {
+        getModuleById: () => null,
+        invalidateModule: () => {
+          invalidated = true;
+        },
+      },
+    },
+    modules: [],
+    read: async () => "body {}",
+  });
+  expect(result).toBeUndefined();
+  expect(invalidated).toBe(false);
+  expect(statSync(witness).mtimeMs).toBe(timestamp);
+});

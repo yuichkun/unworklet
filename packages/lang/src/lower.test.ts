@@ -352,3 +352,176 @@ test("omitting exportName keeps the default export (lang golden compatibility)",
   expect(out).toContain("export default defineProcessor(");
   expect(out).not.toMatch(/export const \w+ = defineProcessor/);
 });
+
+test.each([
+  "export const GAIN = 0.5;",
+  "export let gain = 0.5;",
+  "export function gain() { return 0.5; }",
+  "export class Gain {}",
+  "export enum Mode { Soft = 1 }",
+  "export namespace Tuning { export const A4 = 440; }",
+  "export type Gain = number;",
+  "export interface Gain { value: number }",
+  "const gain = 0.5; export { gain };",
+  "type Gain = number; export type { Gain };",
+  "type Gain = number; export { type Gain };",
+  'export { gain } from "./shared.ts";',
+  'export type { Gain } from "./shared.ts";',
+  'export * from "./shared.ts";',
+  'export * as shared from "./shared.ts";',
+  "export default 0.5;",
+  "export default function gain() { return 0.5; }",
+  "export default class Gain {}",
+  "const gain = 0.5; export = gain;",
+  "export const { gain } = { gain: 0.5 };",
+  "export {};",
+  "export const gain = param.f32({ default: 1 });",
+])("rejects authored module exports in a processor: %s", (declaration) => {
+  expect(() => lower(`${declaration}\nprocess(() => {});`)).toThrow(
+    expect.objectContaining({
+      id: "uwk-export-unsupported",
+      message: expect.stringMatching(/separate shared module.*import/i),
+    }),
+  );
+});
+
+test.each([
+  `function mutate() { helper.value = 1; return "key"; }
+function run(cb: () => string) { return { [cb()]: 0 }; }
+run(mutate);`,
+  `function mutate() { helper.value = 1; return 1; }
+function run(cb: () => number) { const [value = cb()] = []; return value; }
+run(mutate);`,
+  `function mutate() { helper.value = 1; return "key"; }
+function run(cb: () => string) { const { [cb()]: value } = {}; return value; }
+run(mutate);`,
+  `function mutate(target: { value: number }) { target.value = 1; }
+mutate(helper);`,
+  `const actor = { mutate() { helper.value = 1; } };
+actor.mutate();`,
+  `function mutate() { helper.value = 1; }
+const alias = mutate;
+alias();`,
+])("rejects exported values regardless of mutation shape: %s", (body) => {
+  expect(() =>
+    lower(
+      `const helper = { value: 0 };\n${body}\nexport const VALUE = helper.value;\nprocess(() => {});`,
+    ),
+  ).toThrow(expect.objectContaining({ id: "uwk-export-unsupported" }));
+});
+
+test.each([
+  "export const GAIN = 0.5;",
+  "export const clamp = (input: number, min: number) => Math.max(input, min);",
+  "export type Gain = number;",
+  "export interface Gain { value: number }",
+  "export enum Mode { Soft = 1 }",
+  "export namespace Tuning { export const A4 = 440; }",
+  "const gain = 0.5; export { gain };",
+  "type Gain = number; export type { Gain };",
+  'export { gain } from "./shared.ts";',
+  'export type { Gain } from "./shared.ts";',
+  'export * from "./shared.ts";',
+  "export default 0.5;",
+])("preserves exports in library-only modules: %s", (source) => {
+  const lowered = lower(source);
+  expect(lowered).toContain("export ");
+  expect(lowered).not.toContain("defineProcessor");
+  expect(lowered).not.toContain("audioInput");
+});
+
+test("processor statements retain their order inside the generated wrapper", () => {
+  const lowered = lower(`
+const helper = { value: 0 };
+const actor = { mutate() { helper.value = 1; } };
+actor.mutate();
+const value = helper.value;
+process(() => {});
+`);
+  const order = [
+    "defineProcessor(",
+    "const helper",
+    "const actor",
+    "actor.mutate();",
+    "const value",
+  ].map((text) => lowered.indexOf(text));
+  expect(order.every((position) => position >= 0)).toBe(true);
+  expect(order).toEqual([...order].sort((a, b) => a - b));
+});
+
+test("a namespace member export is preserved inside its processor namespace", () => {
+  const lowered = lower(`namespace Tuning { export const A4 = 440; }\nprocess(() => {});`);
+  expect(lowered.indexOf("namespace Tuning")).toBeGreaterThan(lowered.indexOf("defineProcessor("));
+  expect(lowered).toContain("export const A4 = 440");
+});
+
+test.each([
+  "const defineProcessor = (x: unknown) => x;",
+  "const input = 0;",
+  "const out = 0;",
+  'import { defineProcessor } from "./helper.ts";',
+  'import type { defineProcessor } from "@unworklet/core";',
+  'import { type defineProcessor } from "@unworklet/core";',
+  'import { defineProcessor as audioInput } from "@unworklet/core";',
+  "if (false) { var audioInput = 1; }",
+])("rejects a binding that takes a generated name: %s", (declaration) => {
+  expect(() => lower(`${declaration}\nprocess(() => {});`)).toThrow(
+    expect.objectContaining({ id: "uwk-reserved-binding" }),
+  );
+});
+
+test.each([
+  "function helper() { var audioInput = 1; return audioInput; }",
+  "class Helper { static { var audioInput = 1; } }",
+  "namespace Helpers { if (true) { var audioInput = 1; } }",
+])("a nested scope owns its generated-name spelling: %s", (declaration) => {
+  expect(() => lower(`${declaration}\nprocess(() => {});`)).not.toThrow();
+});
+
+test("a core value import supplies the generated wrapper binding", () => {
+  const lowered = lower(`import { defineProcessor } from "@unworklet/core";\nprocess(() => {});`);
+  expect(lowered).toContain("defineProcessor(");
+  expect(lowered.match(/import \{ defineProcessor \}/g)).toHaveLength(1);
+});
+
+test("an explicit audio output keeps its declared name", () => {
+  const lowered = lower(
+    `const out = audioOutput({ channels: 1, name: "main" });\nprocess(() => {});`,
+  );
+  expect(lowered).toContain('audioOutput({ channels: 1, name: "main" })');
+  expect(lowered).not.toContain('name: "out"');
+});
+
+test("a wrapper-local declaration sharing a DSL name is not imported", () => {
+  const lowered = lower(`const clamp = (n: number) => n;\nprocess(() => {});`);
+  expect(importedNames(lowered)).not.toContain("clamp");
+  expect(lowered.indexOf("const clamp")).toBeGreaterThan(lowered.indexOf("defineProcessor("));
+});
+
+test.each(["migrations([]);", 'options({ id: "library" });'])(
+  "a library cannot carry processor options: %s",
+  (macro) => {
+    expect(() => lower(`export const VALUE = 1;\n${macro}`)).toThrow(
+      expect.objectContaining({ id: "uwk-options-without-process" }),
+    );
+  },
+);
+
+test("namespace and side-effect imports survive a processor module", () => {
+  const lowered = lower(`import "./side-effect.mjs";
+import * as helpers from "./helpers.mjs";
+import * as core from "@unworklet/core";
+void helpers;
+void core;
+process(() => {});`);
+  expect(lowered).toContain('import "./side-effect.mjs"');
+  expect(lowered).toContain('import * as helpers from "./helpers.mjs"');
+  expect(lowered).toContain('import * as core from "@unworklet/core"');
+});
+
+test("a state shorthand outside a payload remains a state object", () => {
+  const lowered = lower(`const gain = state.f32(0);
+const object = { gain };
+process(() => {});`);
+  expect(lowered).toContain("const object = { gain }");
+});

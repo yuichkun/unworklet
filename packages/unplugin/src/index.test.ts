@@ -133,6 +133,10 @@ const FIXTURE_MULTI_PROCESSOR_PATH = fileURLToPath(
   new URL("../__fixtures__/multi-processor.processor.ts", import.meta.url),
 );
 
+const FIXTURE_DEFAULT_ALIAS_PATH = fileURLToPath(
+  new URL("../__fixtures__/default-alias.processor.ts", import.meta.url),
+);
+
 const FIXTURE_BARE_GAIN_PATH = fileURLToPath(
   new URL("../__fixtures__/bare-gain.ts", import.meta.url),
 );
@@ -277,6 +281,19 @@ test("load throws when the source has multiple defineProcessor exports", async (
   ).rejects.toThrow(/multiple defineProcessor exports/);
 });
 
+test("load accepts one processor exported under a named binding AND as the default alias (issue #42)", async () => {
+  // `export const wave = defineProcessor(...); export default wave;` is the
+  // natural belt-and-braces shape: the `?worklet` import is a default import,
+  // while tests import the named binding for renderOffline. One VALUE, two
+  // bindings — the count is by identity, and the named binding wins as the
+  // canonical export (it feeds the registration / display name).
+  const { result } = await callLoadWithMockContext(
+    `${VIRTUAL_ID_PREFIX}${FIXTURE_DEFAULT_ALIAS_PATH}`,
+  );
+  expect(typeof result).toBe("string");
+  expect(result as string).toContain("wave");
+});
+
 test("emitted asset name omits the `.processor` suffix when present and keeps the base otherwise", async () => {
   const { ctx: gainCtx } = await callLoadWithMockContext(
     `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`,
@@ -297,8 +314,20 @@ test("emitted asset name omits the `.processor` suffix when present and keeps th
 // 5-E = 4 metadata artifact JSON emit
 // ─────────────────────────────────────────────────────────────────────────
 
-test("load also emits 4 metadata artifact JSON files + the worklet entry chunk by default", async () => {
+test("by default only the WASM asset + worklet entry chunk are emitted (analysis JSONs are opt-in, issue #40)", async () => {
+  // The graph DAG scales with build-time-unrolled loops (a ~270 MB graph.json
+  // in dist/ was measured in the wild) — diagnostic data must not ride into a
+  // deployed bundle unless asked for.
   const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+
+  const names = ctx.calls.map((c) => c.name).sort((a, b) => a.localeCompare(b));
+  expect(names).toEqual(["01-stereo-gain.wasm", "01-stereo-gain.worklet"]);
+});
+
+test("`emitAnalysisArtifacts: true` emits the 4 metadata artifact JSON files", async () => {
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    emitAnalysisArtifacts: true,
+  });
 
   const names = ctx.calls.map((c) => c.name).sort((a, b) => a.localeCompare(b));
   expect(names).toEqual([
@@ -312,7 +341,9 @@ test("load also emits 4 metadata artifact JSON files + the worklet entry chunk b
 });
 
 test("each emitted metadata JSON file parses to a valid JSON value", async () => {
-  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    emitAnalysisArtifacts: true,
+  });
 
   const findAsset = (n: string): AssetEmit => {
     const hit = assetCalls(ctx).find((c) => c.name === n);
@@ -479,16 +510,21 @@ test("load lowers the .uwk.ts fixture, compiles it, and emits the WASM as a buil
   expect(wasmCall!.source).toBeInstanceOf(Uint8Array);
 });
 
-test("build: a processor .uwk.ts that imports a subgraph .uwk.ts compiles to WASM", async () => {
-  // The build evaluates the processor via raw Node import to compute the WASM. The
-  // imported subgraph library `.uwk.ts` must be lowered too, or Node sees raw sugar
-  // (`defineSubgraph` undefined) and throws. This is the cross-file build path.
-  const { ctx } = await callLoadWithMockContext(
-    `${VIRTUAL_ID_PREFIX}${FIXTURE_USES_SUBGRAPH_PATH}`,
-  );
-  const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
-  expect(wasmCall?.source).toBeInstanceOf(Uint8Array);
-});
+test(
+  "build: a processor .uwk.ts that imports a subgraph .uwk.ts compiles to WASM",
+  { timeout: 30_000 },
+  async () => {
+    // The build evaluates the processor via raw Node import to compute the WASM. The
+    // imported subgraph library `.uwk.ts` must be lowered too, or Node sees raw sugar
+    // (`defineSubgraph` undefined) and throws. This is the cross-file build path.
+    // Source loading and compilation under coverage need a longer CI deadline.
+    const { ctx } = await callLoadWithMockContext(
+      `${VIRTUAL_ID_PREFIX}${FIXTURE_USES_SUBGRAPH_PATH}`,
+    );
+    const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
+    expect(wasmCall?.source).toBeInstanceOf(Uint8Array);
+  },
+);
 
 test("build: a split-subgraph processor compiles byte-identical to the inline equivalent", async () => {
   // A subgraph is inlined at instantiate() regardless of which file it was defined
@@ -553,6 +589,16 @@ test("load on a WORKLET_ENTRY_PREFIX id returns the worklet runtime template", a
 test("resolveId passes through WORKLET_ENTRY_PREFIX ids without modification", () => {
   const id = `\0unworklet-worklet:/abs/x.processor.ts`;
   expect(callResolveId(id, undefined)).toBe(id);
+});
+
+test("the DevTools bridge resolves to the module that can be loaded by the injected page", async () => {
+  const id = "\0unworklet-devbridge";
+  const resolved = callResolveId(id, undefined);
+  expect(resolved).toBe(id);
+  const code = await callLoadNoContext(resolved as string);
+  expect(typeof code).toBe("string");
+  expect(code).toContain("toSendableMidiEvent");
+  expect(code).toContain("toLoggableMidiEvent");
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -637,7 +683,9 @@ test("load declares the source file as a watch dependency (= full-page reload pi
 });
 
 test("emitted schema-hash JSON carries the same hash that compile() returned", async () => {
-  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+  const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    emitAnalysisArtifacts: true,
+  });
   const fixtureModule = (await import(FIXTURE_GAIN_PATH)) as Record<string, unknown>;
   const direct = await compile(fixtureModule["stereoGain"] as Parameters<typeof compile>[0]);
 

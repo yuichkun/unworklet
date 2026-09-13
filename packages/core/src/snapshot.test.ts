@@ -4,7 +4,12 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { encodeScalar, type SnapshotSlot } from "./snapshot.ts";
+import "./dsl/primitives.ts";
+import { audioOutput } from "./dsl/declarations.ts";
+import { forSample } from "./dsl/loop.ts";
+import { defineProcessor } from "./processor.ts";
+
+import { decodeScalar, encodeScalar, isPersistent, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { Migration } from "./types.ts";
 
@@ -24,7 +29,7 @@ test("encode → decode round-trips slots of every kind/type", () => {
   ];
   const blob = encodeSnapshot("abc123", "preset", slots);
   const decoded = decodeSnapshot(blob);
-  expect(decoded.version).toBe(1);
+  expect(decoded.version).toBe(2);
   expect(decoded.schemaHash).toBe("abc123");
   expect(decoded.profile).toBe("preset");
   expect(decoded.slots.map((s) => s.name)).toEqual([
@@ -67,7 +72,8 @@ test("decode throws a clear error when the header is cut mid-field", () => {
 
 // Kind/type bytes of the (only) slot of `encodeSnapshot("h", null, [{name:"x",...}])`:
 //   magic(4)+version(4)+hashLen(4)+hash"h"(1)+hasProfile(1)+profileLen(4)
-//   +slotCount(4)+nameLen(4)+name"x"(1) → kind at 27, type at 28.
+//   +idFlag(1)+idLen(4) (v2)
+//   +slotCount(4)+nameLen(4)+name"x"(1) → kind at 32, type at 33.
 const oneSlotBlob = (): Uint8Array =>
   encodeSnapshot("h", null, [
     { name: "x", kind: "state", type: "i32", data: encodeScalar("i32", 7) },
@@ -75,15 +81,15 @@ const oneSlotBlob = (): Uint8Array =>
 
 test("decode rejects an out-of-range slot kind code (corrupt blob, not silent undefined)", () => {
   const blob = oneSlotBlob();
-  expect(blob[27]).toBe(0); // KIND_CODE.state
-  blob[27] = 3; // KIND_BY_CODE only has codes 0..2
+  expect(blob[32]).toBe(0); // KIND_CODE.state
+  blob[32] = 3; // KIND_BY_CODE only has codes 0..2
   expect(() => decodeSnapshot(blob)).toThrow(/corrupt/i);
 });
 
 test("decode rejects an out-of-range slot type code (corrupt blob, not silent undefined)", () => {
   const blob = oneSlotBlob();
-  expect(blob[28]).toBe(2); // TYPE_CODE.i32
-  blob[28] = 6; // TYPE_BY_CODE only has codes 0..5
+  expect(blob[33]).toBe(2); // TYPE_CODE.i32
+  blob[33] = 6; // TYPE_BY_CODE only has codes 0..5
   expect(() => decodeSnapshot(blob)).toThrow(/corrupt/i);
 });
 
@@ -117,6 +123,50 @@ test("runMigrations: hash already current → no-op (applied empty)", () => {
     expect(r.applied).toEqual([]);
     expect(r.blob).toBe(blob);
   }
+});
+
+test("boolean buffer inspection and migrations preserve logical elements in four-byte storage", () => {
+  const source = new Uint8Array(new Int32Array([0, 1, 0, 1]).buffer);
+  const blob = encodeSnapshot("from", null, [
+    { name: "held", kind: "buffer", type: "bool", data: source },
+  ]);
+  expect(inspectSnapshot(blob).slots.held).toEqual({
+    kind: "buffer",
+    type: "bool",
+    length: 4,
+    head: [0, 1, 0, 1],
+  });
+  const result = runMigrations(
+    blob,
+    [
+      {
+        from: "from",
+        to: "to",
+        migrate(input, helpers) {
+          const held = helpers.parseBuffer(input, "held", "bool")!;
+          expect(held).toBeInstanceOf(Uint8Array);
+          expect(Array.from(held)).toEqual([0, 1, 0, 1]);
+          held[2] = 1;
+          held[3] = 0;
+          helpers.writeBuffer("held", "bool", held.subarray(1));
+          held.fill(0);
+        },
+      },
+    ],
+    "to",
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw result.error.cause;
+  expect(inspectSnapshot(result.blob).slots.held).toEqual({
+    kind: "buffer",
+    type: "bool",
+    length: 3,
+    head: [1, 1, 0],
+  });
+  expect(decodeSnapshot(result.blob).slots[0]!.data).toEqual(
+    new Uint8Array(new Int32Array([1, 1, 0]).buffer),
+  );
+  expect(inspectSnapshot(blob).slots.held).toMatchObject({ head: [0, 1, 0, 1] });
 });
 
 test("runMigrations: renames a slot and auto-carries the rest", () => {
@@ -212,4 +262,223 @@ test("runMigrations: walks a multi-step chain in order", () => {
   if (!r.ok) return;
   expect(r.applied).toEqual(["h0 -> h1", "h1 -> h2"]);
   expect(inspectSnapshot(r.blob).slots.v).toEqual({ kind: "state", type: "i32", value: 22 }); // (1+10)*2
+});
+
+// ── processor identity in the blob (issue #28) ───────────────────────────────
+// `schemaHash` hashes declarations only (deliberate: a body edit must not break
+// presets), so two logically different processors with the same slot schema
+// share a hash — a lowpass preset restored "successfully" into a distortion.
+// The blob therefore carries an optional processor identity, checked before
+// anything is applied. Legacy (id-less) blobs keep the old behavior.
+
+test("encodeSnapshot carries an optional processor id that decodeSnapshot recovers", () => {
+  const blob = encodeSnapshot("abc123", null, [], "my-lowpass");
+  const decoded = decodeSnapshot(blob);
+  expect(decoded.processorId).toBe("my-lowpass");
+  expect(decoded.schemaHash).toBe("abc123");
+});
+
+test("a blob encoded without an id decodes with processorId null", () => {
+  const blob = encodeSnapshot("abc123", "preset", []);
+  expect(decodeSnapshot(blob).processorId).toBeNull();
+});
+
+test("a version-1 blob (pre-id format) still decodes, with processorId null", () => {
+  // Hand-built v1 bytes: magic | version=1 | hashLen | hash | profileFlag=0 |
+  // profileLen=0 | slotCount=0.
+  const hash = new TextEncoder().encode("legacy");
+  const buf = new ArrayBuffer(4 + 4 + 4 + hash.length + 1 + 4 + 4);
+  const dv = new DataView(buf);
+  const bytes = new Uint8Array(buf);
+  let p = 0;
+  dv.setUint32(p, 0x55574b31, true); // 'UWK1'
+  p += 4;
+  dv.setUint32(p, 1, true); // version 1
+  p += 4;
+  dv.setUint32(p, hash.length, true);
+  p += 4;
+  bytes.set(hash, p);
+  p += hash.length;
+  dv.setUint8(p, 0); // no profile
+  p += 1;
+  dv.setUint32(p, 0, true);
+  p += 4;
+  dv.setUint32(p, 0, true); // no slots
+  const decoded = decodeSnapshot(bytes);
+  expect(decoded.schemaHash).toBe("legacy");
+  expect(decoded.processorId).toBeNull();
+  expect(decoded.slots).toEqual([]);
+});
+
+test("defineProcessor carries options.id onto the compiled processor", () => {
+  const p = defineProcessor(
+    () => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      return {
+        process: () => {
+          forSample((i) => {
+            out.ch(0).at(i).write(0);
+          });
+        },
+      };
+    },
+    { id: "my-lowpass" },
+  );
+  expect(p.id).toBe("my-lowpass");
+});
+
+test("inspectSnapshot surfaces the processor id", () => {
+  const withId = encodeSnapshot("h", null, [], "my-lowpass");
+  expect(inspectSnapshot(withId).processorId).toBe("my-lowpass");
+  const withoutId = encodeSnapshot("h", null, []);
+  expect(inspectSnapshot(withoutId).processorId).toBeNull();
+});
+
+test("a profile map includes only persistent entries in a named snapshot", () => {
+  const policy = { preset: "persistent", session: "transient" };
+  expect(isPersistent(policy, "persistent", "preset")).toBe(true);
+  expect(isPersistent(policy, "persistent", "session")).toBe(false);
+  expect(isPersistent(policy, "persistent", "missing")).toBe(false);
+  expect(isPersistent(policy, "transient", undefined)).toBe(true);
+});
+
+test("false state values round-trip without becoming true", () => {
+  const encoded = encodeScalar("bool", false);
+  expect(Array.from(encoded)).toEqual([0, 0, 0, 0]);
+  expect(decodeScalar("bool", encoded)).toBe(false);
+});
+
+test("a migration can supply a default for an absent state slot", () => {
+  const blob = encodeSnapshot("source", null, []);
+  const result = runMigrations(
+    blob,
+    [
+      {
+        from: "source",
+        to: "target",
+        migrate: (input, helpers) => {
+          expect(helpers.parseSlot(input, "gain", "f32")).toBeUndefined();
+          helpers.writeSlot("gain", "f32", 0.25);
+        },
+      },
+    ],
+    "target",
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(inspectSnapshot(result.blob).slots.gain).toEqual({
+    kind: "state",
+    type: "f32",
+    value: 0.25,
+  });
+});
+
+test("a migration throwing a non-Error reports the original reason", () => {
+  const result = runMigrations(
+    encodeSnapshot("source", null, []),
+    [
+      {
+        from: "source",
+        to: "target",
+        migrate: () => {
+          throw "unsupported preset";
+        },
+      },
+    ],
+    "target",
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: { step: "source -> target", message: "unsupported preset" },
+  });
+});
+
+test.each([null, "preset", "session"])(
+  "migration helpers preserve typed buffers, parameters and profile reads from %s",
+  (profile) => {
+    const blob = encodeSnapshot(
+      "source",
+      profile,
+      [
+        { name: "gain", kind: "param", type: "f32", data: encodeScalar("f32", 0.5) },
+        { name: "count", kind: "state", type: "i32", data: encodeScalar("i32", 7) },
+        {
+          name: "wave",
+          kind: "buffer",
+          type: "f32",
+          data: new Uint8Array(new Float32Array([1, 2, 3]).buffer),
+        },
+      ],
+      "synth",
+    );
+    const result = runMigrations(
+      blob,
+      [
+        {
+          from: "source",
+          to: "target",
+          migrate: (input, helpers) => {
+            expect(helpers.oldSchemaHash).toBe("source");
+            expect(helpers.oldProfileName).toBe(profile);
+            expect(helpers.parseBuffer(input, "absent", "f32")).toBeUndefined();
+            expect(helpers.parseParam(input, "absent")).toBeUndefined();
+            expect(helpers.parseSlotInProfile(input, "absent", "i32", "preset")).toBeUndefined();
+            expect(helpers.parseSlotInProfile(input, "count", "i32", "preset")).toBe(
+              profile === "session" ? undefined : 7,
+            );
+            const wave = helpers.parseBuffer(input, "wave", "f32")!;
+            expect(Array.from(wave)).toEqual([1, 2, 3]);
+            helpers.writeBuffer("wave", "f32", wave.subarray(1));
+            wave.fill(99);
+            helpers.writeParam("gain", helpers.parseParam(input, "gain")! * 0.5);
+            helpers.writeSlotInProfile("count", "i32", 8, "preset");
+          },
+        },
+      ],
+      "target",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const inspected = inspectSnapshot(result.blob);
+    expect(inspected.processorId).toBe("synth");
+    expect(inspected.profile).toBe(profile);
+    expect(inspected.slots).toEqual({
+      gain: { kind: "param", value: 0.25 },
+      count: { kind: "state", type: "i32", value: 8 },
+      wave: { kind: "buffer", type: "f32", length: 2, head: [2, 3] },
+    });
+    expect(inspectSnapshot(blob).slots.wave).toEqual({
+      kind: "buffer",
+      type: "f32",
+      length: 3,
+      head: [1, 2, 3],
+    });
+  },
+);
+
+test("a cyclic migration chain leaves the input intact without invoking migrations", () => {
+  const blob = encodeSnapshot("a", null, []);
+  let calls = 0;
+  const result = runMigrations(
+    blob,
+    [
+      {
+        from: "a",
+        to: "b",
+        migrate: () => {
+          calls++;
+        },
+      },
+      {
+        from: "b",
+        to: "a",
+        migrate: () => {
+          calls++;
+        },
+      },
+    ],
+    "unreachable",
+  );
+  expect(result).toEqual({ ok: true, blob, applied: [] });
+  expect(calls).toBe(0);
 });

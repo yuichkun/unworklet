@@ -64,3 +64,70 @@ test("lowering off a captured snapshot compiles to a real (non-empty) WASM", asy
   const { wasm } = await compile(proc);
   expect((wasm as Uint8Array).byteLength).toBeGreaterThan(200);
 });
+
+test("runtime compilation rejects authored processor exports with migration guidance", () => {
+  expect(() => lowerToProcessor(`export const GAIN = 0.5;\nprocess(() => {});`)).toThrow(
+    expect.objectContaining({
+      id: "uwk-export-unsupported",
+      message: expect.stringMatching(/separate shared module.*import/i),
+    }),
+  );
+});
+
+test("options({ id }) flows through to the compiled processor's identity", () => {
+  const processor = lowerToProcessor(`
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => {
+    out.ch(0).at(i).write(0);
+  });
+});
+options({ id: "synth-x" });
+`);
+  expect(processor.id).toBe("synth-x");
+});
+
+test("an enum in an already-lowered module evaluates", () => {
+  const lowered =
+    `import { audioOutput, defineProcessor, forSample } from "@unworklet/core";\n` +
+    `export enum Mode { Soft = 1, Hard = 2 }\n` +
+    `export default defineProcessor(() => {\n` +
+    `  const out = audioOutput({ channels: 1, name: "main" });\n` +
+    `  return { process: () => { forSample((i) => { out.ch(0).at(i).write(Mode.Soft / 10); }); } };\n` +
+    `});\n`;
+  const proc = evalLowered(lowered);
+  expect(proc).toHaveProperty("graph");
+  expect(typeof proc.schemaHash).toBe("string");
+});
+
+test("a namespace in an already-lowered module evaluates", () => {
+  const lowered =
+    `import { audioOutput, defineProcessor, forSample } from "@unworklet/core";\n` +
+    `export namespace Tuning { export const A4 = 440; }\n` +
+    `export default defineProcessor(() => {\n` +
+    `  const out = audioOutput({ channels: 1, name: "main" });\n` +
+    `  return { process: () => { forSample((i) => { out.ch(0).at(i).write(Tuning.A4 / 1000); }); } };\n` +
+    `});\n`;
+  const proc = evalLowered(lowered);
+  expect(proc).toHaveProperty("graph");
+  expect(typeof proc.schemaHash).toBe("string");
+});
+
+test("named helper exports and a local export list remain usable in lowered modules", () => {
+  const proc = evalLowered(`import { defineProcessor } from "@unworklet/core";
+export function helper() { return 0.5; }
+export class Gain { value = helper(); }
+const instance = new Gain();
+export { instance };
+export default defineProcessor(() => ({ process() { void instance; } }));`);
+  expect(proc).toHaveProperty("graph");
+});
+
+test.each(['export * from "./other.ts";', 'export { value } from "./other.ts";'])(
+  "runtime evaluation reports a cross-file re-export: %s",
+  (declaration) => {
+    expect(() => evalLowered(`${declaration}\nexport default {};`)).toThrow(
+      /cannot re-export from other files/,
+    );
+  },
+);

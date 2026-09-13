@@ -122,12 +122,20 @@ export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array):
     // state / buffer / event / message / midi = excluded from the driver (= not on the white list above)
   }
 
+  let modulePromise: Promise<WebAssembly.Module> | null = null;
+
   return {
     async instantiate(): Promise<CompileInstance> {
-      const wasmModule = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
-      const instance = await WebAssembly.instantiate(wasmModule);
+      // Compile the module once per driver and share it across instantiations
+      // — each `instantiate()` still creates a FRESH instance (fresh linear
+      // memory, state re-seeded from data segments), so repeat renders share
+      // bytes, never state (issue #39).
+      modulePromise ??= WebAssembly.compile(wasm.buffer as ArrayBuffer);
+      const instance = await WebAssembly.instantiate(await modulePromise);
       const memory = instance.exports["memory"] as WebAssembly.Memory;
       const proc = instance.exports["process"] as () => void;
+      const scrubGlobal = instance.exports["scrubbedSamples"] as WebAssembly.Global;
+      const sysexDropGlobal = instance.exports["droppedSysexMessages"] as WebAssembly.Global;
 
       const inputBase = (portName: string, channel: number): number =>
         lay.regions.ioScratch.inputs[portName]! + channel * CHANNEL_STRIDE_BYTES;
@@ -164,6 +172,12 @@ export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array):
           for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
             dest[s] = view[s]!;
           }
+        },
+        scrubbedSamples() {
+          return scrubGlobal.value as number;
+        },
+        droppedSysexMessages() {
+          return sysexDropGlobal.value as number;
         },
       };
     },

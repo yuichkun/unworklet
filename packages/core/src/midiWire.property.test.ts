@@ -59,3 +59,9 @@ test("midi wire codec always emits a valid status + two 7-bit data bytes", () =>
     }),
   );
 });
+
+test("the fixed-slot codec rejects sysex rather than dropping its content bytes", () => {
+  expect(() =>
+    midiEventToWire({ type: "sysex", data: new Uint8Array([0xf0, 0x7d, 0xf7]) }),
+  ).toThrow(/sysex events do not use the fixed-slot/);
+});

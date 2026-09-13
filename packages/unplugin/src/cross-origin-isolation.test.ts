@@ -18,6 +18,7 @@ type ConfigHook = (
   env: { command: string; mode: string },
 ) =>
   | {
+      define?: Record<string, string>;
       server?: { headers?: Record<string, string> };
       preview?: { headers?: Record<string, string> };
     }
@@ -29,6 +30,7 @@ const callConfig = (
   userConfig: Record<string, unknown> = {},
 ):
   | {
+      define?: Record<string, string>;
       server?: { headers?: Record<string, string> };
       preview?: { headers?: Record<string, string> };
     }
@@ -60,4 +62,31 @@ test("an app's own COOP/COEP header is respected, not overridden", () => {
   expect(config?.server?.headers?.["Cross-Origin-Embedder-Policy"]).toBeUndefined();
   // … but still fills in the COOP the app left unset.
   expect(config?.server?.headers?.["Cross-Origin-Opener-Policy"]).toBe("same-origin");
+});
+
+test("an app supplying both isolation headers receives no replacement server configuration", () => {
+  const config = callConfig("serve", undefined, {
+    server: {
+      headers: {
+        "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+      },
+    },
+  });
+  expect(config?.server).toBeUndefined();
+  expect(config?.preview).toBeUndefined();
+  expect(config?.define).toMatchObject({
+    __UNWORKLET_DEVTOOLS__: "true",
+    __UNWORKLET_SELFCHECK__: "true",
+  });
+});
+
+test("production builds disable developer instrumentation with either isolation choice", () => {
+  for (const crossOriginIsolation of [true, false]) {
+    const config = callConfig("build", { crossOriginIsolation });
+    expect(config?.define).toEqual({
+      __UNWORKLET_DEVTOOLS__: "false",
+      __UNWORKLET_SELFCHECK__: "false",
+    });
+  }
 });

@@ -36,9 +36,9 @@ vi.mock("./index.ts", async () => {
 // over the stubbed plain functions.
 await import("./extend.ts");
 
-import type { RenderOfflineResult } from "@unworklet/offline";
+import type { RenderResultLike } from "./index.ts";
 
-const monoResult = (channel: Float32Array): RenderOfflineResult => ({
+const monoResult = (channel: Float32Array): RenderResultLike => ({
   outputs: { main: [channel] },
   events: [],
   state: new Uint8Array(0),

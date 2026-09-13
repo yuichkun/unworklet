@@ -23,7 +23,7 @@ import type {
   StateDecl,
 } from "../compile/ast.ts";
 import { inferAstType } from "../compile/ast.ts";
-import { SAMPLES_PER_BLOCK } from "./constants.ts";
+import { SAMPLES_PER_BLOCK, SIMD_LANE_COUNT } from "./constants.ts";
 import {
   addDeclaration,
   addStatement,
@@ -44,6 +44,7 @@ import type {
   AudioOutputHandle,
   Buffer,
   BufferElementType,
+  BufferExposeOptions,
   Capacity,
   EventDecl,
   ExposeOptions,
@@ -364,7 +365,7 @@ export interface BufferChain {
   readonly bool: BufferFactory<"bool">;
   readonly u8: BufferFactory<"u8">;
   named(name: string): BufferChain;
-  expose(options: ExposeOptions): BufferChain;
+  expose(options: BufferExposeOptions): BufferChain;
 }
 
 /** The scalar type a buffer element surfaces as (= `u8` is accessed via i32). */
@@ -400,23 +401,22 @@ function checkBufferName(name: string, excludeDecl: BufferDecl | null = null): v
 }
 
 /**
- * Publish / snapshot consistency check for a buffer slot (= `01-dsl.md` §3.2).
- * Same axis as state, but with no type restriction on publish (= publish is
- * allowed for every element type, Q27-a/e). A persistent snapshot / publish
- * requires a main-side identity = requires userNamed.
+ * Snapshot consistency check for a buffer slot, plus the publish gate (issue
+ * #38): the publish pipeline is scalar-only — a published buffer never appears
+ * on `node.state` — so an accepted-but-inert declaration is rejected loudly at
+ * capture instead of surfacing later as a distant `TypeError`. The type surface
+ * (`BufferExposeOptions`) already omits `publish`; this guards JS callers and
+ * casts. A persistent snapshot requires a main-side identity = requires
+ * userNamed.
  */
 function validateBufferDecl(decl: BufferDecl): void {
   if (decl.publish !== undefined) {
-    if (!Number.isFinite(decl.publish.rateFps) || decl.publish.rateFps <= 0) {
-      throw new Error(
-        `unworklet: publish rateFps must be a positive finite number, got ${decl.publish.rateFps}`,
-      );
-    }
-    if (!decl.userNamed) {
-      throw new Error(
-        `unworklet: buffer with publish requires user-defined name (= via .named('X') or .expose({ name: 'X' }))`,
-      );
-    }
+    throw new Error(
+      `unworklet: buffer "${decl.name}" declares publish, but buffer publish is not wired to the ` +
+        `main thread — the slot would never appear on node.state. To observe a buffer live, ` +
+        `fan the values out into scalar state slots (state.f32(0).expose({ name, publish })), ` +
+        `or read the whole buffer back via node.snapshot(). (stable ID 'buffer-publish-unsupported')`,
+    );
   }
   if (decl.snapshot === "persistent" && !decl.userNamed) {
     throw new Error(
@@ -467,6 +467,22 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
       return { kind: "literal", type: "i32", value: idx };
     }
     return unwrapAst(idx);
+  };
+  // A lane window spans SIMD_LANE_COUNT elements, so a buffer holding fewer has
+  // no in-bounds offset at all: the runtime index clamp saturates into
+  // `[0, size - SIMD_LANE_COUNT]`, which is empty here, and the 16-byte access
+  // would still run past the buffer into the next region. Rejected at capture —
+  // a dynamic offset carries no literal for `liftIndex` to range-check.
+  const requireVecWindow = (op: string): void => {
+    if (decl.size < SIMD_LANE_COUNT) {
+      throw new Error(
+        `unworklet: buffer "${decl.name}" ${op}() needs at least ${SIMD_LANE_COUNT} elements, ` +
+          `but the buffer holds ${decl.size} — a ${SIMD_LANE_COUNT}-lane access reads/writes ` +
+          `${SIMD_LANE_COUNT * 4} bytes and no offset keeps that inside the buffer. Declare it ` +
+          `with size >= ${SIMD_LANE_COUNT}, or use read() / write(). ` +
+          `(stable ID 'simd-buffer-too-small')`,
+      );
+    }
   };
   const handle = {
     get size() {
@@ -571,17 +587,20 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
     // SIMD buffer I/O (= §7; the type is restricted to f32 via the declaration
     // merge in @unworklet/core/simd). The offset is in element units = ×4 bytes on
     // the emit side. Load/store 4 lanes as a v128.
-    loadVec: (offset: Node<"i32"> | number) =>
-      wrapAst<"f32x4">({
+    loadVec: (offset: Node<"i32"> | number) => {
+      requireVecWindow("loadVec");
+      return wrapAst<"f32x4">({
         kind: "bufferLoadVec",
         name: decl.name,
-        offset: liftIndex(offset, "loadVec", 4),
-      }),
+        offset: liftIndex(offset, "loadVec", SIMD_LANE_COUNT),
+      });
+    },
     storeVec: (offset: Node<"i32"> | number, value: Node<"f32x4">) => {
+      requireVecWindow("storeVec");
       addStatement({
         kind: "bufferStoreVec",
         name: decl.name,
-        offset: liftIndex(offset, "storeVec", 4),
+        offset: liftIndex(offset, "storeVec", SIMD_LANE_COUNT),
         value: unwrapAst(value),
       });
     },

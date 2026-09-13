@@ -133,11 +133,14 @@ handler and reading that `state` back in `process`; lift one into float math wit
 `out.emitIf(flag.read(), …)` in `process`.
 
 `.named("x")` (quick) and `.expose({ name, snapshot, publish })` (full) both name
-a slot for main-thread access. `publish` (state/buffer, `{ rateFps }`) streams a
-value to `node.state.<name>.subscribe(...)`. A named scalar `state` is **persistent
-by default** — captured in `node.snapshot()` and offline `result.state`; pass
-`snapshot: "transient"` to opt a named slot out. Buffers are the reverse (transient
-unless `snapshot: "persistent"`). Naming is required for `publish`/`persistent`.
+a slot for main-thread access. `publish` (scalar `state.f32`/`i32`/`bool` only,
+`{ rateFps }`) streams a value to `node.state.<name>.subscribe(...)`; on a buffer
+it is rejected at graph capture (stable ID `buffer-publish-unsupported`) — fan
+values out into scalar slots to observe a buffer live. A named scalar `state` is
+**persistent by default** — captured in `node.snapshot()` and offline
+`result.state`; pass `snapshot: "transient"` to opt a named slot out. Buffers are
+the reverse (transient unless `snapshot: "persistent"`). Naming is required for
+`publish`/`persistent`.
 
 ### Read / write (the part most often guessed wrong)
 
@@ -191,9 +194,15 @@ forSample.byN(4, (i) => {
 
 ## Realtime safety
 
-The compiler enforces the audio-thread contract at build time: no heap
-allocation, no unbounded loops, no exceptions, no blocking I/O, no GC. A
-processor that compiles is realtime-safe.
+The emitted DSP uses preallocated WASM memory and bounded loops, without
+JavaScript allocation, GC, or blocking I/O. Transport correctness is also
+validated with runtime and concurrency tests. WASM traps are reported through
+`onError` and silence the failed processor.
+
+The `postMessage` compatibility transport reuses bounded egress buffers, but
+receiving messages and recycling them can allocate on the audio thread. That
+transport has no allocation-free or GC-free guarantee. `node.diagnostics.transport`
+reports the selected transport; shared memory requires cross-origin isolation.
 
 ## Related packages
 

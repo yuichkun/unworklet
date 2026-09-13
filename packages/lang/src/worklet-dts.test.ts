@@ -30,7 +30,7 @@ import {
 import ts from "typescript";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
-import { workletDts, workletsDts } from "./worklet-dts.ts";
+import { witnessBlockSource, workletDts, workletsDts } from "./worklet-dts.ts";
 
 // The witness generator now lives in `@unworklet/lang`, but this integration
 // test still needs the unplugin's `client.d.ts` (its `/// <reference types>`
@@ -584,4 +584,41 @@ export async function f(): Promise<void> {
 `,
   );
   expect(diagnose("fxa/use.ts")).toEqual([]);
+});
+
+test("a witness records its source and ignores an unrelated comment", () => {
+  expect(witnessBlockSource("// source: /project/synth.uwk.ts   ")).toBe("/project/synth.uwk.ts");
+  expect(witnessBlockSource("// generated witness")).toBeUndefined();
+});
+
+test("a typed-array message field retains its element type in the witness", () => {
+  const proc = defineProcessor(() => {
+    const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
+    const latest = state.f32(0);
+    return {
+      process() {
+        upload.onReceive(({ samples }) => {
+          latest.write(samples.at(0));
+        });
+      },
+    };
+  });
+  expect(workletDts("*/synth.uwk.ts?worklet", proc.worklet)).toContain(
+    '"samples": { array: "f32" }',
+  );
+});
+
+test("witness keys distinguish matching two-segment tails", () => {
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    const text = workletsDts([
+      { source: "/project/first/fx/index.uwk.ts", ns: gainProc.worklet },
+      { source: "/project/second/fx/index.uwk.ts", ns: gainProc.worklet },
+    ]);
+    expect(text).toContain("*/first/fx/index.uwk.ts?worklet");
+    expect(text).toContain("*/second/fx/index.uwk.ts?worklet");
+  } finally {
+    console.warn = warn;
+  }
 });

@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Audio Worklet DSP authored in TypeScript, compiled to WebAssembly.",
   "keywords": [
     "audio",
@@ -90,8 +90,7 @@
     "bumpp": "^11.1.0",
     "fast-check": "catalog:",
     "playwright": "catalog:",
-    "typescript": "catalog:",
-    "vite-plus": "catalog:"
+    "typescript": "catalog:"
   },
   "engines": {
     "node": ">=20"

@@ -11,7 +11,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 import "../../simd.ts"; // side-effect: register `.lane` method + SIMD types
 import { audioOutput, state } from "../../dsl/declarations.ts";
-import { f32 } from "../../dsl/constructors.ts";
+import { f32, i32 } from "../../dsl/constructors.ts";
 import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { addVec, mulVec, splat, sumLanes, vec4 } from "../../simd.ts";
@@ -120,3 +120,73 @@ test("SIMD: buf.loadVec / storeVec round-trips 4 lanes through a buffer", async 
   const { outputs } = await render(proc);
   for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(50);
 });
+
+test.each([
+  { offset: -536_870_912, start: 0 },
+  { offset: 0, start: 0 },
+  { offset: 0.25, start: 1 },
+  { offset: 1, start: 4 },
+  { offset: 536_870_912, start: 8 },
+])(
+  "SIMD: computed store offset $offset preserves computed lanes and neighboring memory",
+  async ({ offset, start }) => {
+    const proc = defineProcessor(() => {
+      const out = audioOutput({ channels: 8, name: "main" });
+      const before = state.buffer.f32({ size: 4 });
+      const buf = state.buffer.f32({ size: 12 });
+      const after = state.buffer.f32({ size: 4 });
+      const position = state.f32(offset);
+      const gain = state.f32(0.25);
+      return {
+        process: () => {
+          forSample((i) => {
+            before.write(3, 17);
+            after.write(0, 19);
+            buf.write(0, -7);
+            buf.write(11, -9);
+            const lane = sumLanes(splat(sumLanes(splat(gain.read()))));
+            buf.storeVec(
+              i32(sumLanes(splat(position.read()))),
+              vec4(lane, lane.add(1), lane.add(2), lane.add(3)),
+            );
+            gain.write(gain.read().add(0.25));
+            out.ch(0).at(i).write(buf.read(start));
+            out
+              .ch(1)
+              .at(i)
+              .write(buf.read(start + 1));
+            out
+              .ch(2)
+              .at(i)
+              .write(buf.read(start + 2));
+            out
+              .ch(3)
+              .at(i)
+              .write(buf.read(start + 3));
+            out.ch(4).at(i).write(buf.read(0));
+            out.ch(5).at(i).write(buf.read(11));
+            out.ch(6).at(i).write(before.read(3));
+            out.ch(7).at(i).write(after.read(0));
+          });
+        },
+      };
+    });
+    const { outputs } = await render(proc, { blocks: 2 });
+    const channels = outputs.main!;
+    for (let sample = 0; sample < 2 * SAMPLES_PER_BLOCK; sample++) {
+      const lane = 4 * (sample + 1);
+      expect(channels.slice(0, 4).map((channel) => channel[sample])).toEqual([
+        lane,
+        lane + 1,
+        lane + 2,
+        lane + 3,
+      ]);
+      expect(channels.slice(4).map((channel) => channel[sample])).toEqual([
+        start === 0 ? lane : -7,
+        start === 8 ? lane + 3 : -9,
+        17,
+        19,
+      ]);
+    }
+  },
+);

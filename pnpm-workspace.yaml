@@ -12,7 +12,7 @@ catalog:
   vitest: npm:@voidzero-dev/vite-plus-test@^0.1.24
   vite-plus: 0.1.24
   binaryen: ^129.0.0
-  "@vitest/coverage-v8": ^4.1.7
+  "@vitest/coverage-v8": 4.1.8
   wavefile: ^11.0.0
   tsx: ^4.22.3
   "@vitejs/devtools-kit": 0.4.12

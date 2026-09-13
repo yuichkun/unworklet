@@ -126,3 +126,94 @@ test("a real compiled processor passes the proof (emitter output is safe + fully
   });
   await expect(compile(proc)).resolves.toBeDefined();
 });
+
+test("a module without memory and an imported function require no memory proof", async () => {
+  const bin = await loadBinaryen();
+  const mod = bin.parseText('(module (import "host" "f" (func $f)) (func $process (return)))');
+  expect(rules(bin, mod)).toEqual([]);
+});
+
+test("an inner loop's exit does not establish an outer loop bound", async () => {
+  const bin = await loadBinaryen();
+  const mod = bin.parseText(`(module
+    (func $process
+      (loop $outer
+        (block $done
+          (loop $inner (br_if $done (i32.const 1))))
+        (nop)
+        (br $outer))))`);
+  expect(verifyRealtimeSafe(mod, bin)).toEqual([
+    { rule: "unbounded-loop", fn: "process", detail: "loop has no conditional exit" },
+  ]);
+  mod.dispose();
+});
+
+const traversableExpressions = [
+  ["branch table", "(block $done (br_table $done $done VALUE))", "(i32.const 0)"],
+  ["return", "(return VALUE)", "(i32.const 0)"],
+  ["indirect call", "(drop (call_indirect (type $fn) VALUE (i32.const 0)))", "(i32.const 0)"],
+  ["memory fill", "(memory.fill (i32.const 0) VALUE (i32.const 1))", "(i32.const 0)"],
+  ["atomic exchange", "(drop (i32.atomic.rmw.xchg (i32.const 0) VALUE))", "(i32.const 1)"],
+  [
+    "atomic compare exchange",
+    "(drop (i32.atomic.rmw.cmpxchg (i32.const 0) (i32.const 0) VALUE))",
+    "(i32.const 1)",
+  ],
+  [
+    "SIMD shuffle",
+    "(drop (i8x16.shuffle 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 VALUE (v128.const i32x4 0 0 0 0)))",
+    "(v128.const i32x4 0 0 0 0)",
+  ],
+  ["SIMD shift", "(drop (i32x4.shl (v128.const i32x4 0 0 0 0) VALUE))", "(i32.const 1)"],
+  ["SIMD widening load", "(drop (v128.load8x8_u VALUE))", "(i32.const 0)"],
+  [
+    "SIMD lane load",
+    "(drop (v128.load32_lane 0 (i32.const 0) VALUE))",
+    "(v128.const i32x4 0 0 0 0)",
+  ],
+] as const;
+
+test.each(traversableExpressions)(
+  "the verifier traverses %s operands",
+  async (_, expression, safe) => {
+    const bin = await loadBinaryen();
+    for (const [value, expected] of [
+      [safe, []],
+      ["(unreachable)", ["unreachable"]],
+    ] as const) {
+      const body = expression.replace("VALUE", value);
+      const result = expression.startsWith("(return") ? "(result i32)" : "";
+      const mod = bin.parseText(`(module
+      (type $fn (func (param i32) (result i32)))
+      (memory 1 1 shared)
+      (table 1 funcref)
+      (func $process ${result} ${body}))`);
+      mod.setFeatures(bin.Features.All);
+      expect(mod.validate()).toBe(1);
+      expect(rules(bin, mod)).toEqual(expected);
+    }
+  },
+);
+
+test("memory.init is rejected even with fixed memory and still checks its operands", async () => {
+  const bin = await loadBinaryen();
+  const mod = bin.parseText(`(module
+    (memory 1 1)
+    (data $bytes "a")
+    (func $process (memory.init $bytes (i32.const 0) (i32.const 0) (memory.grow (i32.const 1)))))`);
+  mod.setFeatures(bin.Features.All);
+  expect(mod.validate()).toBe(1);
+  expect(rules(bin, mod)).toEqual(["memory-init", "memory-grow"]);
+});
+
+test("an unsupported operation fails closed inside a loop", async () => {
+  const bin = await loadBinaryen();
+  const mod = bin.parseText(`(module
+    (memory 1 1 shared)
+    (func $process (loop $spin
+      (drop (memory.atomic.notify (i32.const 0) (i32.const 1)))
+      (br $spin))))`);
+  mod.setFeatures(bin.Features.All);
+  expect(mod.validate()).toBe(1);
+  expect(rules(bin, mod)).toEqual(["unbounded-loop", "unhandled-node"]);
+});

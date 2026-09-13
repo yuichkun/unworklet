@@ -27,6 +27,7 @@ import {
   encodeSnapshot,
   extractWorkletMeta,
   midiEventToWire,
+  ringCount,
   ringSlotIndex,
   runMigrations,
   SAMPLES_PER_BLOCK,
@@ -116,18 +117,72 @@ export type RenderOfflineResult = {
   state: Uint8Array;
   /** Sample rate used for the render (= `config.sampleRate` carried through, self-describing for wav export / re-render / consumer automation). */
   sampleRate: number;
+  /** Render-health counters. */
+  diagnostics: {
+    /**
+     * Output samples the compiled processor's non-finite scrub replaced with 0
+     * (a NaN / ±Inf the DSP produced — 0/0, x/0, a runaway accumulator).
+     * 0 for a healthy render; anything else means the processor has a numeric
+     * bug that would have propagated silence/clicks through Web Audio.
+     */
+    scrubbedSamples: number;
+    /**
+     * Outbound sysex messages the emit path refused because the requested
+     * length does not fit the destination chunk or the source buffer. Shipping
+     * the prefix that fits would deliver a sysex without its 0xF7 terminator,
+     * so the message is dropped whole; this is how that loss is observed.
+     */
+    droppedSysexMessages: number;
+  };
 };
 
 /** message / event ringbuffer header = [head, tail, overflowCount] × 4 bytes. */
 const MESSAGE_HEADER_BYTES = 12;
 
+/**
+ * Per-(processor, sampleRate) compile memo. The compile pipeline (graph
+ * re-capture → analysis → binaryen emit) dominates render wall time by an
+ * order of magnitude on a mid-size processor, so a naturally-written suite —
+ * one render per test — pays it once per test and times out (issue #39).
+ * Sharing the `CompileResult` is state-safe: `driver.instantiate()` creates a
+ * fresh WASM instance (fresh linear memory, state re-seeded from data
+ * segments) per render.
+ *
+ * The value is the PROMISE, so concurrent renders coalesce onto one compile; a
+ * rejected compile is evicted so a later attempt retries instead of replaying
+ * a stale failure. Keyed by processor identity — a `defineProcessor` value is
+ * a module singleton and treated as immutable once rendered.
+ */
+const compileCache = new WeakMap<
+  object,
+  Map<number, Promise<Awaited<ReturnType<typeof compile>>>>
+>();
+
+function compileMemo<C>(
+  processor: CompiledProcessor<C>,
+  sampleRate: number,
+): Promise<Awaited<ReturnType<typeof compile>>> {
+  let byRate = compileCache.get(processor);
+  if (byRate === undefined) {
+    byRate = new Map();
+    compileCache.set(processor, byRate);
+  }
+  let pending = byRate.get(sampleRate);
+  if (pending === undefined) {
+    // Hand sampleRate to compile so the publish scheduler's threshold,
+    // `Math.round(sampleRate / rateFps)`, is folded into a build-time constant.
+    pending = compile(processor, { sampleRate });
+    pending.catch(() => byRate.delete(sampleRate));
+    byRate.set(sampleRate, pending);
+  }
+  return pending;
+}
+
 export async function renderOffline<C>(
   processor: CompiledProcessor<C>,
   config: RenderOfflineConfig,
 ): Promise<RenderOfflineResult> {
-  // Hand config.sampleRate to compile so the publish scheduler's threshold,
-  // `Math.round(sampleRate / rateFps)`, is folded into a build-time constant.
-  const result = await compile(processor, { sampleRate: config.sampleRate });
+  const result = await compileMemo(processor, config.sampleRate);
   const instance = await result.driver.instantiate();
 
   // Obtain the event ring meta via WorkletMeta so renderOffline can walk the
@@ -210,6 +265,18 @@ export async function renderOffline<C>(
   // blob to the current schema, then write state / buffer values into linear
   // memory before the first quantum. Params follow `config.params`, not the blob.
   if (config.restore !== undefined) {
+    // Identity gate BEFORE migrations (issue #28): schemaHash is declaration-
+    // shape only, so a preset from a logically different processor can match
+    // it and land in the wrong slots. In the offline (test-time) context a
+    // cross-processor restore is a bug in the test — fail loud.
+    const blobId = decodeSnapshot(config.restore).processorId;
+    if (blobId !== null && processor.id !== undefined && blobId !== processor.id) {
+      throw new Error(
+        `unworklet: renderOffline config.restore — the snapshot belongs to processor ` +
+          `"${blobId}", not "${processor.id}"; refusing to restore across processors. ` +
+          `(stable ID 'processor-mismatch')`,
+      );
+    }
     const migrated = runMigrations(config.restore, processor.migrations ?? [], result.schemaHash);
     if (migrated.ok) {
       const decoded = decodeSnapshot(migrated.blob);
@@ -290,6 +357,10 @@ export async function renderOffline<C>(
       const memory = instance.memory.buffer;
       const headerView = new Int32Array(memory, ring.base, 3);
       const head = headerView[0]!;
+      if (ringCount(head, headerView[1]!) >= ring.capacity) {
+        headerView[1] = headerView[1]! + 1;
+        headerView[2] = headerView[2]! + 1;
+      }
       const slotByteOffset =
         ring.base + MESSAGE_HEADER_BYTES + ringSlotIndex(head, ring.capacity) * ring.slotSize;
       const dataView = new DataView(memory);
@@ -297,12 +368,6 @@ export async function renderOffline<C>(
       for (const field of ring.fields) {
         const byteOffset = slotByteOffset + field.offsetInSlot;
         if (field.payloadElementType !== undefined) {
-          // typed-array field = write the contents into payloadContent's per-slot
-          // chunk and set [payloadLen(bytes), payloadOffset] on the slot (= §5.2 / Q85).
-          // To keep content from being overwritten when multiple messages are queued
-          // within one quantum, split the chunk per slot as
-          // (head % chunks) × perChunk (= symmetric with emit / SAB). Bursts beyond
-          // the chunk budget recycle cyclically = drop-oldest (= no trap).
           const src = payload[field.name] as Float32Array;
           const content = ring.payloadContent!;
           const perChunk = Math.floor(content.capacity / content.chunks);
@@ -348,16 +413,23 @@ export async function renderOffline<C>(
         // no sysex handler) has nowhere to land — drop it rather than dereferencing
         // the absent region and crashing.
         if (port.sysex === undefined) continue;
-        // Sysex: bytes → content chunk `[length, data]`, slot carries
-        // `[0xF0, chunkIdx, _pad, _pad, atSample]` (`11-midi.md` §4.3).
         const region = port.sysex;
+        const len = payload.data.length;
+        const limit = region.perChunk - 4;
+        if (len > limit) {
+          throw new Error(
+            `unworklet: renderOffline MIDI port "${port.name}" received ${len} sysex bytes, ` +
+              `exceeding its ${limit}-byte limit. Split the transfer into complete ` +
+              `<= ${limit}-byte messages. (stable ID 'sysex-payload-too-large')`,
+          );
+        }
         const chunkIdx = ringSlotIndex(head, region.chunks);
         const chunkBase = region.base + chunkIdx * region.perChunk;
-        const len = Math.min(payload.data.length, region.perChunk - 4);
         dv.setUint32(chunkBase, len, true);
-        new Uint8Array(memory, chunkBase + 4, len).set(payload.data.subarray(0, len));
+        new Uint8Array(memory, chunkBase + 4, len).set(payload.data);
         dv.setUint8(slotByteOffset, 0xf0);
-        dv.setUint8(slotByteOffset + 1, chunkIdx);
+        dv.setUint16(slotByteOffset + 1, chunkIdx, true);
+        dv.setUint8(slotByteOffset + 3, 0);
         dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
       } else {
         const { status, data1, data2 } = midiEventToWire(payload);
@@ -366,6 +438,10 @@ export async function renderOffline<C>(
         dv.setUint8(slotByteOffset + 2, data2);
         dv.setUint8(slotByteOffset + 3, 0);
         dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
+      }
+      if (ringCount(head, headerView[1]!) >= port.capacity) {
+        headerView[1] = headerView[1]! + 1;
+        headerView[2] = headerView[2]! + 1;
       }
       headerView[0] = head + 1;
     }
@@ -468,9 +544,9 @@ export async function renderOffline<C>(
         const slotAtSample = dv.getUint32(slotByteOffset + 4, true);
         let payload: MidiEvent;
         if (status === 0xf0 && port.sysex !== undefined) {
-          // Sysex: chunkIdx = data1, content chunk = [length, bytes...].
           const region = port.sysex;
-          const chunkBase = region.base + (data1 % region.chunks) * region.perChunk;
+          const chunkIndex = dv.getUint16(slotByteOffset + 1, true);
+          const chunkBase = region.base + chunkIndex * region.perChunk;
           const len = dv.getUint32(chunkBase, true);
           payload = {
             type: "sysex",
@@ -506,8 +582,7 @@ export async function renderOffline<C>(
   const snapshotSlots: SnapshotSlot[] = [];
   for (const s of meta.states) {
     if (!s.userNamed || !isPersistent(s.snapshot, "persistent", config.profile)) continue;
-    const off = meta.layout.regions.states.slots[s.name];
-    if (off === undefined) continue;
+    const off = meta.layout.regions.states.slots[s.name]!;
     snapshotSlots.push({
       name: s.name,
       kind: "state",
@@ -517,8 +592,7 @@ export async function renderOffline<C>(
   }
   for (const buf of meta.buffers) {
     if (!buf.userNamed || !isPersistent(buf.snapshot, "transient", config.profile)) continue;
-    const off = meta.layout.regions.buffers.slots[buf.name];
-    if (off === undefined) continue;
+    const off = meta.layout.regions.buffers.slots[buf.name]!;
     const byteLen = buf.size * ELEMENT_BYTES[buf.type]!;
     snapshotSlots.push({
       name: buf.name,
@@ -536,12 +610,21 @@ export async function renderOffline<C>(
       data: encodeScalar("f32", paramCurrent[p.name] ?? p.default),
     });
   }
-  const state = encodeSnapshot(result.schemaHash, config.profile ?? null, snapshotSlots);
+  const state = encodeSnapshot(
+    result.schemaHash,
+    config.profile ?? null,
+    snapshotSlots,
+    processor.id ?? null,
+  );
 
   return {
     outputs,
     events: emittedEvents,
     state,
     sampleRate: config.sampleRate,
+    diagnostics: {
+      scrubbedSamples: instance.scrubbedSamples(),
+      droppedSysexMessages: instance.droppedSysexMessages(),
+    },
   };
 }

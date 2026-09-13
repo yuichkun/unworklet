@@ -9,7 +9,9 @@
 import { expect, test } from "vite-plus/test";
 
 import "./primitives.ts";
+import "../simd.ts"; // side-effect: register the SIMD surface on buffers
 import { f32 } from "./constructors.ts";
+import { splat, sumLanes } from "../simd.ts";
 import { event, audioInput, audioOutput, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
 import { compile } from "../compile/index.ts";
@@ -204,4 +206,67 @@ test("a message field read used inside its onReceive handler compiles (no false 
   });
   const { wasm } = await compile(proc);
   expect(wasm).toBeInstanceOf(Uint8Array);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// simd-buffer-too-small: `loadVec` / `storeVec` on a buffer holding fewer than
+// four elements. The index clamp saturates into `[0, size - 4]`, which is empty
+// below four elements — every offset would still make the 16-byte access run
+// past the buffer into an adjacent memory region.
+// ─────────────────────────────────────────────────────────────────────────
+
+test("loadVec with a dynamic offset on a 3-element buffer is a capture-time error", () => {
+  expect(() =>
+    defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      const buf = state.buffer.f32({ size: 3 });
+      return {
+        process: () => {
+          forSample((i) => {
+            out
+              .ch(0)
+              .at(i)
+              .write(sumLanes(buf.loadVec(i)));
+          });
+        },
+      };
+    }),
+  ).toThrow(/simd-buffer-too-small/);
+});
+
+test("storeVec with a dynamic offset on a 3-element buffer is a capture-time error", () => {
+  expect(() =>
+    defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      const buf = state.buffer.f32({ size: 3 });
+      return {
+        process: () => {
+          forSample((i) => {
+            buf.storeVec(i, splat(f32(1)));
+            out.ch(0).at(i).write(0);
+          });
+        },
+      };
+    }),
+  ).toThrow(/simd-buffer-too-small/);
+});
+
+test("a 4-element buffer is the smallest that accepts a SIMD lane window", () => {
+  expect(() =>
+    defineProcessor(() => {
+      const out = audioOutput({ channels: 1, name: "main" });
+      const buf = state.buffer.f32({ size: 4 });
+      return {
+        process: () => {
+          forSample((i) => {
+            buf.storeVec(i, splat(f32(1)));
+            out
+              .ch(0)
+              .at(i)
+              .write(sumLanes(buf.loadVec(i)));
+          });
+        },
+      };
+    }),
+  ).not.toThrow();
 });

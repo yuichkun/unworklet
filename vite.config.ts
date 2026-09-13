@@ -158,12 +158,9 @@ export default defineConfig({
       // silently never run.
       "scripts/vite.config.ts",
     ],
-    // examples/demo is NOT aggregated here. It depends on `@vitejs/devtools`, whose
-    // peer wiring spins up a second vite-plus-test runner that breaks this shared
-    // collector (it hangs). The demo runs in its own CI jobs instead: the node suite
-    // standalone (`cd examples/demo && vp test run`) and the runtime-compile browser
-    // e2e on its own config (examples/demo/vite.browser.config.ts). The root config
-    // is not itself a project; every test comes from the projects above.
+    // The demo is validated as a consumer app, with its own offline suite and
+    // runtime-compile browser config. The root is not itself a project; every
+    // aggregated test comes from the projects above.
     include: [],
   },
 });

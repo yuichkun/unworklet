@@ -23,7 +23,6 @@
  * plain function to a chain-test failure.
  */
 
-import type { RenderOfflineResult } from "@unworklet/offline";
 import { expect } from "vitest";
 
 import type {
@@ -34,6 +33,7 @@ import type {
   MasterOptions,
   PartialExpectedEvent,
   PeakAtSampleOptions,
+  RenderResultLike,
   SnapshotOptions,
   SnapshotResolutionState,
 } from "./index.ts";
@@ -65,7 +65,7 @@ import {
  * `expect(1).toMatchAudio(...)` resolve to `never` and become a build error
  * (no runtime cost).
  */
-type WhenResult<T, M> = T extends RenderOfflineResult ? M : never;
+type WhenResult<T, M> = T extends RenderResultLike ? M : never;
 
 /**
  * A widened guard specific to `toMatchAudioSnapshot`. Mirroring the plain
@@ -76,9 +76,7 @@ type WhenResult<T, M> = T extends RenderOfflineResult ? M : never;
  * multi-channel value). Non-audio actuals (`number`, `string`, etc.) resolve to
  * `never` and become a build error, just as with `WhenResult`.
  */
-type WhenAudioActual<T, M> = T extends RenderOfflineResult | Float32Array | Float32Array[]
-  ? M
-  : never;
+type WhenAudioActual<T, M> = T extends RenderResultLike | Float32Array | Float32Array[] ? M : never;
 
 /**
  * The chain matchers `@unworklet/test/extend` adds to `expect(...)`. Declared
@@ -92,7 +90,7 @@ type WhenAudioActual<T, M> = T extends RenderOfflineResult | Float32Array | Floa
 export interface UnworkletAudioMatchers<T> {
   toMatchAudio: WhenResult<
     T,
-    (expected: RenderOfflineResult | Float32Array[], opts?: AudioMatchOptions) => void
+    (expected: RenderResultLike | Float32Array[], opts?: AudioMatchOptions) => void
   >;
   toMatchAudioFile: WhenResult<T, (wavPath: string, opts?: AudioMatchOptions) => void>;
   toMatchAudioSnapshot: WhenAudioActual<T, (opts?: SnapshotOptions) => Promise<void>>;
@@ -150,11 +148,11 @@ type MatcherResult = { pass: boolean; message: () => string };
 const wrap =
   <Args extends unknown[]>(
     chainName: string,
-    fn: (received: RenderOfflineResult, ...args: Args) => void,
+    fn: (received: RenderResultLike, ...args: Args) => void,
   ) =>
   (received: unknown, ...args: Args): MatcherResult => {
     try {
-      fn(received as RenderOfflineResult, ...args);
+      fn(received as RenderResultLike, ...args);
       return { pass: true, message: () => `expected NOT to satisfy ${chainName}` };
     } catch (err) {
       return {
@@ -198,7 +196,7 @@ async function toMatchAudioSnapshotChain(
       _unworkletCounters: thisHost._unworkletCounters,
     };
     await expectAudioMatchesSnapshotWithState(
-      received as RenderOfflineResult | Float32Array | Float32Array[],
+      received as RenderResultLike | Float32Array | Float32Array[],
       opts ?? {},
       state,
     );

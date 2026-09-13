@@ -110,11 +110,72 @@ export function f(): void {
   void node.inputs.main;
   // @ts-expect-error undeclared param name
   void node.params.nope;
+  // @ts-expect-error node surface properties are readonly
+  node.params = { gain: node.params.gain };
   // @ts-expect-error undeclared state name
   void node.state.nope;
 }
 `,
   );
+
+  writeFileSync(
+    path.join(dir, "processor-fixture.ts"),
+    `import type { CompiledProcessor } from "@unworklet/core";
+export type Config = {
+  params: { gain: "f32" };
+  state: { level: "f32"; active: "bool" };
+  events: {
+    peak: { dir: "out"; fields: { value: "f32" } };
+    control: { dir: "in"; fields: { enabled: "bool" } };
+  };
+  midi: { keys: { dir: "in" }; played: { dir: "out" } };
+  inputs: { main: unknown };
+  outputs: { main: unknown };
+};
+declare const processor: CompiledProcessor<Config>;
+export { processor };
+export default processor;
+`,
+  );
+  for (const [name, argument] of [
+    ["value", "typeof processor"],
+    ["module", 'typeof import("./processor-fixture.js")'],
+    ["config", "Config"],
+  ]) {
+    writeFileSync(
+      path.join(dir, `assigned-node-${name}.ts`),
+      `${PRELUDE}
+import type { UnworkletNode } from "@unworklet/core";
+import processor, { type Config } from "./processor-fixture.js";
+export async function f(): Promise<void> {
+  const node: UnworkletNode<${argument}> = await createNode(ctx, processor);
+  node.params.gain.value = 0.5;
+  node.state.level.subscribe((value: number) => { void value; });
+  node.state.active.subscribe((value: boolean) => { void value; });
+  node.events.peak.on(({ value }) => { const level: number = value; void level; });
+  node.events.control.emit({ enabled: true });
+  node.midi.keys.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+  node.midi.played.onEvent("noteOn", ({ note }) => { const pitch: number = note; void pitch; });
+  node.outputs.main.connect(ctx.destination);
+  void node.inputs.main;
+  const witness: Config = node.__processor;
+  void witness;
+  // @ts-expect-error undeclared param name
+  void node.params.nope;
+  // @ts-expect-error scalar state has a number callback
+  node.state.level.subscribe((value: boolean) => { void value; });
+  // @ts-expect-error inbound event requires a boolean
+  node.events.control.emit({ enabled: "yes" });
+  // @ts-expect-error outbound event has no emitter
+  node.events.peak.emit({ value: 1 });
+  // @ts-expect-error inbound MIDI has no listener
+  node.midi.keys.onEvent("noteOn", () => {});
+  // @ts-expect-error outbound MIDI has no sender
+  node.midi.played.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+}
+`,
+    );
+  }
 
   // Every surface — params / state / events / midi / inputs / outputs — keyed by
   // the declared names: each declared member usable, each undeclared one an error.
@@ -234,6 +295,12 @@ test("declared names across every surface are typed; undeclared names error", ()
 test("UnworkletNode<typeof processorImport> resolves the per-processor surface directly", () => {
   expect(diagnose("node-from-processor.ts")).toEqual([]);
 });
+
+for (const form of ["value", "module", "config"]) {
+  test(`createNode assigns to an annotated ${form} node without widening its surface`, () => {
+    expect(diagnose(`assigned-node-${form}.ts`)).toEqual([]);
+  });
+}
 
 test("the main-side event surface narrows .on / .emit by the declared direction", () => {
   expect(diagnose("event-direction.ts")).toEqual([]);

@@ -12,7 +12,7 @@
  *   control exactly when the ready ack is dispatched
  */
 
-import { expect, test, vi } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 import { createNode, inspect } from "./client.ts";
 import { getDevNodes } from "./devRegistry.ts";
@@ -343,11 +343,13 @@ const makeMockProcessor = (overrides?: {
   }>;
   migrations?: CompiledProcessor<unknown>["migrations"];
   bakedSampleRate?: number;
+  id?: string;
 }): CompiledProcessor<unknown> =>
   ({
     graph: {} as never,
     schemaHash: "test",
     migrations: overrides?.migrations,
+    ...(overrides && "id" in overrides ? { id: overrides.id } : {}),
     worklet: {
       initialize: () => {},
       process: () => true,
@@ -373,12 +375,39 @@ const makeMockProcessor = (overrides?: {
     __compiledProcessor: undefined,
   }) as unknown as CompiledProcessor<unknown>;
 
+/**
+ * Nodes handed out by `startCreate`, disposed after every test.
+ *
+ * A subscribed node keeps a drain loop armed until `dispose()`, and in a realm
+ * without `requestAnimationFrame` — which is every test that does not install
+ * the rAF mock — that loop is a self-renewing 250 ms timer. Left running, it
+ * fires inside a LATER test and arms itself against whatever scheduler that
+ * test installed, so a test asserting on the rAF mock sees a poll it never
+ * made. Disposal here is idempotent, so a test that tears its own node down
+ * loses nothing.
+ */
+const liveNodes: Array<{ dispose: () => void }> = [];
+
+afterEach(() => {
+  for (const node of liveNodes.splice(0)) {
+    try {
+      node.dispose();
+    } catch {
+      // The test may already have restored the globals the node was built on.
+    }
+  }
+});
+
 const startCreate = async <T>(fn: () => Promise<T>, fire: () => void): Promise<T> => {
   const promise = fn();
   // Allow microtasks (= addModule + fetch) to resolve before firing ready.
   await new Promise((r) => setTimeout(r, 0));
   fire();
-  return promise;
+  const created = await promise;
+  if (typeof (created as { dispose?: unknown } | null)?.dispose === "function") {
+    liveNodes.push(created as { dispose: () => void });
+  }
+  return created;
 };
 
 test("createNode throws when processor has no moduleUrl", async () => {
@@ -2536,11 +2565,65 @@ test("node.events.<name>.on: f64 / i64 / bool fields are delivered as plain JS v
   }
 });
 
+/**
+ * Build a postMessage-path egress frame (`egressFrame.ts` wire format) the way
+ * the worklet's `postEgressFrame` would — for injecting into the port listener.
+ */
+const buildEgressFrame = (
+  events: Array<{
+    ringIndex: number;
+    head: number;
+    overflowCount: number;
+    slotSize: number;
+    slotsBytes: Uint8Array;
+    contentBytes?: Uint8Array;
+  }>,
+  midis: Array<{
+    ringIndex: number;
+    head: number;
+    overflowCount: number;
+    slotsBytes: Uint8Array;
+    sysexBytes?: Uint8Array;
+  }>,
+): ArrayBuffer => {
+  const align4 = (n: number): number => (n + 3) & ~3;
+  let total = 8;
+  for (const s of events)
+    total += 20 + s.slotsBytes.byteLength + align4(s.contentBytes?.byteLength ?? 0);
+  for (const s of midis)
+    total += 20 + s.slotsBytes.byteLength + align4(s.sysexBytes?.byteLength ?? 0);
+  const buf = new ArrayBuffer(total);
+  const dv = new DataView(buf);
+  const u8 = new Uint8Array(buf);
+  dv.setUint32(0, events.length, true);
+  dv.setUint32(4, midis.length, true);
+  let cursor = 8;
+  const writeSection = (
+    s: { ringIndex: number; head: number; overflowCount: number; slotsBytes: Uint8Array },
+    slotSize: number,
+    extra: Uint8Array | undefined,
+  ): void => {
+    dv.setUint32(cursor, s.ringIndex, true);
+    dv.setInt32(cursor + 4, s.head, true);
+    dv.setUint32(cursor + 8, s.slotsBytes.byteLength / slotSize, true);
+    dv.setInt32(cursor + 12, s.overflowCount, true);
+    dv.setUint32(cursor + 16, extra?.byteLength ?? 0, true);
+    cursor += 20;
+    u8.set(s.slotsBytes, cursor);
+    cursor += s.slotsBytes.byteLength;
+    if (extra !== undefined) u8.set(extra, cursor);
+    cursor = align4(cursor + (extra?.byteLength ?? 0));
+  };
+  for (const s of events) writeSection(s, s.slotSize, s.contentBytes);
+  for (const s of midis) writeSection(s, 8, s.sysexBytes);
+  return buf;
+};
+
 test("node.events.<name>.on: postMessage transport updates subscribers and diagnostics immediately via port.onmessage", async () => {
-  // postMessage path: the worklet posts `{ kind: 'event', ringIndex,
-  // newSlotsBytes, newSlotCount, overflowCount }`. The main side decodes the
-  // payload via onEventMessage, fires subscribers immediately, and mirrors
-  // overflowCount. No rAF flush needed.
+  // postMessage path: the worklet posts one `{ kind: 'egress' }` frame per
+  // quantum (`egressFrame.ts`). The main side decodes it via onEgressMessage,
+  // fires subscribers immediately, mirrors overflowCount, and returns the
+  // buffer with consumed-tail acks. No rAF flush needed.
   const raf = installRafMock();
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
@@ -2550,31 +2633,77 @@ test("node.events.<name>.on: postMessage transport updates subscribers and diagn
     );
     const calls: unknown[] = [];
     node.events["peak"]!.on((p) => calls.push(p));
-    // Build a newSlotsBytes buffer for 1 slot (atSample i32 + level f32 = 8 bytes)
-    const slotBuf = new ArrayBuffer(8);
-    const view = new DataView(slotBuf);
-    view.setInt32(0, 3, true);
-    view.setFloat32(4, 0.5, true);
-    // simulate an event message dispatch via the port listener
+    // One slot (atSample i32 + level f32 = 8 bytes), producer head at 1.
+    const slotBytes = new Uint8Array(8);
+    const slotView = new DataView(slotBytes.buffer);
+    slotView.setInt32(0, 3, true);
+    slotView.setFloat32(4, 0.5, true);
+    const frame = buildEgressFrame(
+      [{ ringIndex: 0, head: 1, overflowCount: 7, slotSize: 8, slotsBytes: slotBytes }],
+      [],
+    );
+    // Capture the recycle ack the client posts back after consuming.
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
     for (const listener of h.lastNode!.port.__listeners) {
-      listener({
-        data: {
-          kind: "event",
-          ringIndex: 0,
-          newSlotsBytes: slotBuf,
-          newSlotCount: 1,
-          overflowCount: 7,
-        },
-      } as MessageEvent);
+      listener({ data: { kind: "egress", buffer: frame } } as MessageEvent);
     }
     expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
     expect(node.events["peak"]!.diagnostics.overflowCount()).toBe(7);
+    // The buffer went back to the pool with the consumed tail (= head).
+    expect(posted).toEqual([
+      { kind: "egress-recycle", buffer: frame, eventTails: [[0, 1]], midiTails: [] },
+    ]);
     // rAF flush produces no additional fires (port-driven, no polling needed)
     raf.flush();
     expect(calls).toEqual([{ atSample: 3, level: 0.5 }]);
   } finally {
     h.cleanup();
     raf.restore();
+  }
+});
+
+test("egress frame: an out-of-range ring index stops the parse and a subscriber-less section still acks — the buffer always recycles", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+
+    // Out-of-range ring index: the section cannot be attributed, so the parse
+    // stops — but the buffer must still return to the pool (an unreturned
+    // buffer would shrink the pool forever).
+    const bogus = buildEgressFrame(
+      [{ ringIndex: 5, head: 1, overflowCount: 0, slotSize: 8, slotsBytes: new Uint8Array(8) }],
+      [],
+    );
+    for (const l of h.lastNode!.port.__listeners) {
+      l({ data: { kind: "egress", buffer: bogus } } as MessageEvent);
+    }
+    expect(posted).toEqual([
+      { kind: "egress-recycle", buffer: bogus, eventTails: [], midiTails: [] },
+    ]);
+
+    // A valid section with zero subscribers: no dispatch, but the consumed
+    // tail is still acknowledged (the data was delivered to main; nobody
+    // listening is main's business, not the producer's).
+    posted.length = 0;
+    const quiet = buildEgressFrame(
+      [{ ringIndex: 0, head: 2, overflowCount: 0, slotSize: 8, slotsBytes: new Uint8Array(16) }],
+      [],
+    );
+    for (const l of h.lastNode!.port.__listeners) {
+      l({ data: { kind: "egress", buffer: quiet } } as MessageEvent);
+    }
+    expect(posted).toEqual([
+      { kind: "egress-recycle", buffer: quiet, eventTails: [[0, 2]], midiTails: [] },
+    ]);
+    expect(node.events["peak"]).toBeDefined();
+  } finally {
+    h.cleanup();
   }
 });
 
@@ -2726,6 +2855,44 @@ test("node.events.<name>.emit(payload): overflow path increments overflowCount w
     expect(Atomics.load(header, 2)).toBe(1);
     expect(node.events["preset"].diagnostics.overflowCount()).toBe(1);
   } finally {
+    h.cleanup();
+  }
+});
+
+test("node.events.<name>.emit(payload): ownership transfer uses the consumer's fresh acknowledgment", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const compare = Atomics.compareExchange;
+  try {
+    const smallRing = { ...presetMessageRing, capacity: 4 };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [smallRing] })),
+      h.fireReady,
+    );
+    const options = h.lastNode!.__constructorRecord.options.processorOptions!;
+    const header = new Int32Array(options.messageRingsBuffer as SharedArrayBuffer, 0, 3);
+    const access = options.ingressAccessBuffer;
+    for (let k = 1; k <= 4; k++) node.events.preset.emit({ slot: k });
+    let fired = false;
+    Atomics.compareExchange = ((
+      view: Int32Array,
+      index: number,
+      expected: number,
+      value: number,
+    ): number => {
+      if (!fired && view.buffer === access) {
+        fired = true;
+        Atomics.store(header, 1, 4);
+      }
+      return compare(view, index, expected, value);
+    }) as typeof Atomics.compareExchange;
+    node.events.preset.emit({ slot: 5 });
+    expect(fired).toBe(true);
+    expect(Atomics.load(header, 0)).toBe(5);
+    expect(Atomics.load(header, 1)).toBe(4);
+    expect(node.events.preset.diagnostics.overflowCount()).toBe(0);
+    node.dispose();
+  } finally {
+    Atomics.compareExchange = compare;
     h.cleanup();
   }
 });
@@ -2910,6 +3077,68 @@ test("node.midi.<in>.send: postMessage transport encodes to wire bytes and deliv
   }
 });
 
+const midiInSysexFixture = {
+  name: "sin",
+  direction: "in" as const,
+  wasmRingBase: 1024,
+  capacity: 256,
+  sysex: { wasmBase: 8192, perChunk: 1024, chunks: 16 },
+};
+
+test("node.midi.<in>.send: sysex larger than the slot content limit throws at the API boundary (never truncate-and-deliver)", async () => {
+  // A truncated sysex loses its 0xF7 terminator and corrupts downstream device
+  // state — worse than no message. `send` is main-thread JS, so the boundary
+  // can throw; nothing reaches the ring.
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInSysexFixture] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const oversized = new Uint8Array(1021); // limit is perChunk - 4 = 1020
+    oversized[0] = 0xf0;
+    expect(() => node.midi["sin"]!.send({ type: "sysex", data: oversized })).toThrow(
+      /sysex-payload-too-large/,
+    );
+    expect(() => node.midi["sin"]!.send({ type: "sysex", data: oversized })).toThrow(/1020/);
+    expect(posted).toEqual([]);
+    // At the limit it goes through.
+    const maxed = new Uint8Array(1020);
+    maxed[0] = 0xf0;
+    expect(() => node.midi["sin"]!.send({ type: "sysex", data: maxed })).not.toThrow();
+    expect(posted.length).toBe(1);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<in>.send: sysex to a port with no sysex region throws instead of corrupting the ring", async () => {
+  // A port's sysex content region exists only when the processor handles or
+  // emits sysex on it. Pre-guard, the SAB path advanced `head` over a slot it
+  // never wrote — a consumer then decoded stale bytes (issue #19).
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const options = h.lastNode!.__constructorRecord.options.processorOptions as {
+      midiRingsBuffer?: SharedArrayBuffer;
+      midiRingSabOffsets?: number[];
+    };
+    expect(() =>
+      node.midi["in"]!.send({ type: "sysex", data: new Uint8Array([0xf0, 0x7e, 0xf7]) }),
+    ).toThrow(/sysex-unsupported-port/);
+    // The ring header is untouched: head still 0, no stale slot published.
+    const header = new Int32Array(options.midiRingsBuffer!, options.midiRingSabOffsets![0]!, 3);
+    expect(header[0]).toBe(0);
+  } finally {
+    h.cleanup();
+  }
+});
+
 test("node.midi.<out>.onEvent: postMessage transport decodes a midiOut slot and dispatches to matching type handler", async () => {
   const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
   try {
@@ -2919,16 +3148,18 @@ test("node.midi.<out>.onEvent: postMessage transport decodes a midiOut slot and 
     );
     const got: MidiEvent[] = [];
     node.midi["out"]!.onEvent("noteOn", (e) => got.push(e));
-    const slot = new ArrayBuffer(8);
-    const dv = new DataView(slot);
+    const slotBytes = new Uint8Array(8);
+    const dv = new DataView(slotBytes.buffer);
     dv.setUint8(0, 0x95); // noteOn channel 5
     dv.setUint8(1, 64);
     dv.setUint8(2, 120);
     dv.setUint32(4, 7, true);
+    const frame = buildEgressFrame(
+      [],
+      [{ ringIndex: 0, head: 1, overflowCount: 0, slotsBytes: slotBytes }],
+    );
     for (const l of h.lastNode!.port.__listeners) {
-      l({
-        data: { kind: "midiOut", ringIndex: 0, newSlotsBytes: slot, newSlotCount: 1 },
-      } as MessageEvent);
+      l({ data: { kind: "egress", buffer: frame } } as MessageEvent);
     }
     expect(got).toEqual([{ type: "noteOn", channel: 5, note: 64, velocity: 120 }]);
   } finally {
@@ -2948,15 +3179,17 @@ test("node.midi.<out>.onEvent: handler does not fire when the event type does no
     node.midi["out"]!.onEvent("noteOn", (e) => notes.push(e));
     node.midi["out"]!.onEvent("cc", (e) => ccs.push(e));
     // a cc slot — only the cc handler should fire
-    const slot = new ArrayBuffer(8);
-    const dv = new DataView(slot);
+    const slotBytes = new Uint8Array(8);
+    const dv = new DataView(slotBytes.buffer);
     dv.setUint8(0, 0xb2); // cc channel 2
     dv.setUint8(1, 74);
     dv.setUint8(2, 33);
+    const frame = buildEgressFrame(
+      [],
+      [{ ringIndex: 0, head: 1, overflowCount: 0, slotsBytes: slotBytes }],
+    );
     for (const l of h.lastNode!.port.__listeners) {
-      l({
-        data: { kind: "midiOut", ringIndex: 0, newSlotsBytes: slot, newSlotCount: 1 },
-      } as MessageEvent);
+      l({ data: { kind: "egress", buffer: frame } } as MessageEvent);
     }
     expect(notes).toEqual([]);
     expect(ccs).toEqual([{ type: "cc", channel: 2, controller: 74, value: 33 }]);
@@ -3552,9 +3785,12 @@ test("devtools on: createNode auto-registers, devDump round-trips, dispose unreg
         },
       } as MessageEvent);
     }
-    const slots = await dumpPromise;
-    expect(slots).toHaveLength(1);
-    expect(slots[0]!.name).toBe("meterL");
+    const dump = await dumpPromise;
+    expect(dump.slots).toHaveLength(1);
+    expect(dump.slots[0]!.name).toBe("meterL");
+    // The worklet reports the render-health counter alongside the slots; a
+    // response without one reads as a healthy render.
+    expect(dump.scrubbedSamples).toBe(0);
 
     node.dispose();
     expect(getDevNodes().some((x) => x.node === node)).toBe(false);
@@ -3638,5 +3874,834 @@ test("rAF loop does not re-arm after dispose() is called from inside a subscribe
   } finally {
     h.cleanup();
     raf.restore();
+  }
+});
+
+// ── drain scheduler: hidden-tab / no-rAF fallback (issue #26) ────────────────
+// rAF throttles to ~0 in a hidden tab while the audio thread keeps emitting
+// into the rings (drop-oldest) — an rAF-only drain loses MIDI note-offs (stuck
+// notes) exactly when the UI goes away. The scheduler must fall back to a
+// timer whenever rAF is unavailable OR the page is hidden, flush immediately
+// on visibility transitions, and tear its listener down on dispose.
+
+type FakeDocument = {
+  visibilityState: "visible" | "hidden";
+  addEventListener: (kind: string, fn: () => void) => void;
+  removeEventListener: (kind: string, fn: () => void) => void;
+  __listeners: Array<() => void>;
+  __fire: () => void;
+};
+
+const installFakeDocument = (
+  initial: "visible" | "hidden",
+): { doc: FakeDocument; restore: () => void } => {
+  const listeners: Array<() => void> = [];
+  const doc: FakeDocument = {
+    visibilityState: initial,
+    addEventListener: (kind, fn) => {
+      if (kind === "visibilitychange") listeners.push(fn);
+    },
+    removeEventListener: (kind, fn) => {
+      const i = listeners.indexOf(fn);
+      if (i >= 0) listeners.splice(i, 1);
+    },
+    __listeners: listeners,
+    __fire: () => {
+      // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot against listener removal during dispatch
+      for (const fn of [...listeners]) fn();
+    },
+  };
+  const target = globalThis as unknown as { document?: unknown };
+  const prev = target.document;
+  const had = "document" in target;
+  target.document = doc;
+  return {
+    doc,
+    restore: () => {
+      if (had) target.document = prev;
+      else delete target.document;
+    },
+  };
+};
+
+const publishFixture = {
+  publishSlots: [{ name: "v", type: "i32" as const, sharedOffset: 0, counterOffset: 4 }],
+};
+
+test("drain scheduler: without requestAnimationFrame, a timer still drives the drain (no-rAF realm)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const target = globalThis as unknown as { requestAnimationFrame?: (cb: () => void) => number };
+  const prevRaf = target.requestAnimationFrame;
+  delete target.requestAnimationFrame;
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    // Fake timers AFTER the ready handshake (which needs real timers), BEFORE
+    // subscribe (which arms the drain timer).
+    vi.useFakeTimers();
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    Atomics.store(view, 0, 42);
+    Atomics.store(view, 2, 1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(calls).toEqual([42]);
+    node.dispose();
+  } finally {
+    vi.useRealTimers();
+    h.cleanup();
+    if (prevRaf !== undefined) target.requestAnimationFrame = prevRaf;
+  }
+});
+
+test("drain scheduler: a hidden page drains on the timer even though rAF never fires", async () => {
+  const fakeDoc = installFakeDocument("hidden");
+  const raf = installRafMock(); // present but never flushed = the throttled hidden tab
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    vi.useFakeTimers();
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    Atomics.store(view, 0, 7);
+    Atomics.store(view, 2, 1);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(calls).toEqual([7]);
+    node.dispose();
+  } finally {
+    vi.useRealTimers();
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
+test("drain scheduler: visibility transitions flush immediately and swap the backend", async () => {
+  const fakeDoc = installFakeDocument("visible");
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    const buf = h.lastNode!.__constructorRecord.options.processorOptions!
+      .publishBuffer as SharedArrayBuffer;
+    const view = new Int32Array(buf);
+    const calls: unknown[] = [];
+    vi.useFakeTimers();
+    node.state["v"]!.subscribe((value) => calls.push(value));
+    expect(raf.pending).toBeGreaterThan(0); // visible = rAF backend
+
+    // Emissions land, then the tab goes hidden: the transition itself flushes
+    // (no rAF tick, no timer advance needed).
+    Atomics.store(view, 0, 1);
+    Atomics.store(view, 2, 1);
+    fakeDoc.doc.visibilityState = "hidden";
+    fakeDoc.doc.__fire();
+    expect(calls).toEqual([1]);
+
+    // While hidden the timer keeps draining.
+    Atomics.store(view, 0, 2);
+    Atomics.store(view, 2, 2);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(calls).toEqual([1, 2]);
+
+    // Back to visible: the transition flushes and re-arms rAF.
+    Atomics.store(view, 0, 3);
+    Atomics.store(view, 2, 3);
+    fakeDoc.doc.visibilityState = "visible";
+    fakeDoc.doc.__fire();
+    expect(calls).toEqual([1, 2, 3]);
+    expect(raf.pending).toBeGreaterThan(0);
+    node.dispose();
+  } finally {
+    vi.useRealTimers();
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
+test("drain scheduler: dispose removes the visibilitychange listener", async () => {
+  const fakeDoc = installFakeDocument("visible");
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    node.state["v"]!.subscribe(() => {});
+    expect(fakeDoc.doc.__listeners.length).toBe(1);
+    node.dispose();
+    expect(fakeDoc.doc.__listeners.length).toBe(0);
+  } finally {
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
+test("drain scheduler: a failed createNode leaves no visibilitychange listener behind", async () => {
+  // The caller of a rejected createNode has no handle to dispose, so a listener
+  // registered before the node exists is unreachable — and it retains the whole
+  // creation closure. Retrying the connection would stack one per attempt.
+  const fakeDoc = installFakeDocument("visible");
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const RealNode = (globalThis as Record<string, unknown>)["AudioWorkletNode"];
+  (globalThis as Record<string, unknown>)["AudioWorkletNode"] = class {
+    constructor() {
+      throw new Error("AudioWorkletNode construction failed");
+    }
+  };
+  try {
+    await expect(createNode(h.context as never, makeMockProcessor(publishFixture))).rejects.toThrow(
+      /AudioWorkletNode construction failed/,
+    );
+    expect(fakeDoc.doc.__listeners.length).toBe(0);
+  } finally {
+    (globalThis as Record<string, unknown>)["AudioWorkletNode"] = RealNode;
+    h.cleanup();
+    raf.restore();
+    fakeDoc.restore();
+  }
+});
+
+// ── restore identity gate (issue #28) ────────────────────────────────────────
+// schemaHash hashes declarations only, so two logically different processors
+// with the same slot schema share it — a lowpass preset restored into a
+// distortion landed in its slots and reported ok:true. When both the blob and
+// the processor carry an id, a mismatch refuses BEFORE anything reaches the
+// worklet; id-less blobs/processors keep the legacy matching.
+
+test("restore refuses a blob whose processor id differs (nothing reaches the worklet)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ id: "distortion" })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m);
+    const blob = encodeSnapshot("test", null, [], "lowpass"); // schemaHash matches, id does not
+    const result = await node.restore(blob);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.step).toBe("identity");
+      expect(result.error.message).toContain("processor-mismatch");
+      expect(result.error.message).toContain("lowpass");
+      expect(result.error.message).toContain("distortion");
+    }
+    expect(posted).toEqual([]); // the worklet never saw a restore request
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("restore proceeds when the blob carries no id (legacy blobs keep working)", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ id: "distortion" })),
+      h.fireReady,
+    );
+    const posted: Array<{ kind?: string }> = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m as { kind?: string });
+    const legacy = encodeSnapshot("test", null, []); // no id
+    void node.restore(legacy); // resolves only when the worklet answers; the send is the assertion
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posted.map((m) => m.kind)).toEqual(["restore"]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.snapshot() stamps the processor id into the blob", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ id: "my-synth" })),
+      h.fireReady,
+    );
+    const pending = node.snapshot();
+    await new Promise((r) => setTimeout(r, 0));
+    // Answer the worklet's snapshot request through the port listeners.
+    const req = 0; // first request id
+    for (const listener of h.lastNode!.port.__listeners) {
+      listener({ data: { kind: "snapshot-response", requestId: req, slots: [] } });
+    }
+    const blob = await pending;
+    expect(decodeSnapshot(blob).processorId).toBe("my-synth");
+  } finally {
+    h.cleanup();
+  }
+});
+
+for (const [elementType, value] of [
+  ["f64", Float64Array.from([1.25, -2.5])],
+  ["u8", Uint8Array.from([0, 255])],
+  ["i32", Int32Array.from([-1, 2147483647])],
+  ["bool", Int32Array.from([0, 1])],
+  ["i64", BigInt64Array.from([-1n, 9007199254740993n])],
+] as const) {
+  for (const sab of [false, true]) {
+    test(`typed events deliver owned ${elementType} data on ${sab ? "SAB" : "postMessage"}`, async () => {
+      const raf = installRafMock();
+      const h = installMockGlobals(new Uint8Array([0, 1, 2]), {
+        crossOriginIsolated: sab ? true : "deleted",
+      });
+      const typedRing = {
+        name: "typed",
+        wasmRingBase: 0,
+        capacity: 16,
+        slotSize: 12,
+        fields: [
+          { name: "atSample", wireType: "i32" as const, offsetInSlot: 0, byteSize: 4 },
+          {
+            name: "data",
+            wireType: "i32" as const,
+            payloadElementType: elementType,
+            offsetInSlot: 4,
+            byteSize: 8,
+          },
+        ],
+        payloadContent: { wasmBase: 256, capacity: value.byteLength * 16 },
+      };
+      try {
+        const node = await startCreate(
+          () => createNode(h.context as never, makeMockProcessor({ eventRings: [typedRing] })),
+          h.fireReady,
+        );
+        const received: unknown[] = [];
+        node.events.typed!.on((event) => received.push(event));
+        const slots = new Uint8Array(12);
+        const slot = new DataView(slots.buffer);
+        slot.setInt32(0, 7, true);
+        slot.setInt32(4, value.byteLength, true);
+        const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+        if (sab) {
+          const options = h.lastNode!.__constructorRecord.options.processorOptions!;
+          const ringBuffer = options.eventRingsBuffer as SharedArrayBuffer;
+          new Uint8Array(ringBuffer, 12, 12).set(slots);
+          new Uint8Array(options.eventContentBuffer as SharedArrayBuffer).set(bytes);
+          Atomics.store(new Int32Array(ringBuffer, 0, 3), 0, 1);
+          raf.flush();
+          new Uint8Array(options.eventContentBuffer as SharedArrayBuffer).fill(0);
+        } else {
+          const frame = buildEgressFrame(
+            [
+              {
+                ringIndex: 0,
+                head: 1,
+                overflowCount: 0,
+                slotSize: 12,
+                slotsBytes: slots,
+                contentBytes: bytes,
+              },
+            ],
+            [],
+          );
+          for (const listener of h.lastNode!.port.__listeners)
+            listener({ data: { kind: "egress", buffer: frame } });
+          new Uint8Array(frame).fill(0);
+        }
+        expect(received).toEqual([{ atSample: 7, data: value }]);
+      } finally {
+        h.cleanup();
+        raf.restore();
+      }
+    });
+  }
+}
+
+test("fallback port listeners ignore malformed control traffic and keep valid counters and publish values usable", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            ...publishFixture,
+            eventRings: [peakEventRing],
+            messageRings: [presetMessageRing],
+            midiRings: [midiInFixture, midiOutFixture],
+          }),
+        ),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    node.state.v!.subscribe((value) => received.push(value));
+    const deliver = (data: unknown) => {
+      for (const listener of h.lastNode!.port.__listeners) listener({ data });
+    };
+    const malformed: unknown[] = [
+      null,
+      undefined,
+      7,
+      {},
+      { kind: "unrelated" },
+      { kind: "egress", buffer: 42 },
+    ];
+    for (const kind of ["publish", "message-overflow", "midi-overflow"]) {
+      malformed.push({ kind });
+      for (const ringIndex of ["0", -1, 99]) malformed.push({ kind, ringIndex, overflowCount: 4 });
+      malformed.push({ kind, ringIndex: 0, overflowCount: "4" });
+    }
+    malformed.push(
+      { kind: "publish", slotIndex: "0", valueBits: 1, version: 1 },
+      { kind: "publish", slotIndex: -1, valueBits: 1, version: 1 },
+      { kind: "publish", slotIndex: 99, valueBits: 1, version: 1 },
+      { kind: "publish", slotIndex: 0, valueBits: "1", version: 1 },
+      { kind: "publish", slotIndex: 0, valueBits: 1, version: "1" },
+    );
+    expect(() => malformed.forEach(deliver)).not.toThrow();
+    expect(received).toEqual([]);
+    expect(node.events.preset!.diagnostics.overflowCount()).toBe(0);
+    expect(node.midi.in!.diagnostics.overflowCount()).toBe(0);
+    deliver({ kind: "publish", slotIndex: 0, valueBits: 42, version: 1 });
+    deliver({ kind: "message-overflow", ringIndex: 0, overflowCount: 3 });
+    deliver({ kind: "midi-overflow", ringIndex: 0, overflowCount: 5 });
+    expect(received).toEqual([42]);
+    expect(node.events.preset!.diagnostics.overflowCount()).toBe(3);
+    expect(node.midi.in!.diagnostics.overflowCount()).toBe(5);
+    const bogus = buildEgressFrame(
+      [],
+      [{ ringIndex: 99, head: 1, overflowCount: 0, slotsBytes: new Uint8Array(8) }],
+    );
+    expect(() => deliver({ kind: "egress", buffer: bogus })).not.toThrow();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("MIDI scheduling clamps explicit times and the Web MIDI bridge handles empty, short, and sysex packets", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    Object.assign(h.context, { currentTime: 2, sampleRate: 48000 });
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            midiRings: [midiInSysexFixture, midiOutFixture],
+          }),
+        ),
+      h.fireReady,
+    );
+    const posted: Array<{
+      item: { atSample: number; status: number; data1: number; data2: number; sysex?: Uint8Array };
+    }> = [];
+    h.lastNode!.port.postMessage = (m) => posted.push(m as (typeof posted)[number]);
+    for (const time of [1, 2.0005, 3]) {
+      node.midi.sin!.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 }, time);
+    }
+    expect(posted.map((m) => m.item.atSample)).toEqual([0, 24, 127]);
+    node.midi.out!.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+    expect(posted).toHaveLength(3);
+    const input: { onmidimessage: ((event: { data: Uint8Array }) => void) | null } = {
+      onmidimessage: null,
+    };
+    node.midi.sin!.connectFromWebMIDI(input);
+    input.onmidimessage!({ data: new Uint8Array(0) });
+    input.onmidimessage!({ data: Uint8Array.from([0xf8]) });
+    input.onmidimessage!({ data: Uint8Array.from([0x90, 64]) });
+    input.onmidimessage!({ data: Uint8Array.from([0xf0, 0x7e, 0xf7]) });
+    expect(posted).toHaveLength(6);
+    expect(posted[3]!.item).toMatchObject({ status: 0xf8, data1: 0, data2: 0 });
+    expect(posted[4]!.item).toMatchObject({ status: 0x90, data1: 64, data2: 0 });
+    expect(posted[5]!.item.sysex).toEqual(Uint8Array.from([0xf0, 0x7e, 0xf7]));
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("SAB MIDI input records real drop-oldest overflow and preserves wraparound counters", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            midiRings: [{ ...midiInFixture, capacity: 16 }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const buffer = h.lastNode!.__constructorRecord.options.processorOptions!
+      .midiRingsBuffer as SharedArrayBuffer;
+    const header = new Int32Array(buffer, 0, 3);
+    header.set([-1, -17, 0]);
+    node.midi.in!.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+    expect(Array.from(header)).toEqual([0, -16, 1]);
+    expect(node.midi.in!.diagnostics.overflowCount()).toBe(1);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("SAB out-ring cursors cross both signed and unsigned wrap without duplicate delivery", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const buffer = h.lastNode!.__constructorRecord.options.processorOptions!
+      .eventRingsBuffer as SharedArrayBuffer;
+    const header = new Int32Array(buffer, 0, 3);
+    const slots = new DataView(buffer, 12);
+    const received: number[] = [];
+    node.events.peak!.on((value) => received.push((value as unknown as { level: number }).level));
+    for (const [head, tail, value] of [
+      [0x7ffffffe, 0x7ffffffd, 1],
+      [0x80000001, 0x7ffffffe, 2],
+      [0xfffffffe, 0xfffffffd, 3],
+      [1, 0xfffffffe, 4],
+    ]) {
+      for (let i = 0; i < 16; i++) {
+        slots.setInt32(i * 8, 0, true);
+        slots.setFloat32(i * 8 + 4, value!, true);
+      }
+      header.set([head! | 0, tail! | 0, 0]);
+      raf.flush();
+      expect(header[1]).toBe(head! | 0);
+    }
+    expect(received).toEqual([1, 2, 2, 2, 3, 4, 4, 4]);
+    raf.flush();
+    expect(received).toHaveLength(8);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("snapshot replies tolerate missing lists and ignore duplicate or unrelated request ids", async () => {
+  (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__ = true;
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (message) => posted.push(message);
+    const deliver = (data: unknown) => {
+      for (const listener of h.lastNode!.port.__listeners) listener({ data });
+    };
+    for (const kind of ["snapshot-response", "restore-done", "dev-dump-response"])
+      deliver({ kind, requestId: 12345 });
+    const snapshot = node.snapshot();
+    const request = findPosted(posted, "snapshot-request")!;
+    deliver({ kind: "snapshot-response", requestId: request.requestId, slots: null });
+    deliver({ kind: "snapshot-response", requestId: request.requestId, slots: [] });
+    expect(decodeSnapshot(await snapshot).slots).toEqual([]);
+    const restore = node.restore(encodeSnapshot("test", null, []));
+    const restoreRequest = findPosted(posted, "restore")!;
+    deliver({
+      kind: "restore-done",
+      requestId: restoreRequest.requestId,
+      applied: 42,
+      skipped: null,
+      missing: false,
+    });
+    expect(await restore).toMatchObject({ ok: true, applied: [], skipped: [], missing: [] });
+    const dump = getDevNodes()
+      .find((handle) => handle.node === node)!
+      .devDump();
+    const dumpRequest = findPosted(posted, "dev-dump-request")!;
+    deliver({
+      kind: "dev-dump-response",
+      requestId: dumpRequest.requestId,
+      slots: false,
+      scrubbedSamples: 7,
+    });
+    expect(await dump).toEqual({ slots: [], scrubbedSamples: 7 });
+  } finally {
+    delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
+    h.cleanup();
+  }
+});
+
+test("mixed subscriptions keep one drain alive and silent event rings still acknowledge their batches", async () => {
+  const raf = installRafMock();
+  const doc = installFakeDocument("visible");
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            ...publishFixture,
+            eventRings: [peakEventRing],
+            midiRings: [midiOutFixture],
+          }),
+        ),
+      h.fireReady,
+    );
+    doc.doc.__fire();
+    const offState = node.state.v!.subscribe(() => {});
+    const offEvent = node.events.peak!.on(() => {});
+    const offMidi = node.midi.out!.onEvent("noteOn", () => {});
+    const offMidiSecond = node.midi.out!.onEvent("noteOn", () => {});
+    offState();
+    offEvent();
+    offMidi();
+    expect(raf.pending).toBe(1);
+    const options = h.lastNode!.__constructorRecord.options.processorOptions!;
+    const eventHeader = new Int32Array(options.eventRingsBuffer as SharedArrayBuffer, 0, 3);
+    eventHeader[0] = 1;
+    const publish = new Int32Array(options.publishBuffer as SharedArrayBuffer);
+    publish.set([42, 0, 1]);
+    raf.flush();
+    expect(eventHeader[1]).toBe(1);
+    offMidiSecond();
+    expect(raf.pending).toBe(0);
+  } finally {
+    h.cleanup();
+    doc.restore();
+    raf.restore();
+  }
+});
+
+test("one event name can receive a worklet event and send a main-thread message", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({
+            eventRings: [peakEventRing],
+            messageRings: [{ ...presetMessageRing, name: "peak" }],
+          }),
+        ),
+      h.fireReady,
+    );
+    const received: unknown[] = [];
+    node.events.peak!.on((value) => received.push(value));
+    node.events.peak!.emit({ slot: 7 });
+    const options = h.lastNode!.__constructorRecord.options.processorOptions!;
+    expect(new Int32Array(options.messageRingsBuffer as SharedArrayBuffer, 12, 1)[0]).toBe(7);
+    const ring = options.eventRingsBuffer as SharedArrayBuffer;
+    new DataView(ring).setFloat32(16, 0.5, true);
+    new Int32Array(ring, 0, 3)[0] = 1;
+    raf.flush();
+    expect(received).toEqual([{ atSample: 0, level: 0.5 }]);
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});
+
+test("MIDI scheduling uses the declared fallback clock in a host without numeric timing fields", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    Object.assign(h.context, { currentTime: "unavailable", sampleRate: 0 });
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiInFixture] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (message) => posted.push(message);
+    node.midi.in!.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 }, 0.001);
+    expect(posted).toEqual([
+      { kind: "midi", ringIndex: 0, item: { status: 0x90, data1: 60, data2: 100, atSample: 48 } },
+    ]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("MIDI output ignores unsubscribed types and retired subscriptions while recycling frames", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ midiRings: [midiOutFixture] })),
+      h.fireReady,
+    );
+    const notes: MidiEvent[] = [];
+    const emit = (status: number) => {
+      const bytes = Uint8Array.from([status, 60, 100, 0, 0, 0, 0, 0]);
+      const buffer = buildEgressFrame(
+        [],
+        [{ ringIndex: 0, head: 1, overflowCount: 0, slotsBytes: bytes }],
+      );
+      for (const listener of h.lastNode!.port.__listeners)
+        listener({ data: { kind: "egress", buffer } });
+    };
+    emit(0x90);
+    const off = node.midi.out!.onEvent("noteOn", (value) => notes.push(value));
+    emit(0xb0);
+    emit(0x90);
+    off();
+    emit(0x90);
+    expect(notes).toEqual([{ type: "noteOn", channel: 0, note: 60, velocity: 100 }]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("a subscription and visibility event inside a callback leave exactly one drain scheduled", async () => {
+  const raf = installRafMock();
+  const doc = installFakeDocument("visible");
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          h.context as never,
+          makeMockProcessor({ ...publishFixture, eventRings: [peakEventRing] }),
+        ),
+      h.fireReady,
+    );
+    node.state.v!.subscribe(() => {
+      node.events.peak!.on(() => {});
+      doc.doc.__fire();
+    });
+    const publish = new Int32Array(
+      h.lastNode!.__constructorRecord.options.processorOptions!.publishBuffer as SharedArrayBuffer,
+    );
+    publish.set([1, 0, 1]);
+    raf.flush();
+    expect(raf.pending).toBe(1);
+    const queued = doc.doc.__listeners[0]!;
+    node.dispose();
+    queued();
+    expect(raf.pending).toBe(0);
+  } finally {
+    h.cleanup();
+    doc.restore();
+    raf.restore();
+  }
+});
+
+test("visibility-triggered delivery does not restart after the last subscriber leaves", async () => {
+  const raf = installRafMock();
+  const doc = installFakeDocument("visible");
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor(publishFixture)),
+      h.fireReady,
+    );
+    const off = node.state.v!.subscribe(() => off());
+    new Int32Array(
+      h.lastNode!.__constructorRecord.options.processorOptions!.publishBuffer as SharedArrayBuffer,
+    ).set([1, 0, 1]);
+    doc.doc.__fire();
+    expect(raf.pending).toBe(0);
+  } finally {
+    h.cleanup();
+    doc.restore();
+    raf.restore();
+  }
+});
+
+for (const applied of [false, true]) {
+  test(`restore respects the worklet's param report when its AudioParam is absent (applied=${applied})`, async () => {
+    const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+    try {
+      const node = await startCreate(
+        () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+        h.fireReady,
+      );
+      h.lastNode!.parameters.get = () => undefined;
+      h.lastNode!.port.postMessage = (message) => {
+        const request = message as { kind: string; requestId: number };
+        if (request.kind !== "restore") return;
+        for (const listener of h.lastNode!.port.__listeners)
+          listener({
+            data: {
+              kind: "restore-done",
+              requestId: request.requestId,
+              applied: applied ? ["freq"] : [],
+              skipped: applied ? [] : ["freq"],
+              missing: [],
+            },
+          });
+      };
+      const result = await node.restore(
+        encodeSnapshot("test", null, [
+          { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) },
+        ]),
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        applied: applied ? ["freq"] : [],
+        skipped: applied ? [] : ["freq"],
+      });
+    } finally {
+      h.cleanup();
+    }
+  });
+}
+
+test("restore converts a non-Error transport rejection into a structured failure", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    h.lastNode!.port.postMessage = () => {
+      throw "detached transport";
+    };
+    expect(await node.restore(encodeSnapshot("test", null, []))).toMatchObject({
+      ok: false,
+      error: { message: "restore did not complete" },
+    });
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("SAB event serialization isolates a reentrant getter from its outer payload", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const ring = {
+      ...presetMessageRing,
+      slotSize: 8,
+      fields: [
+        { name: "a", offsetInSlot: 0, wireType: "f32" as const, byteSize: 4 },
+        { name: "b", offsetInSlot: 4, wireType: "f32" as const, byteSize: 4 },
+      ],
+    };
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ messageRings: [ring] })),
+      h.fireReady,
+    );
+    const options = h.lastNode!.__constructorRecord.options.processorOptions!;
+    const access = new Int32Array(options.ingressAccessBuffer as SharedArrayBuffer);
+    node.events.preset.emit({
+      a: 10,
+      get b() {
+        expect(access[0]).toBe(0);
+        node.events.preset.emit({ a: 2, b: 3 });
+        return 20;
+      },
+    });
+    const shared = options.messageRingsBuffer as SharedArrayBuffer;
+    expect(new Int32Array(shared, 0, 3)[0]).toBe(2);
+    expect(Array.from(new Float32Array(shared, 12, 4))).toEqual([2, 3, 10, 20]);
+    node.dispose();
+  } finally {
+    h.cleanup();
   }
 });

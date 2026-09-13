@@ -5,9 +5,8 @@
  * Why this exists: the SAB ring is concurrent. A race surfaces once in a million
  * runs, by the luck of timing — a passing browser run proves nothing about the
  * next interleaving. Code coverage cannot see "did the bad interleaving happen?".
- * The only honest answer is to **enumerate every interleaving and prove the bad
- * one is absent** (or witness it, for a buggy protocol). This file is that
- * enumerator.
+ * The enumerator checks every interleaving within each declared fragment. Its
+ * result covers those operations and invariants, not the whole transport.
  *
  * ## The modeled fragment (and its honest limits)
  *
@@ -60,7 +59,7 @@ export interface StoreEvent {
 /** A thread's local registers (named scalar locals). */
 export type Regs = Record<string, number>;
 
-export type Op =
+export type Op = (
   | {
       readonly kind: "store";
       readonly loc: string;
@@ -73,7 +72,8 @@ export type Op =
       readonly loc: string;
       readonly update: (cur: number, r: Regs) => number;
       readonly into?: string;
-    };
+    }
+) & { readonly when?: (registers: Regs) => boolean };
 
 export interface ThreadSpec {
   readonly name: string;
@@ -149,6 +149,11 @@ const readFloor = (t: IThread, loc: string, arr: readonly StoreEvent[]): number 
 
 /** Expand one operation of thread `ti` into all of its possible next states. */
 const stepOptions = (s: IState, ti: number, op: Op): IState[] => {
+  if (op.when !== undefined && !op.when(s.threads[ti]!.regs)) {
+    const ns = cloneState(s);
+    ns.threads[ti]!.pc++;
+    return [ns];
+  }
   if (op.kind === "store") {
     const ns = cloneState(s);
     const t = ns.threads[ti]!;
@@ -334,29 +339,100 @@ export type HeaderWord = "head" | "tail" | "overflow";
  * to one descriptor is what stops the model drifting into a false green.
  */
 export type AbstractRingOp =
+  | { readonly op: "try-access" | "release-access" }
   | { readonly op: "bulk-copy"; readonly touchesHeader: boolean }
   | { readonly op: "atomic-store"; readonly word: HeaderWord }
+  | { readonly op: "atomic-max"; readonly word: HeaderWord }
   | { readonly op: "atomic-load"; readonly word: HeaderWord };
 
 /**
- * The op-sequence the **fixed** out-ring publish must emit: a slot-region-only
- * bulk copy (never the header), then the three release stores with `head` last.
+ * Out-ring publication without a drop-oldest advance or variable content:
+ * one access attempt, slot-only copy, overflow/head stores, then release.
+ * A failed attempt publishes nothing and does not release another owner.
+ * The out-ring tail
+ * is a two-writer word — the worklet's drop-oldest and the main drain-commit —
+ * composed through an atomic monotone-max, and a proposal that does not lead
+ * the current value is skipped entirely, which is why no tail op appears here.
  * `ring-protocol.conformance.test.ts` deep-equals the real worklet's captured
  * sequence to this.
  */
 export const OUT_RING_PUBLISH_OPS: readonly AbstractRingOp[] = [
+  { op: "try-access" },
   { op: "bulk-copy", touchesHeader: false },
-  { op: "atomic-store", word: "tail" },
   { op: "atomic-store", word: "overflow" },
   { op: "atomic-store", word: "head" },
+  { op: "release-access" },
 ];
 
 /**
- * Model of the **out-ring publish** (worklet → main), e.g. an event/MIDI-out
- * ring. The worklet copies its WASM ring into the SAB and then release-stores
- * tail, overflow, head (head last, the release point). The consumer (main rAF
- * poll, `client.ts` `pollEventRings`) acquire-loads head and tail, then
- * plain-reads the slot.
+ * The op-sequence of an out-ring publish on a quantum where the WASM
+ * drop-oldest advanced the tail: same as `OUT_RING_PUBLISH_OPS`, plus the
+ * atomic monotone-max commit of the advanced tail — before overflow and head,
+ * so a consumer acquiring the new head sees the matching window.
+ */
+export const OUT_RING_PUBLISH_OPS_TAIL_ADVANCE: readonly AbstractRingOp[] = [
+  { op: "try-access" },
+  { op: "bulk-copy", touchesHeader: false },
+  { op: "atomic-max", word: "tail" },
+  { op: "atomic-store", word: "overflow" },
+  { op: "atomic-store", word: "head" },
+  { op: "release-access" },
+];
+
+/**
+ * One overwritten slot and its separate content, protected through the same
+ * access word. The consumer copies both under ownership and acknowledges its
+ * captured head. Callbacks run on private bytes outside this modeled section.
+ */
+export function outRingSnapshotSpec(guarded: boolean): ModelSpec {
+  const acquired = (r: Regs): boolean => r.acquired === 0;
+  const enter: Op = {
+    kind: "rmw",
+    loc: "access",
+    update: (cur) => (guarded && cur === 0 ? 1 : cur),
+    into: "acquired",
+  };
+  const leave: Op = {
+    kind: "store",
+    loc: "access",
+    value: () => 0,
+    mode: "release",
+    when: acquired,
+  };
+  return {
+    locations: { access: 0, head: 1, tail: 0, slot: 0, content: 0 },
+    threads: [
+      {
+        name: "P",
+        ops: [
+          enter,
+          { kind: "store", loc: "slot", value: () => 1, mode: "plain", when: acquired },
+          { kind: "store", loc: "content", value: () => 1, mode: "plain", when: acquired },
+          { kind: "rmw", loc: "tail", update: (cur) => Math.max(cur, 1), when: acquired },
+          { kind: "store", loc: "head", value: () => 2, mode: "release", when: acquired },
+          leave,
+        ],
+      },
+      {
+        name: "C",
+        ops: [
+          enter,
+          { kind: "load", loc: "head", into: "head", mode: "acquire", when: acquired },
+          { kind: "load", loc: "tail", into: "tail", mode: "acquire", when: acquired },
+          { kind: "load", loc: "slot", into: "slot", mode: "plain", when: acquired },
+          { kind: "load", loc: "content", into: "content", mode: "plain", when: acquired },
+          { kind: "rmw", loc: "tail", update: (cur, r) => Math.max(cur, r.head!), when: acquired },
+          leave,
+        ],
+      },
+    ],
+  };
+}
+
+/**
+ * Head-publication litmus for an empty out-ring receiving one slot. This
+ * isolates acquire visibility; it does not cover overwrite of an unread slot.
+ * `outRingSnapshotSpec` covers that case and the access-word ownership.
  *
  * `touchesHeader: true` reproduces the bug — the bulk `.set()` spans the whole
  * ring including the 12-byte header, so it writes `head` with a plain store
@@ -364,8 +440,17 @@ export const OUT_RING_PUBLISH_OPS: readonly AbstractRingOp[] = [
  * plain write (its value coincides with the release store's), gaining no
  * happens-before, and then read a stale slot. `touchesHeader: false` (slot
  * region only) leaves the release store as the sole `head` write.
+ *
+ * `tailAdvances: true` models the drop-oldest quantum: the worklet commits its
+ * advanced tail through an atomic monotone-max (an `rmw` — the tail is a
+ * two-writer word shared with the main drain-commit; `splitWriterTailSpec`
+ * proves that composition). On a steady quantum the proposal does not lead and
+ * the commit is skipped, so the default emits no tail op at all.
  */
-export const outRingPublishSpec = (opts: { readonly touchesHeader: boolean }): ModelSpec => {
+export const outRingPublishSpec = (opts: {
+  readonly touchesHeader: boolean;
+  readonly tailAdvances?: boolean;
+}): ModelSpec => {
   const m = RING_SLOT_MARKER;
   const worklet: Op[] = [];
   if (opts.touchesHeader) {
@@ -374,7 +459,10 @@ export const outRingPublishSpec = (opts: { readonly touchesHeader: boolean }): M
     worklet.push({ kind: "store", loc: "tail", value: () => 0, mode: "plain" });
   }
   worklet.push({ kind: "store", loc: "slot", value: () => m, mode: "plain" }); // .set() slot region
-  worklet.push({ kind: "store", loc: "tail", value: () => 0, mode: "release" }); // Atomics.store(tail)
+  if (opts.tailAdvances === true) {
+    // atomicMonotoneMax(tail) — indivisible CAS composition of the two writers.
+    worklet.push({ kind: "rmw", loc: "tail", update: (cur) => Math.max(cur, 1) });
+  }
   worklet.push({ kind: "store", loc: "head", value: () => 1, mode: "release" }); // Atomics.store(head) — last
   return {
     locations: { head: 0, tail: 0, slot: 0 },
@@ -392,21 +480,19 @@ export const outRingPublishSpec = (opts: { readonly touchesHeader: boolean }): M
   };
 };
 
-/**
- * The op-sequence the **fixed** in-ring mirror must emit: three header acquire
- * loads, then a slot-region-only bulk copy. The copy must NOT span the header —
- * clobbering it would replace the acquire-loaded head with a non-synchronized
- * plain re-read, making the drain bound unsynchronized.
- */
+/** Single-slot inbound ownership transfer, excluding optional payload content. */
 export const IN_RING_MIRROR_OPS: readonly AbstractRingOp[] = [
+  { op: "try-access" },
   { op: "atomic-load", word: "head" },
   { op: "atomic-load", word: "tail" },
-  { op: "atomic-load", word: "overflow" },
   { op: "bulk-copy", touchesHeader: false },
+  { op: "atomic-load", word: "overflow" },
+  { op: "atomic-store", word: "tail" },
+  { op: "release-access" },
 ];
 
 /**
- * Model of the **in-ring mirror** (main → worklet), e.g. a message/MIDI-in ring.
+ * Empty-ring publication litmus; concurrent overwrite requires ownership.
  * The producer (main `send`) writes the slot then release-stores head. The
  * consumer (worklet) acquire-loads head/tail/overflow from the SAB, bulk-copies
  * the SAB ring into its WASM ring, and drains using its WASM header.
@@ -463,10 +549,10 @@ const DRAINED = 2;
 export type TailWriteMode = "store" | "max" | "add";
 
 /**
- * Model of the **split-writer in-ring tail** (message / MIDI-in). Two threads
- * advance the SAB `tail`: the main `send` drop-oldest (`tail := loaded + 1` when
- * the ring is full) and the worklet drain-commit (`tail := quantum-start tail +
- * messages drained`). They must compose so tail only moves forward.
+ * Monotone composition of outbound tail updates. A main-thread snapshot can
+ * acknowledge entries while the producer holds an earlier mirrored cursor.
+ * Combining those proposals must neither rewind consumption nor advance past
+ * either writer's progress. This model covers that word algebra.
  */
 export const splitWriterTailSpec = (mode: TailWriteMode): ModelSpec => {
   const mainOps: Op[] = [{ kind: "load", loc: "tail", into: "rMain", mode: "acquire" }];
@@ -513,3 +599,56 @@ export const correctTail: Invariant = (s) => {
   const expected = Math.max(TAIL0, rMain + 1, rWork + DRAINED);
   return final === expected ? null : `tail = ${final}, expected max-of-proposals ${expected}`;
 };
+
+/** Main publication and audio ownership transfer of one overwriteable slot. */
+export function inRingSnapshotSpec(guarded: boolean): ModelSpec {
+  const acquired = (r: Regs): boolean => r.acquired === 0;
+  const enter: Op = {
+    kind: "rmw",
+    loc: "access",
+    update: (cur) => (guarded && cur === 0 ? 1 : cur),
+    into: "acquired",
+  };
+  const leave: Op = {
+    kind: "store",
+    loc: "access",
+    value: () => 0,
+    mode: "release",
+    when: acquired,
+  };
+  return {
+    locations: { access: 0, head: 1, tail: 0, slot: 0, content: 0 },
+    threads: [
+      {
+        name: "P",
+        ops: [
+          enter,
+          { kind: "load", loc: "tail", into: "tail", mode: "acquire", when: acquired },
+          { kind: "store", loc: "slot", value: () => 1, mode: "plain", when: acquired },
+          { kind: "store", loc: "content", value: () => 1, mode: "plain", when: acquired },
+          {
+            kind: "store",
+            loc: "tail",
+            value: (r) => Math.max(r.tail!, 1),
+            mode: "release",
+            when: acquired,
+          },
+          { kind: "store", loc: "head", value: () => 2, mode: "release", when: acquired },
+          leave,
+        ],
+      },
+      {
+        name: "C",
+        ops: [
+          enter,
+          { kind: "load", loc: "head", into: "head", mode: "acquire", when: acquired },
+          { kind: "load", loc: "tail", into: "tail", mode: "acquire", when: acquired },
+          { kind: "load", loc: "slot", into: "slot", mode: "plain", when: acquired },
+          { kind: "load", loc: "content", into: "content", mode: "plain", when: acquired },
+          { kind: "store", loc: "tail", value: (r) => r.head!, mode: "release", when: acquired },
+          leave,
+        ],
+      },
+    ],
+  };
+}

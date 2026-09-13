@@ -212,3 +212,60 @@ test("a .uwk.ts that imports a sibling constant compiles end-to-end (build path)
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test.each([
+  `function mutate() { helper.value = 1; return "key"; }
+function run(cb: () => string) { return { [cb()]: 0 }; }
+run(mutate);`,
+  `function mutate() { helper.value = 1; return 1; }
+function run(cb: () => number) { const [value = cb()] = []; return value; }
+run(mutate);`,
+  `function mutate() { helper.value = 1; return "key"; }
+function run(cb: () => string) { const { [cb()]: value } = {}; return value; }
+run(mutate);`,
+  `function mutate(target: { value: number }) { target.value = 1; }
+mutate(helper);`,
+  `const actor = { mutate() { helper.value = 1; } };
+actor.mutate();`,
+  `function mutate() { helper.value = 1; }
+const alias = mutate;
+alias();`,
+])("shared modules preserve mutation order when imported by a processor: %s", async (body) => {
+  const dir = mkdtempSync(path.join(import.meta.dirname, ".shared-order-"));
+  try {
+    for (const extension of ["ts", "uwk.ts"]) {
+      const shared = `shared.${extension}`;
+      writeFileSync(
+        path.join(dir, shared),
+        `const helper = { value: 0 };\n${body}\nexport const VALUE = helper.value;`,
+      );
+      const src = path.join(dir, `synth-${extension.replaceAll(".", "-")}.uwk.ts`);
+      writeFileSync(
+        src,
+        `import { VALUE } from "./${shared}";
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  forSample((i) => { out.ch(0)[i] = VALUE; });
+});`,
+      );
+      const proc = await loadUwkProcessor(src);
+      const result = await renderOffline(proc, { sampleRate: 48000, duration: 128 / 48000 });
+      expect([...result.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, () => 1));
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("processor-local mutation order is preserved without authored exports", async () => {
+  const proc = lowerToProcessor(`
+const helper = { value: 0 };
+const actor = { mutate() { helper.value = 1; } };
+actor.mutate();
+const value = helper.value;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample((i) => { out.ch(0)[i] = value; }); });
+`);
+  const result = await renderOffline(proc, { sampleRate: 48000, duration: 128 / 48000 });
+  expect([...result.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, () => 1));
+});

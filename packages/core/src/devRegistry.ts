@@ -23,7 +23,19 @@ export type DevNodeHandle = {
   /** Declared MIDI ports (name + direction) for the DevTools MIDI panel. */
   readonly midiPorts: ReadonlyArray<{ name: string; direction: "in" | "out" }>;
   /** Request the worklet's unfiltered all-slot dump (the live X-ray). */
-  devDump(): Promise<SnapshotSlot[]>;
+  devDump(): Promise<DevDump>;
+};
+
+/** One live X-ray of a running node. */
+export type DevDump = {
+  /** Every declared slot, unfiltered, as raw little-endian bytes. */
+  readonly slots: SnapshotSlot[];
+  /**
+   * Output samples the non-finite scrub has replaced with 0 over this node's
+   * lifetime. `0` on a healthy processor; anything else means its DSP is
+   * producing NaN / ±Inf, which the scrub hides from the audio graph.
+   */
+  readonly scrubbedSamples: number;
 };
 
 const handles = new Set<DevNodeHandle>();

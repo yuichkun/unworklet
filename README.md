@@ -11,16 +11,18 @@
 
 ---
 
-The audio thread is unforgiving: one stray allocation, a GC pause, or a botched
-WASM linear-memory access and you get an audible glitch. unworklet makes that
-impossible by construction.
+The audio thread is unforgiving: allocations, GC pauses, and invalid memory
+accesses can interrupt playback. unworklet compiles DSP into a constrained WASM
+program and tests the transport that connects it to the application.
 
 You compose a processor from small, typed, reusable primitives in plain
-TypeScript — audio, params, state, events, MIDI. The compiler proves it's
-allocation-free, GC-free, and bounded **before it ever runs**, then emits the
-WebAssembly, the `AudioWorkletProcessor` glue, and a typed main-thread node. No
+TypeScript — audio, params, state, events, MIDI. The emitted WASM DSP has
+preallocated memory and bounded loops, without JavaScript allocation or GC.
+The toolchain also supplies `AudioWorkletProcessor` glue and a typed main-thread node. No
 hand-written processor, no `SharedArrayBuffer` wrangling, no linear-memory
-bookkeeping.
+bookkeeping. The `postMessage` compatibility transport can allocate while
+receiving messages and recycling buffers; it does not carry an allocation-free
+or GC-free guarantee for the complete audio thread.
 
 The primitives snap together like Lego: build an effect, a synth, a MIDI
 device — whatever you need. Test it headless in Node / Bun / Deno against the
@@ -92,8 +94,8 @@ packages you already rely on (e.g. `"node"`), since `types` disables automatic
 </details>
 
 A processor is a `.uwk.ts` file — write the DSP as plain expressions and
-unworklet lowers it to the core primitives, compiles it to WASM, and proves it's
-realtime-safe:
+unworklet lowers it to the core primitives and compiles it to fixed-memory,
+bounded-work WASM:
 
 ```ts
 // distortion.uwk.ts — soft-clip distortion, compiled to a WASM AudioWorklet
@@ -218,21 +220,23 @@ audio thread it causes dropouts. Sharing state across threads means
 faster means managing linear-memory offsets and lifetimes by hand. And you can't
 even `console.log` to debug — that isn't realtime-safe either.
 
-unworklet removes the whole class of problem. Because your TypeScript runs only
-at **build time** to capture the graph, the audio thread runs nothing but the
-emitted WASM — and the compiler statically guarantees every shipped `process`
-path is:
+Your TypeScript runs at **build time** to capture the graph. The emitted DSP
+runs as WASM, surrounded by the framework's JavaScript worklet transport. The
+DSP is:
 
 - **allocation-free** — all `state`, buffers, and ringbuffers are pre-sized at
   compile time; `memory.grow` is never emitted.
 - **bounded** — every loop has a build-time-known iteration count; there is no
   unbounded-loop primitive in the surface.
-- **non-throwing & non-blocking** — no exception, no synchronous main-thread
-  wait, ever reaches the audio thread.
+- **non-blocking** — it performs no I/O or synchronous main-thread wait. Runtime
+  WASM traps are reported through `onError` and silence the failed processor.
 
-If it compiles, those bugs are gone. The framework owns the `SharedArrayBuffer`
-transport, the linear-memory layout, and the worklet/main marshalling — you
-write one TypeScript file.
+The framework owns the `SharedArrayBuffer` transport, linear-memory layout,
+and worklet/main marshalling. These paths also require runtime and concurrency
+tests; a successful compile is not a guarantee against every implementation bug
+or browser scheduling delay. When shared memory is unavailable, `postMessage`
+keeps the application usable with bounded buffer reuse, but its message delivery
+and recycling can allocate and trigger GC.
 
 ## Render & test — no browser needed
 

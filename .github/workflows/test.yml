@@ -40,11 +40,36 @@ jobs:
         run: vp exec playwright install --with-deps chromium
       - name: Run vitest aggregation
         run: vp test
-      - name: Run the demo suite standalone (kept out of the aggregation — its
-          `@vitejs/devtools` dep peer-keys a duplicate vite-plus-test runner that
-          breaks the shared collector; it runs as its own root here)
+      - name: Run the demo as a standalone consumer app
         working-directory: examples/demo
         run: vp test run
+
+  coverage:
+    name: Branch coverage (${{ matrix.package }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [core, lang, offline, test, unplugin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - run: vp run build
+      - name: Measure package branches and enforce its threshold
+        working-directory: packages/${{ matrix.package }}
+        env:
+          UWK_DISTS_BUILT: "1"
+        run: vp test run --coverage --maxWorkers=2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.package }}
+          path: packages/${{ matrix.package }}/coverage
 
   e2e:
     name: Playwright e2e (via dev server)
@@ -96,6 +121,7 @@ jobs:
         # dist target, a broken .d.mts, an unresolved subpath) still fail the gate.
         run: |
           set -e
+          packed_dir="$(mktemp -d)"
           for p in core lang offline test unplugin; do
             echo "::group::@unworklet/$p"
             # lang's ./typescript-plugin export is a tsserver plugin (referenced by
@@ -103,8 +129,8 @@ jobs:
             # ships no .d.ts → ignore attw's untyped-resolution for lang only.
             ignore=(fallback-condition)
             if [ "$p" = "lang" ]; then ignore=(fallback-condition untyped-resolution); fi
-            ( cd "packages/$p" \
-              && vp dlx publint \
-              && vp dlx @arethetypeswrong/cli --pack --profile esm-only --ignore-rules "${ignore[@]}" )
+            ( cd "packages/$p" && vp pm pack --pack-destination "$packed_dir" )
+            vp dlx -- publint "$packed_dir/unworklet-$p-"*.tgz --strict
+            vp dlx -- @arethetypeswrong/cli "$packed_dir/unworklet-$p-"*.tgz --profile esm-only --ignore-rules "${ignore[@]}"
             echo "::endgroup::"
           done

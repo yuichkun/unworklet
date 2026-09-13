@@ -5,9 +5,9 @@
  * the WASM side computes (`rem_u`), always landing in `[0, mod)`.
  */
 
-import { expect, test } from "vite-plus/test";
+import { expect, test, vi } from "vite-plus/test";
 
-import { atomicMonotoneMax, ringCount, ringSlotIndex } from "./ringIndex.ts";
+import { atomicMonotoneMax, ringCount, ringLeads, ringSlotIndex } from "./ringIndex.ts";
 
 // What `rem_u` computes: the counter taken as a uint32, then `% mod`. Derived
 // from first principles (BigInt), not from the implementation under test.
@@ -123,4 +123,65 @@ test("atomicMonotoneMax treats 'ahead' wrap-safely across the i32 counter wrap",
   // The reverse: the pre-wrap value is now one step BEHIND and must not rewind.
   expect(atomicMonotoneMax(view, 0, 0x7fffffff)).toBe(-0x80000000);
   expect(view[0]).toBe(-0x80000000);
+});
+
+test("ringLeads: strictly-ahead in serial-number order (equal and behind are false)", () => {
+  expect(ringLeads(6, 5)).toBe(true);
+  expect(ringLeads(5, 5)).toBe(false);
+  expect(ringLeads(4, 5)).toBe(false);
+});
+
+test("ringLeads stays correct across the i32 counter wrap where a plain `<` inverts", () => {
+  const wrapped = (0x7fffffff + 1) | 0; // one step past the last positive i32
+  // Ahead by one across the wrap: plain signed comparison says "behind".
+  expect(wrapped < 0x7fffffff).toBe(true);
+  expect(ringLeads(wrapped, 0x7fffffff)).toBe(true);
+  expect(ringLeads(0x7fffffff, wrapped)).toBe(false);
+});
+
+test("atomicMonotoneMax retries a displaced compare-exchange and still lands on the max", () => {
+  // Simulate the concurrent writer: between the load and the CAS, the other
+  // side advances the word, so the first CAS observes a displaced current
+  // value. The loop must retry against the newer value and converge.
+  const view = new Int32Array([5]);
+  const real = Atomics.compareExchange.bind(Atomics);
+  let displaced = false;
+  const spy = vi.spyOn(Atomics, "compareExchange").mockImplementation(((
+    ta: Int32Array,
+    index: number,
+    expected: number,
+    replacement: number,
+  ): number => {
+    if (!displaced) {
+      displaced = true;
+      ta[index] = 6; // the other writer advanced 5 → 6 after our load
+      return 6; // CAS reports the displacement (current ≠ expected)
+    }
+    return real(ta, index, expected, replacement);
+  }) as typeof Atomics.compareExchange);
+  try {
+    expect(atomicMonotoneMax(view, 0, 8)).toBe(8);
+    expect(view[0]).toBe(8);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("atomicMonotoneMax yields to a displacement that already passed the target (no write, no rewind)", () => {
+  const view = new Int32Array([5]);
+  const spy = vi.spyOn(Atomics, "compareExchange").mockImplementation(((
+    ta: Int32Array,
+    index: number,
+    _expected: number,
+    _replacement: number,
+  ): number => {
+    ta[index] = 9; // the other writer leapt past our proposal
+    return 9;
+  }) as typeof Atomics.compareExchange);
+  try {
+    expect(atomicMonotoneMax(view, 0, 7)).toBe(9); // loop exits: 7 no longer leads 9
+    expect(view[0]).toBe(9);
+  } finally {
+    spy.mockRestore();
+  }
 });

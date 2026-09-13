@@ -21,7 +21,7 @@ TypeScript-first な宣言的 DSL で書かれた DSP を Audio Worklet 上の W
 「unworklet であり続けるために」削れない性質。判断対象がこのいずれかと衝突したら、それが基準。
 
 - **declarative**: user が書いた構造がそのまま WASM になる。framework が意味を変える自動書き換えは列挙限定。意味を変えない最適化 (dead code elimination、SIMD ベクトル化等) は OK だが、user 値を黙って別値に差し替える / 隠れた delay を入れる / sequence を rewrite する系は NG。
-- **realtime-safe**: audio thread (worklet の process() と emit された WASM) は allocation-free / lock-free / GC-free / bounded-loop only。per-quantum の heap alloc・無制限ループ・lock は realtime 違反。SAB / postMessage どちらの transport でも守る。強制は `packages/core/src/dsl/enforcement.test.ts` と root `vite.config.ts` の worklet-realm lint。
+- **realtime-safe**: emitted WASM は allocation-free / GC-free / bounded-loop only。audio thread の transport は他 thread を待たない。1回だけ atomic try-acquire して競合時に公開だけ延期する方式は許可し、spin/wait は禁止する。`postMessage` は互換動作として、受信・buffer recycle・control message の allocation を明示的に許容し、経路全体の allocation-free / GC-free 保証はしない。frame pool の上限と `process()` の egress buffer/view/envelope 再利用を守る。この例外で DSP の無制限ループや blocking を許可しない。強制は `packages/core/src/dsl/enforcement.test.ts`、transport tests、root `vite.config.ts` の worklet-realm lint。
 - **型 ⟺ 動く**: TypeScript で型が通るコードは動くべき。型で表現した制約は実際に守られ、型をすり抜けて壊れた WASM が compile される穴は核の破れ。型で守れないものは capture / static analysis / runtime guard の層で fail-loud にする。
 - **user free が default**: 制約を入れる方が例外。「mental」「美学」「対称性」で勝手に制約を入れない。制約には仕様 invariant か哲学派生の justify が要る。
 - **AI agent paradigm**: 実装工数で scope を絞らない。取り返しがつかないのは後戻り不可領域 (snapshot blob の wire byte) と mental model に染み出す API surface だけ。工数だけを理由にした defer は NG。
@@ -36,7 +36,7 @@ TypeScript-first な宣言的 DSL で書かれた DSP を Audio Worklet 上の W
 
 - **docs/canonical を神格化して機械判断する** (= 「docs にこう書いてある → 実装が bug」と方向性を見ずに断ずる)。docs は参考、基準は §2。
 - framework が user 値を「意味が変わる」形で暗黙に書き換える (列挙したものは OK、列挙漏れ NG)。
-- audio thread の realtime-safety を破る (per-quantum alloc / 無制限ループ / lock / GC)。
+- §2 の realtime-safety を破る (DSP の allocation、無制限ループ、blocking、明示的な互換経路の例外を超える GC 圧力)。
 - 型が通るのに動かない (型 ⟺ 動く の破れ)。
 - 工数見積で scope を絞る (「人間 N 週間」式の判断)。
 - 「mental 簡素」を口実にした feature 削減。

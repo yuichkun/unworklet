@@ -14,6 +14,7 @@ import { forSample } from "./loop.ts";
 import { defineProcessor } from "../processor.ts";
 import { f32 } from "./constructors.ts";
 import { add, gt } from "./primitives.ts";
+import type { BufferExposeOptions } from "../types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // param.expose = name + snapshot policy (`01-dsl.md` §3.3 + §8.2)
@@ -1005,31 +1006,42 @@ test("buffer name uniqueness: declaring the same name twice is rejected at graph
   ).toThrow(/duplicate buffer declaration name "dup"/);
 });
 
-test("buffer publish is allowed for all element types (no Q42-style type restriction)", () => {
+// Buffer publish is rejected at graph capture (issue #38): the declaration used
+// to be ACCEPTED while the publish pipeline shipped scalar-only, so the slot
+// silently never appeared on `node.state` and the first symptom was a distant
+// `TypeError`. An accepted declaration whose runtime surface does not exist is
+// the one wrong state — reject loudly until the buffer reader ships.
+
+// The type surface (`BufferExposeOptions`) already refuses `publish` at compile
+// time; the casts below simulate a JS caller (or an `any`-typed escape hatch)
+// reaching the runtime gate.
+
+test("buffer publish = reject at capture with the stable ID and the scalar fan-out workaround", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      state.buffer.f64({ size: 8 }).expose({ name: "spectrum", publish: { rateFps: 30 } });
+      state.buffer
+        .f64({ size: 8 })
+        .expose({ name: "spectrum", publish: { rateFps: 30 } } as BufferExposeOptions);
     }),
-  ).not.toThrow();
+  ).toThrow(/buffer-publish-unsupported/);
+  const ctx2 = newCaptureContext();
+  expect(() =>
+    runCapture(ctx2, () => {
+      state.buffer
+        .f32({ size: 8 })
+        .expose({ name: "scope", publish: { rateFps: 30 } } as BufferExposeOptions);
+    }),
+  ).toThrow(/fan the values out into scalar state slots/);
 });
 
-test("buffer publish without a user-defined name = reject", () => {
+test("buffer publish without a user-defined name = still rejected (same capture-time gate)", () => {
   const ctx = newCaptureContext();
   expect(() =>
     runCapture(ctx, () => {
-      state.buffer.f32({ size: 8 }).expose({ publish: { rateFps: 30 } });
+      state.buffer.f32({ size: 8 }).expose({ publish: { rateFps: 30 } } as BufferExposeOptions);
     }),
-  ).toThrow(/buffer with publish requires user-defined name/);
-});
-
-test("buffer publish rateFps <= 0 = reject", () => {
-  const ctx = newCaptureContext();
-  expect(() =>
-    runCapture(ctx, () => {
-      state.buffer.f32({ size: 8 }).expose({ name: "x", publish: { rateFps: 0 } });
-    }),
-  ).toThrow(/publish rateFps must be a positive finite number/);
+  ).toThrow(/buffer-publish-unsupported/);
 });
 
 test("buffer snapshot 'persistent' without a user-defined name = reject", () => {

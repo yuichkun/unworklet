@@ -23,6 +23,8 @@ export const WORKLET_REALM_FILES = [
   "src/compile/ast.ts",
   "src/compile/layout.ts",
   "src/dsl/constants.ts",
+  "src/egressFrame.ts",
   "src/ringIndex.ts",
+  "src/sabIngress.ts",
   "src/selfcheck.ts",
 ] as const;

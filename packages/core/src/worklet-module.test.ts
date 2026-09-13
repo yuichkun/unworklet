@@ -15,7 +15,7 @@ import {
   i64,
   state,
 } from "./index.ts";
-import { emitWorkletModuleSource } from "./worklet-module.ts";
+import { emitWorkletModuleSource, serializeMetaToJs } from "./worklet-module.ts";
 import { expect, test } from "vite-plus/test";
 
 const META_FIXTURE = {
@@ -99,4 +99,10 @@ test("round-trips an i64 state's bigint `initial` as a `0n` literal (no JSON.str
     runtime: { kind: "import" },
   });
   expect(emitted).toContain('"initial":0n');
+});
+
+test("metadata preserves array positions for values omitted by JSON", () => {
+  expect(serializeMetaToJs({ values: [undefined, () => {}, Symbol("value"), 3n] })).toBe(
+    '{"values":[null,null,null,3n]}',
+  );
 });

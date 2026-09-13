@@ -33,6 +33,13 @@ kept at module scope and resolve as usual. `ctx` is ambient as well — the same
 `ctx.sampleRate` is how a generator reaches the sample rate.
 `.named()` / `.expose({...})` with no name derive it from the binding.
 
+A file containing `process()` cannot contain additional module-level exports,
+including types, default exports, and re-exports (`uwk-export-unsupported`).
+Keep shared constants, types, and helpers in a separate `.ts` or library-only
+`.uwk.ts` file, and import them into the processor. A library-only `.uwk.ts`
+contains no `process()` and keeps its exports. This preserves evaluation order
+without predicting the effects of user functions.
+
 Out of the box, stock TypeScript flags the sugar — a `.uwk.ts` imports no DSL
 names, so the authoring names (`audioInput`, `state`, …) are undefined and the
 infix operators on the resulting values don't type-check — so a `// @ts-nocheck`

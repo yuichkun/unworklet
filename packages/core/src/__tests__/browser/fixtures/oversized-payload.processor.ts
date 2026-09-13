@@ -1,12 +1,9 @@
 /**
  * Browser e2e fixture (= Q85 no-trap): verifies that sending a typed-array message
- * larger than the content region does not crash — it is silently truncated instead.
+ * larger than its per-message byte budget is truncated without crashing.
  *
- * `payloadCapacity: 64` bytes → content region = 64 × min(capacity 256, 16) = 1024
- * bytes = 256 f32. When the producer (client SAB / worklet postMessage) sends an array
- * larger than this, it must truncate-copy into the region without throwing a
- * `Uint8Array.set` RangeError. The first 128 elements are written to the buffer and
- * played back as output.
+ * `payloadCapacity: 64` retains sixteen f32 elements in each ring slot. The
+ * processor reads 128 positions, so positions past the payload clamp to element 15.
  */
 
 import { event, audioOutput, state, defineProcessor, forSample } from "../../../index.ts";
@@ -23,7 +20,7 @@ export const oversizedPayload = defineProcessor(() => {
     process: () => {
       upload.onReceive(({ samples }) => {
         forSample((i) => {
-          buf.write(i, samples.at(i)); // first 128 elements after truncation (region holds 256 f32 ⊃ 128)
+          buf.write(i, samples.at(i));
         });
       });
       forSample((i) => {

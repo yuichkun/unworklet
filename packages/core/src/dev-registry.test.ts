@@ -20,7 +20,7 @@ const fakeHandle = (name: string): DevNodeHandle => ({
   displayName: name,
   schemaHash: `hash-${name}`,
   midiPorts: [],
-  devDump: async () => [],
+  devDump: async () => ({ slots: [], scrubbedSamples: 0 }),
 });
 
 test("register adds a handle, unregister removes it", () => {

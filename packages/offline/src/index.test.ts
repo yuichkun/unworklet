@@ -11,6 +11,8 @@
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
 import {
   defineProcessor,
+  bool,
+  i64,
   f32,
   i32,
   inspectSnapshot,
@@ -27,6 +29,103 @@ import {
   state,
 } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
+
+for (const type of ["f64", "u8", "i32", "i64", "bool"] as const) {
+  test(`offline event payload preserves ${type} element representation`, async () => {
+    const proc = defineProcessor(() => {
+      const samples = state.buffer[type]({ size: 2 });
+      const emitted = event<{ samples: typeof samples; length: number }>({
+        to: "main",
+        name: "samples",
+        payloadCapacity: 32,
+      });
+      return {
+        process: () => {
+          if (type === "i64") {
+            (samples as ReturnType<typeof state.buffer.i64>).write(0, i64(11n));
+            (samples as ReturnType<typeof state.buffer.i64>).write(1, i64(-7n));
+          } else if (type === "bool") {
+            (samples as ReturnType<typeof state.buffer.bool>).write(0, bool(true));
+            (samples as ReturnType<typeof state.buffer.bool>).write(1, bool(false));
+          } else {
+            (samples as ReturnType<typeof state.buffer.f64>).write(0, 11);
+            (samples as ReturnType<typeof state.buffer.f64>).write(1, 7);
+          }
+          emitted.emitIf(true, { samples, length: 2 });
+        },
+      };
+    });
+    const result = await renderOffline(proc, { sampleRate: 48000, duration: 256 / 48000 });
+    const ctor =
+      type === "f64"
+        ? Float64Array
+        : type === "u8"
+          ? Uint8Array
+          : type === "i64"
+            ? BigInt64Array
+            : Int32Array;
+    expect(result.events).toHaveLength(2);
+    for (const entry of result.events) {
+      const payload = (entry.payload as { samples: ArrayLike<number | bigint> }).samples;
+      expect(payload).toBeInstanceOf(ctor);
+      expect(Array.from(payload)).toEqual(
+        type === "i64" ? [11n, -7n] : type === "bool" ? [1, 0] : [11, 7],
+      );
+    }
+    expect((result.events[0]!.payload as { samples: unknown }).samples).not.toBe(
+      (result.events[1]!.payload as { samples: unknown }).samples,
+    );
+  });
+}
+
+test("snapshot profiles select persistent state, buffer and parameter slots", async () => {
+  const proc = defineProcessor(() => {
+    state
+      .f32(1)
+      .expose({ name: "session", snapshot: { session: "persistent", preset: "transient" } });
+    state.buffer
+      .u8({ size: 1 })
+      .expose({ name: "preset", snapshot: { session: "transient", preset: "persistent" } });
+    state.f32(2).expose({ name: "transient", snapshot: "transient" });
+    param
+      .f32({ default: 0.75, min: 0, max: 1, automationRate: "k-rate" })
+      .expose({ name: "gain", snapshot: "persistent" });
+    param
+      .f32({ default: 0, min: 0, max: 1, automationRate: "k-rate" })
+      .expose({ name: "ignored", snapshot: "transient" });
+    return { process: () => {} };
+  });
+  for (const [profile, expected] of [
+    [undefined, ["gain", "preset", "session"]],
+    ["session", ["gain", "session"]],
+    ["preset", ["gain", "preset"]],
+    ["other", ["gain"]],
+  ] as const) {
+    const result = await renderOffline(proc, { sampleRate: 48000, duration: 0, profile });
+    const slots = inspectSnapshot(result.state).slots;
+    expect(Object.keys(slots).sort()).toEqual(expected);
+    expect(slots.gain).toEqual({ kind: "param", value: 0.75 });
+  }
+});
+
+test("offline MIDI events for undeclared ports leave the processor output unchanged", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    return { process: () => forSample((i) => out.ch(0).at(i).write(0.5)) };
+  });
+  const result = await renderOffline(proc, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    events: [
+      {
+        name: "absent",
+        atSample: 0,
+        payload: { type: "noteOn", channel: 0, note: 60, velocity: 127 },
+      },
+    ],
+  });
+  expect(Array.from(result.outputs.main![0]!)).toEqual(Array(128).fill(0.5));
+});
 
 import { renderOffline } from "./index.ts";
 
@@ -138,9 +237,6 @@ test("`renderOffline` samples.at out-of-bounds read clamps to [0,length-1] witho
   expect(result.outputs.main![0]![0]).toBe(40);
 });
 
-// Multiple typed-array messages queued in the same quantum are each preserved without overwriting
-// (§5.2 / Q85: content = perPayload × min(capacity, 16) slots).
-// The handler runs per-slot in the drain loop, accumulating samples.at(0) from each slot into state.
 const twoUploads = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
@@ -170,9 +266,7 @@ test("`renderOffline` two messages in the same quantum are both preserved withou
   expect(result.outputs.main![0]![0]).toBeCloseTo(30, 4);
 });
 
-test("`renderOffline` render completes without trapping when messages exceed the content capacity of 16 (Q85: drop-oldest)", () => {
-  // Queue 17 messages in one quantum: the 17th wraps and overwrites the oldest chunk.
-  // The only guarantees are: no crash (trap / OOB) and the result is a finite value.
+test("`renderOffline` preserves all 17 payloads queued within the declared capacity", () => {
   const messages = Array.from({ length: 17 }, (_, k) => ({
     name: "upload",
     atQuantum: 0,
@@ -183,7 +277,7 @@ test("`renderOffline` render completes without trapping when messages exceed the
     duration: SAMPLES_PER_BLOCK / 48000,
     messages,
   }).then((result) => {
-    expect(Number.isFinite(result.outputs.main![0]![0])).toBe(true);
+    expect(result.outputs.main![0]![0]).toBe(153);
   });
 });
 
@@ -220,7 +314,7 @@ test("`renderOffline` resolves samples.length to the delivered payload length", 
 // With a stale read, length-1=-1 collapses the clamp to idx 0, exposing chunk 0's [42].
 const emptyPayloadReader = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
-  const upload = event<{ x: Float32Array }>({ from: "main", name: "upload" });
+  const upload = event<{ x: Float32Array }>({ from: "main", name: "upload", capacity: 16 });
   const last = state.f32(-1);
   return {
     process: () => {

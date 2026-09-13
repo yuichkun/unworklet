@@ -314,16 +314,40 @@ test("SEMANTIC: integer literal 2 and decimal 2.0 lift to the same f32 — x/2 =
 
 // ───────────────────────── adversarial: special values ──────────────────────
 
-test("SEMANTIC: x / 0 → +Infinity in f32", async () => {
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) / 0);`, 1.0)).toBe(Infinity);
+// Non-finite semantics are observed THROUGH a finite probe: the value itself
+// (+Inf / NaN) exists in-expression, but the audio-output boundary scrubs
+// non-finite samples to 0 (issue #27) — so writing it raw asserts the scrub,
+// and the probe asserts the in-expression semantics.
+
+test("SEMANTIC: x / 0 → +Infinity in-expression; the output boundary scrubs the raw write to 0", async () => {
+  // +Inf compares greater than the largest finite f32 (3.4e38 < f32 max).
+  expect(
+    await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) / 0 > 3.4e38 ? 1 : 0);`, 1.0),
+  ).toBe(1);
+  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) / 0);`, 1.0)).toBe(0);
 });
 
-test("SEMANTIC: 0 / x with x=0 → NaN", async () => {
-  expect(await render1("", `out.ch(0).at(i).write(0 / input.ch(0).at(i));`, 0.0)).toBeNaN();
+test("SEMANTIC: 0 / x with x=0 → NaN in-expression; the output boundary scrubs the raw write to 0", async () => {
+  // NaN is the only value that differs from itself.
+  expect(
+    await render1(
+      "",
+      `out.ch(0).at(i).write(0 / input.ch(0).at(i) != 0 / input.ch(0).at(i) ? 1 : 0);`,
+      0.0,
+    ),
+  ).toBe(1);
+  expect(await render1("", `out.ch(0).at(i).write(0 / input.ch(0).at(i));`, 0.0)).toBe(0);
 });
 
-test("SEMANTIC: x % 0 → NaN (matches JS remainder)", async () => {
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) % 0);`, 1.0)).toBeNaN();
+test("SEMANTIC: x % 0 → NaN in-expression (matches JS remainder); the output boundary scrubs the raw write to 0", async () => {
+  expect(
+    await render1(
+      "",
+      `out.ch(0).at(i).write(input.ch(0).at(i) % 0 != input.ch(0).at(i) % 0 ? 1 : 0);`,
+      1.0,
+    ),
+  ).toBe(1);
+  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) % 0);`, 1.0)).toBe(0);
 });
 
 test("SEMANTIC: -x % 3 → -1 — f32 mod is truncated remainder (sign of dividend, matches JS %)", async () => {
