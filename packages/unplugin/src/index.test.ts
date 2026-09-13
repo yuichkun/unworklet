@@ -510,16 +510,21 @@ test("load lowers the .uwk.ts fixture, compiles it, and emits the WASM as a buil
   expect(wasmCall!.source).toBeInstanceOf(Uint8Array);
 });
 
-test("build: a processor .uwk.ts that imports a subgraph .uwk.ts compiles to WASM", async () => {
-  // The build evaluates the processor via raw Node import to compute the WASM. The
-  // imported subgraph library `.uwk.ts` must be lowered too, or Node sees raw sugar
-  // (`defineSubgraph` undefined) and throws. This is the cross-file build path.
-  const { ctx } = await callLoadWithMockContext(
-    `${VIRTUAL_ID_PREFIX}${FIXTURE_USES_SUBGRAPH_PATH}`,
-  );
-  const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
-  expect(wasmCall?.source).toBeInstanceOf(Uint8Array);
-});
+test(
+  "build: a processor .uwk.ts that imports a subgraph .uwk.ts compiles to WASM",
+  { timeout: 30_000 },
+  async () => {
+    // The build evaluates the processor via raw Node import to compute the WASM. The
+    // imported subgraph library `.uwk.ts` must be lowered too, or Node sees raw sugar
+    // (`defineSubgraph` undefined) and throws. This is the cross-file build path.
+    // Source loading and compilation under coverage need a longer CI deadline.
+    const { ctx } = await callLoadWithMockContext(
+      `${VIRTUAL_ID_PREFIX}${FIXTURE_USES_SUBGRAPH_PATH}`,
+    );
+    const wasmCall = assetCalls(ctx).find((c) => c.name.endsWith(".wasm"));
+    expect(wasmCall?.source).toBeInstanceOf(Uint8Array);
+  },
+);
 
 test("build: a split-subgraph processor compiles byte-identical to the inline equivalent", async () => {
   // A subgraph is inlined at instantiate() regardless of which file it was defined
