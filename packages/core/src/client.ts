@@ -1595,7 +1595,7 @@ export async function createNode<C>(
   if (transportMode === "postMessage" && hasWorkletToMainRings) {
     node.port.addEventListener("message", onEgressMessage);
     // Seed the worklet's egress pool: the frame buffers are pre-allocated here
-    // on main (the audio thread must not allocate) and ownership is handed
+    // on main for reuse during egress encoding, and ownership is handed
     // over; they ping-pong via egress / egress-recycle from then on. Sized to
     // the worst case from the same ring descriptors the worklet received, so
     // the encoder never overruns.

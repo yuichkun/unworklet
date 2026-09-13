@@ -10,7 +10,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 ## 0.3.0 — unreleased
 
 Faster repeated offline audio tests, fixes for audio calculations and UI/MIDI
-messages, and optional preset identity checks. This release includes ten
+messages, and optional preset identity checks. This release includes
 compatibility changes; check the affected APIs below when upgrading from 0.2.x.
 
 ### Breaking
@@ -39,8 +39,8 @@ another individual value in the UI, publish a scalar state such as
 
 **Analysis files are opt-in.** Production builds omit graph and other analysis
 files by default. If your tooling reads those files, enable
-`unworklet({ emitAnalysisArtifacts: true })`. Individual analysis files larger
-than approximately 8 MB are skipped with a warning.
+`unworklet({ emitAnalysisArtifacts: true })`. Serialization stops with a warning when its estimated 8 MiB budget is exceeded;
+this is not an exact output-file-size limit.
 
 **SysEx messages must fit the supported size.** Main-thread `send()` and offline
 input reject messages over 1,020 bytes on ports that accept SysEx
@@ -61,6 +61,13 @@ its own result object, add
 `diagnostics: { scrubbedSamples: 0, droppedSysexMessages: 0 }`, or use
 `RenderResultLike` from `@unworklet/test`, where those diagnostics are optional.
 Code that compares a complete render result must also account for this field.
+The other exported shapes affected by required additions are:
+
+| Hand-built value or implementation     | Required addition                                               |
+| -------------------------------------- | --------------------------------------------------------------- |
+| `InspectionResult` / `DecodedSnapshot` | `processorId: string \| null`; use `null` for an ID-less preset |
+| `CompileInstance`                      | `scrubbedSamples()` and `droppedSysexMessages()` methods        |
+| `DevNodeHandle.devDump()` mock         | Return `{ slots, scrubbedSamples }`, as described below         |
 
 **`devDump()` returns an object.** Read `(await handle.devDump()).slots` to access
 the slot list. The returned object also contains `scrubbedSamples`.

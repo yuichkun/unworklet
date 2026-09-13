@@ -264,8 +264,8 @@ type WorkletState = {
    * `{ kind: 'egress-buffer' }` (initial seed) and `{ kind: 'egress-recycle' }`
    * (returned after consumption, carrying consumed-tail acks); the per-quantum
    * egress pops one, encodes the frame, and transfers it back. Views are bound
-   * in the port handler — never in the process() hot path — so the hot path
-   * stays allocation-free. Empty on the SAB path.
+   * in the port handler and reused by the egress encoder during process().
+   * Receiving and recycling buffers can allocate. Empty on the SAB path.
    */
   readonly egressPool: Array<{ buffer: ArrayBuffer; dv: DataView; u8: Uint8Array }>;
   /**
@@ -1332,11 +1332,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             // A pool buffer arriving from main — the initial seed, or a frame
             // coming back after consumption (`egressFrame.ts`). Views are bound
             // HERE, in the port handler: a transferred-back ArrayBuffer is a
-            // fresh identity, and binding outside process() keeps the
-            // per-quantum hot path allocation-free. Two views per returned
-            // buffer is the floor for a transfer-based pool, and it does not
-            // grow with the frame — sending ready-made views instead would only
-            // move their construction into the deserializer. Undersized buffers
+            // fresh identity. The egress encoder reuses these views during
+            // process(); receiving the buffer and creating views can allocate.
+            // Undersized buffers
             // are rejected — the encoder sizes against `egressFrameBytes` and
             // never bounds-checks in the hot path.
             if (data.buffer instanceof ArrayBuffer && data.buffer.byteLength >= egressFrameBytes) {

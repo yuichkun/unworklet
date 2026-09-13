@@ -3,16 +3,14 @@
  * transferable packet that carries one quantum's worklet→main ring news
  * (event rings + MIDI out rings) when `SharedArrayBuffer` is unavailable.
  *
- * Why a pooled frame instead of per-ring messages: the fallback egress used to
- * build a fresh `Uint8Array` (and a content-region `.slice()`) on the audio
- * thread every quantum — a per-quantum heap allocation, which the realtime
- * invariants forbid (`00-foundations.md` §5.1 invariant 1). The pool inverts
- * ownership: main pre-allocates `EGRESS_POOL_COUNT` buffers sized to the
+ * Main pre-allocates `EGRESS_POOL_COUNT` buffers sized to the
  * worst case and transfers them to the worklet; the worklet encodes into a
  * free buffer and transfers it back; main decodes, then returns the buffer
  * together with its consumed-tail acknowledgements (the consumer→producer
- * feedback the postMessage path otherwise lacks). Ownership ping-pongs, and
- * the audio thread never allocates.
+ * feedback the postMessage path otherwise lacks). Egress encoding reuses its
+ * buffers, views, envelope, and transfer list during process(). Receiving,
+ * recycling, and control-message delivery can allocate; the complete fallback
+ * audio thread has no allocation-free or GC-free guarantee.
  *
  * Frame layout (little-endian u32 words unless noted):
  *

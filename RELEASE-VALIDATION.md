@@ -108,9 +108,13 @@ runner finishes. Raw per-transport receipts and metadata accompany the candidate
   contention, slow drains, overflow, counter wrap, reentrant callbacks/encoding,
   exceptions, and disposal have behavioral regressions. Audio makes one atomic
   acquisition attempt and never waits. Capacity overflow remains observable.
-- The twelve golden processors retain the same graph, schema hash, PCM, and
-  snapshot bytes. All twelve WASM hashes change with the temporary allocator;
-  five memory layouts change because they contain typed payloads or sysex.
+- Comparing the remote PR head `2f77068` with the local stabilization, all twelve
+  golden processors retain the same graph, schema hash, PCM, and snapshot bytes.
+  All twelve WASM hashes change with the temporary allocator; five memory
+  layouts change because they contain typed payloads or sysex. Comparing v0.2.0
+  with the remote PR instead, all twelve snapshots change to format v2, the
+  reverb PCM changes with the vector-bounds fix, and allBufferTypes changes its
+  graph/schema after removal of unsupported buffer publishing.
 - Identity mismatches, v1 blobs, snapshot continuation, independent render state,
   and compile reuse remain exercised. Offline sysex at 1,020 bytes retains its
   terminator; 1,021 bytes is rejected instead of truncated.
