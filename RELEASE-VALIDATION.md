@@ -1,10 +1,10 @@
 # v0.3.0 candidate validation
 
-Status: **local release candidate prepared; publication awaits separate approval**. The candidate builds on PR #48
+Status: **local validation passed; package publication pending**. The candidate builds on PR #48
 at `2f7706850b67b448c51746d3037c08436b50004f`, retaining its history and adding
-local stabilization commits. The implementation checkpoint is `ba97653`. No remote update, merge, tag, or publication has
-been performed. CI configuration is prepared; these local changes have not run
-on GitHub Actions.
+stabilization commits. The implementation checkpoint is `ba97653`. No merge, release tag, or package publication has been performed. The results
+below are local measurements; check PR #48 for GitHub Actions results on the
+pushed branch.
 
 ## Result for users
 

@@ -1,8 +1,9 @@
-# v0.3.0 release candidate — examples and migration
+# v0.3.0 — examples and migration
 
-This document describes the **local, unpushed candidate**. PR #48 on GitHub is
-still at `2f77068` and does not contain all these fixes. The comparisons below
-use v0.2.0's implementation, that PR head, and the candidate implementation.
+This document describes the **stabilized v0.3.0 PR branch**. The comparisons below
+use v0.2.0's implementation, the pre-stabilization PR commit `2f77068`, and the
+stabilized implementation. References to the earlier PR head describe that
+historical comparison point, not the branch containing this document.
 The examples were executed; output values are not inferred from the change names.
 
 ## 1. Repeated offline renders compile once, with fresh state each time
@@ -35,7 +36,7 @@ process(() =>
 ```
 
 The observed `WebAssembly.compile` count for these three renders is **3 in
-v0.2.0, 1 at the PR head, and 1 in the candidate**. Every render starts its output
+v0.2.0, 1 at the pre-stabilization PR (`2f77068`), and 1 in the candidate**. Every render starts its output
 at `0`; caching does not continue the preceding render's counter. The cache is
 in-process, keyed by processor object and sample rate. Loading another object or
 using another rate requires its own compilation.
@@ -74,14 +75,14 @@ node.events.control.emit({ value: 0.25 });
 
 For a 128-sample render with this input:
 
-| Implementation                | Observed result                                                            |
-| ----------------------------- | -------------------------------------------------------------------------- |
-| v0.2.0 and the GitHub PR head | Processing does not return within the 8-second worker deadline             |
-| Candidate                     | `ack.value === 0.25`, `later.value === 1.25`, all output samples are `0.5` |
+| Implementation                                  | Observed result                                                            |
+| ----------------------------------------------- | -------------------------------------------------------------------------- |
+| v0.2.0 and the pre-stabilization PR (`2f77068`) | Processing does not return within the 8-second worker deadline             |
+| Candidate                                       | `ack.value === 0.25`, `later.value === 1.25`, all output samples are `0.5` |
 
 The fix allows this ordinary request/reply pattern without splitting the handler
-or copying values in application code to avoid the bug. It is **not in the
-GitHub PR head yet**.
+or copying values in application code to avoid the bug. It is included in this
+stabilized PR branch.
 
 ## 3. A queue of 32 array messages retains 17 distinct payloads
 
@@ -143,10 +144,10 @@ The complete receiving example saves each `[id, ...samples]` in a persistent
 buffer, without emitting a reply. This keeps the retention test separate from
 the request/reply bug above.
 
-| Implementation                | First received record                               | Last received record         |
-| ----------------------------- | --------------------------------------------------- | ---------------------------- |
-| v0.2.0 and the GitHub PR head | `[0, 16, 16.25, -16, 16.5]` — ID 0 has ID 16's data | `[16, 16, 16.25, -16, 16.5]` |
-| Candidate                     | `[0, 0, 0.25, 0, 0.5]`                              | `[16, 16, 16.25, -16, 16.5]` |
+| Implementation                                  | First received record                               | Last received record         |
+| ----------------------------------------------- | --------------------------------------------------- | ---------------------------- |
+| v0.2.0 and the pre-stabilization PR (`2f77068`) | `[0, 16, 16.25, -16, 16.5]` — ID 0 has ID 16's data | `[16, 16, 16.25, -16, 16.5]` |
+| Candidate                                       | `[0, 0, 0.25, 0, 0.5]`                              | `[16, 16, 16.25, -16, 16.5]` |
 
 All 17 records are checked. This is not an overflow case: 17 is below the
 configured capacity of 32.
@@ -158,7 +159,7 @@ bytes for array contents in audio-processing memory, plus transport storage.
 Defaults use 256 × 65,536 = **16 MiB per array event**, plus transport storage.
 Oversized arrays are truncated to the aligned per-message limit. SysEx storage
 also follows the MIDI port's capacity; it defaults to 256 KiB plus transport
-storage. These changes are candidate-only until pushed.
+storage. These changes are included in this stabilized PR branch.
 
 ## 4. Check diagnostics as well as finite audio output
 
@@ -175,7 +176,7 @@ process(() =>
 );
 ```
 
-For 128 mono samples, v0.2.0 returns NaN samples. Both the PR head and candidate
+For 128 mono samples, v0.2.0 returns NaN samples. Both the pre-stabilization PR (`2f77068`) and candidate
 return 128 zero samples and `diagnostics.scrubbedSamples === 128`.
 
 That affects how an audio test detects the bug:
@@ -215,7 +216,7 @@ cannot be read by 0.2.x.
 
 ## 6. Move shared types and constants out of a processor file
 
-A type exported from a processor `.uwk.ts` is accepted by v0.2.0 and the PR head:
+A type exported from a processor `.uwk.ts` is accepted by v0.2.0 and the pre-stabilization PR (`2f77068`):
 
 ```ts
 // Before: inside a .uwk.ts file that also contains process(...).
@@ -250,9 +251,9 @@ A shared `.uwk.ts` file without `process()` can also export definitions. Cross-f
 examples use `loadUwkProcessor(path)` or the bundler; the in-memory/browser source
 compiler does not gain a cross-file module loader.
 
-The candidate deliberately removes the PR's attempt to move exported definitions
+The stabilization removes the earlier PR's attempt to move exported definitions
 out of processor code. That attempt still changes some initializers' values at
-the remote head; it is not being advertised as a finished sharing feature.
+commit `2f77068`; it is not being advertised as a finished sharing feature.
 
 ## 7. Explicit node annotations accept the result of createNode
 
@@ -269,7 +270,7 @@ export async function connect(context: AudioContext) {
 ```
 
 Both the compiled-value and module-namespace assignments produce TS2322 against
-the v0.2.0 and PR-head public types in the comparison probe. The candidate
+the v0.2.0 and pre-stabilization public types in the comparison probe. The candidate
 accepts this annotation and `UnworkletNode<typeof processor>`.
 Malformed payloads such as `{ value: "0.25" }` and undeclared ports remain type
 errors. This is a fix for naming and assigning the handle type, not a claim that
@@ -288,7 +289,7 @@ all `.uwk.ts` type-witness limitations are resolved.
 | Implements or mocks `CompileInstance`                              | Provide `scrubbedSamples()` and `droppedSysexMessages()`                                                                                                                                                                                                                                    |
 | Reads or mocks `DevNodeHandle.devDump()`                           | It returns `{ slots, scrubbedSamples }`; read `.slots` instead of treating the result as an array                                                                                                                                                                                           |
 | Declares or imports a reserved name in `.uwk.ts`                   | Follow `uwk-reserved-binding` to rename/alias it. `defineProcessor` is reserved; automatic I/O also reserves the generated I/O names                                                                                                                                                        |
-| Exports an explicit-core `.processor.ts` as both named and default | The same processor object is accepted under both names. Candidate-only: a default-only processor also emits a valid `?worklet` module                                                                                                                                                       |
+| Exports an explicit-core `.processor.ts` as both named and default | The same processor object is accepted under both names. A default-only processor also emits a valid `?worklet` module                                                                                                                                                                       |
 | Builds with an extensionless local processor import                | The failure explains the extension rule and suggests the existing target, rather than a raw missing-module error                                                                                                                                                                            |
 | Inspects or migrates boolean preset buffers                        | Candidate returns logical elements: a 128-element bool buffer has length 128, with note index 2 at element 2, not length 512/index 8                                                                                                                                                        |
 
@@ -310,5 +311,6 @@ uses source identical to the v0.2.0 tag; only RELEASE.md differs at the PR base.
 All three source revisions use the same dependency installation for comparison.
 The candidate examples are also tested against its packed packages. Browser/API
 checks and the 30-minute runs are recorded separately in
-[RELEASE-VALIDATION.md](./RELEASE-VALIDATION.md); they apply to the local candidate,
-not the remote PR head. No package has been published.
+[RELEASE-VALIDATION.md](./RELEASE-VALIDATION.md); they apply to the stabilized implementation,
+not to the pre-stabilization commit `2f77068`. GitHub CI for the pushed branch
+is a separate check. No package has been published.
