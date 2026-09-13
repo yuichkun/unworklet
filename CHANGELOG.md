@@ -7,7 +7,7 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
-## 0.3.0 — unreleased
+## 0.3.0 — 2026-09-14
 
 Faster repeated offline audio tests, fixes for audio calculations and UI/MIDI
 messages, and optional preset identity checks. This release includes
@@ -31,6 +31,35 @@ limit; excess queued messages discard the oldest entries and count the loss.
 in a separate `.ts` or shared `.uwk.ts` file, then import them into the processor.
 A shared `.uwk.ts` file without `process()` can export definitions.
 
+For example, a type exported from a processor file in 0.2.x:
+
+```ts
+// Before: inside a .uwk.ts file that also contains process(...).
+export type Setting = { value: number };
+```
+
+moves to a shared module:
+
+```ts
+export const LEVEL = 0.375;
+export type Setting = { value: number };
+```
+
+The processor imports it, and the UI can import the same type and constant:
+
+```ts
+import { LEVEL, type Setting } from "./shared.ts";
+const setting = event<Setting>({ from: "main" });
+const held = state.f32(LEVEL).named();
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => {
+  setting.onReceive(({ value }) => held.write(value));
+  forSample((i) => {
+    out.ch(0)[i] = held;
+  });
+});
+```
+
 **Buffers cannot be published with `.expose({ publish: ... })`.** This setting
 fails at build time with `buffer-publish-unsupported`. To display a meter or
 another individual value in the UI, publish a scalar state such as
@@ -39,8 +68,9 @@ another individual value in the UI, publish a scalar state such as
 
 **Analysis files are opt-in.** Production builds omit graph and other analysis
 files by default. If your tooling reads those files, enable
-`unworklet({ emitAnalysisArtifacts: true })`. Serialization stops with a warning when its estimated 8 MiB budget is exceeded;
-this is not an exact output-file-size limit.
+`unworklet({ emitAnalysisArtifacts: true })`. Serialization stops with a warning
+when its estimated 8 MiB budget is exceeded; this is not an exact output-file-size
+limit.
 
 **SysEx messages must fit the supported size.** Main-thread `send()` and offline
 input reject messages over 1,020 bytes on ports that accept SysEx
@@ -91,8 +121,8 @@ both versions.
   `processor-mismatch`. An ID-less preset or processor does not get this check.
   `inspect()` includes the preset's identity.
 - **Less compilation work in repeated offline tests.** `renderOffline` reuses
-  the compilation of the same processor object at the same sample rate within a process. Each render
-  has independent state. No additional cache option is required.
+  the compilation of the same processor object at the same sample rate within a
+  process. Each render has independent state. No additional cache option is required.
 - **Render diagnostics.** `scrubbedSamples` counts non-finite output samples
   replaced with zero. `droppedSysexMessages` counts invalid outbound SysEx
   messages discarded by the renderer. Healthy renders report zero for both.
@@ -129,14 +159,159 @@ both versions.
 - **Boolean buffers display the correct lengths and indexes in `inspect()`.**
   Preset migration helpers also read and write their logical elements correctly.
 - **Explicit-core processors can have both named and default exports.** A
-  `.processor.ts` using `export const wave = defineProcessor(...); export default
-wave;` is accepted as one processor. This differs from the `.uwk.ts` export
+  `.processor.ts` using a named processor declaration followed by
+  `export default wave;` is accepted as one processor. This differs from the `.uwk.ts` export
   restriction described above.
 - **Missing import extensions get actionable errors.** An extensionless local
   import reports the rule and, when the target exists, the import path to use.
 - **Builds remove temporary files left by terminated unworklet build processes.**
 - **SysEx injection from the DevTools MIDI panel reaches the processor.**
   Malformed byte values produce a warning.
+
+### Examples
+
+#### Three renders, one compilation, independent state
+
+Load the processor once and reuse that object:
+
+```ts
+import { loadUwkProcessor } from "@unworklet/lang";
+import { renderOffline } from "@unworklet/offline";
+
+const processor = await loadUwkProcessor("./counter.uwk.ts");
+const config = { sampleRate: 48000, duration: 128 / 48000 };
+
+const first = await renderOffline(processor, config);
+const second = await renderOffline(processor, config);
+const third = await renderOffline(processor, config);
+```
+
+The `counter.uwk.ts` used here emits a ramp:
+
+```ts
+const count = state.f32(0);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() =>
+  forSample((i) => {
+    out.ch(0)[i] = count / 128;
+    count.write(count + 1);
+  }),
+);
+```
+
+These three renders call `WebAssembly.compile` three times in 0.2.0 and once in
+0.3.0. Each output starts at `0`; the counter does not continue from the previous
+render. Caching requires the same processor object and sample rate within one
+process.
+
+#### Reply to a UI message, then continue using its value
+
+`value-message.uwk.ts`:
+
+```ts
+const control = event<{ value: number }>({ from: "main" });
+const ack = event<{ value: number }>({ to: "main" });
+const later = event<{ value: number }>({ to: "main" });
+const held = state.f32(0).named();
+const out = audioOutput({ channels: 1, name: "main" });
+
+process(() => {
+  control.onReceive(({ value }) => {
+    ack.emitIf(bool(true), { value });
+    held.write(value * 2);
+    later.emitIf(bool(true), { value: value + 1 });
+  });
+  forSample((i) => {
+    out.ch(0)[i] = held;
+  });
+});
+```
+
+Application code:
+
+```ts
+node.events.ack.on(({ value }) => console.log("ack", value));
+node.events.later.on(({ value }) => console.log("later", value));
+node.events.control.emit({ value: 0.25 });
+```
+
+With `{ value: 0.25 }`, 0.2.0 fails to finish the 128-sample render within the
+comparison's eight-second deadline. Version 0.3.0 returns `ack.value === 0.25`,
+`later.value === 1.25`, and 128 output samples equal to `0.5`.
+
+#### Array contents stay paired with their message IDs
+
+Declare an input event in the processor:
+
+```ts
+const upload = event<{ id: number; samples: Float32Array }>({
+  from: "main",
+  capacity: CAPACITY_32,
+  payloadCapacity: 16,
+});
+```
+
+If 17 messages arrive before the processor handles the next block:
+
+```ts
+for (let id = 0; id < 17; id++) {
+  node.events.upload.emit({
+    id,
+    samples: new Float32Array([id, id + 0.25, -id, id + 0.5]),
+  });
+}
+```
+
+In 0.2.0, the first received ID can be `0` while its array is
+`[16, 16.25, -16, 16.5]`. Version 0.3.0 retains all 17 ID/array pairs, starting
+with ID `0` and `[0, 0.25, 0, 0.5]`. Seventeen messages fit the configured
+32-message capacity. Set `payloadCapacity` for the required per-message bytes;
+retaining more messages also requires more memory, as described under Breaking.
+
+#### Finite returned audio does not mean the DSP avoided invalid calculations
+
+This `.uwk.ts` deliberately divides zero by zero:
+
+```ts
+const numerator = state.f32(0);
+const denominator = state.f32(0);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() =>
+  forSample((i) => {
+    out.ch(0)[i] = numerator / denominator;
+  }),
+);
+```
+
+For 128 mono samples, 0.2.0 returns NaNs. Version 0.3.0 returns zeros and reports
+`result.diagnostics.scrubbedSamples === 128`. A test for valid DSP should include
+both assertions:
+
+```ts
+expectNoNaN(result); // Passes: the invalid output was replaced with zero.
+expect(result.diagnostics.scrubbedSamples).toBe(0); // Fails for this 0/0 example.
+```
+
+The first assertion passes for this example; the second fails. The diagnostic
+reveals the invalid calculation that output replacement would otherwise hide.
+
+#### Name a node's type before assigning it
+
+```ts
+import { createNode, type UnworkletNode } from "@unworklet/core";
+import processor from "./value-message.uwk.ts?worklet";
+
+export async function connect(context: AudioContext) {
+  let node: UnworkletNode<typeof import("./value-message.uwk.ts?worklet")>;
+  node = await createNode(context, processor);
+  node.events.control.emit({ value: 0.25 });
+  return node;
+}
+```
+
+The assignment fails with TS2322 in 0.2.0 and succeeds in 0.3.0. The alternative
+`UnworkletNode<typeof processor>` also works. A malformed payload such as
+`{ value: "0.25" }` or an undeclared port remains a type error.
 
 ## 0.2.0 — 2026-08-17
 

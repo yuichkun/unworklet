@@ -44,7 +44,13 @@ builds it used to pass, all force the minor. To cut a release:
    `vp test run` so the guard confirms it. `vp dlx bumpp packages/*/package.json`
    does it; a bare `vp dlx bumpp` bumps only the private monorepo root and none of
    the publishable packages, so name the files explicitly.
-4. Commit the bump and tag: `git tag vX.Y.Z`.
+4. Replace the target version's `unreleased` marker in `CHANGELOG.md` with the
+   release date (`YYYY-MM-DD`). Commit the version and changelog preparation,
+   merge the release PR after its checks pass, and create `git tag vX.Y.Z` on
+   that clean `main` commit. The tagged changelog must not say `unreleased` for
+   the version being published. Keep one-run validation reports outside the
+   repository; preserve their results in CI artifacts or the PR, and keep
+   consumer-facing explanations in the changelog and package guides.
 5. Publish from a clean `main` with **pnpm, recursively**: `vp pm publish -r`
    (`pnpm -r publish`) — **never `npm publish`**. The `-r` is required: `pnpm publish`
    (singular) at the repo root targets the private monorepo root and publishes none
