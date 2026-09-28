@@ -102,7 +102,7 @@ export function planRelease(
   return { version, changelog, notes };
 }
 
-function readStatus(work: string, since?: string): ChangesetStatus {
+export function readStatus(work: string, since?: string): ChangesetStatus {
   const statusFile = path.join(work, "status.json");
   const range = since === undefined ? [] : ["--since", since];
   execFileSync("vp", ["exec", "changeset", "status", ...range, "--output", statusFile], {
