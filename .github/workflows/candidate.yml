@@ -43,6 +43,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: "24"
@@ -95,6 +96,8 @@ jobs:
             before="the base commit (${COMPARE_WITH:0:7})"
             after="this pull request"
           fi
+          echo "before=$before" >> "$GITHUB_OUTPUT"
+          echo "after=$after" >> "$GITHUB_OUTPUT"
           vp exec node scripts/release/sound-diff.ts "$RUNNER_TEMP/renders/before" "$RUNNER_TEMP/renders/after" \
             "$before" "$after" "$RUNNER_TEMP/sound-report.md"
       - name: Comment on the pull request when examples sound different
@@ -116,6 +119,19 @@ jobs:
           else
             gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$body"
           fi
+
+      - name: Compare the public API
+        if: inputs.compare-with != ''
+        env:
+          COMPARE_WITH: ${{ inputs.compare-with }}
+          BEFORE: ${{ steps.sound.outputs.before }}
+          AFTER: ${{ steps.sound.outputs.after }}
+        run: |
+          set -- "$RUNNER_TEMP/before-tarballs" "$RUNNER_TEMP/tarballs" "$BEFORE" "$AFTER"
+          if [ "$COMPARE_WITH" != "release" ]; then
+            set -- "$@" --since "$COMPARE_WITH"
+          fi
+          vp exec node scripts/release/api-surface.ts "$@"
 
       - uses: actions/upload-artifact@v4
         if: inputs.deploy
