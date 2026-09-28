@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 
-import { planRelease } from "./version.ts";
+import { checkChangesets, planRelease } from "./version.ts";
 import type { ChangesetStatus } from "./version.ts";
 
 const HEADER = `# Changelog
@@ -175,4 +175,34 @@ test("packages that would release under different versions are refused", () => {
   expect(() => planRelease(split, { changelog: HEADER, date: "2026-09-28" })).toThrow(
     /0\.3\.1.*0\.4\.0/s,
   );
+});
+
+test("empty changesets, which only mark a change as not shipping, add nothing to the notes", () => {
+  const plan = planRelease(
+    status(
+      [
+        { id: "a", summary: "A fix.", types: { "@unworklet/core": "patch" } },
+        { id: "tests-only", summary: "", types: {} },
+      ],
+      "0.3.1",
+    ),
+    { changelog: HEADER, date: "2026-09-28" },
+  );
+
+  expect(plan.changelog).toBe(HEADER + "\n## 0.3.1 — 2026-09-28\n\n### Changes\n\nA fix.\n");
+  expect(plan.notes).not.toMatch(/^- $/m);
+});
+
+test("the pending changesets are checked without requiring a release", () => {
+  expect(() =>
+    checkChangesets(status([{ id: "tests-only", summary: "", types: {} }], "0.3.0")),
+  ).not.toThrow();
+  expect(() =>
+    checkChangesets(
+      status(
+        [{ id: "bold-move", summary: "Big.", types: { "@unworklet/lang": "major" } }],
+        "1.0.0",
+      ),
+    ),
+  ).toThrow(/bold-move.*major.*minor/s);
 });
