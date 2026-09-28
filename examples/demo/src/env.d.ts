@@ -1,5 +1,10 @@
 /// <reference types="vite-plus/client" />
 
+interface ImportMetaEnv {
+  /** Fingerprint of the release tarballs the demo was built from; unset for a repository build. */
+  readonly VITE_UNWORKLET_TARBALLS?: string;
+}
+
 declare module "*.vue" {
   import type { DefineComponent } from "vue";
 
