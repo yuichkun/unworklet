@@ -231,8 +231,6 @@ importers:
         specifier: 'catalog:'
         version: 0.28.0
 
-  packages/lang/typescript-plugin: {}
-
   packages/offline:
     dependencies:
       wavefile:

@@ -2,6 +2,7 @@ packages:
   - "packages/**"
   - "examples/*"
   - "!**/node_modules/**"
+  - "!packages/lang/typescript-plugin"
 
 catalogMode: prefer
 
