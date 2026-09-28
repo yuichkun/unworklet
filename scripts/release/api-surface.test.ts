@@ -62,20 +62,31 @@ test("comparing two surfaces lists what was removed, changed and added", () => {
 test("a removed export fails unless the release is allowed to break", () => {
   const diff = { removed: ["@unworklet/core#createNode"], changed: [], added: [] };
 
-  expect(apiVerdict(diff, { allowBreaking: false })).toEqual({
+  expect(apiVerdict(diff, { allowBreaking: () => false })).toEqual({
     ok: false,
     message:
       "Removing a public export breaks code that uses it (@unworklet/core#createNode). " +
       "Release it with a minor changeset.",
   });
-  expect(apiVerdict(diff, { allowBreaking: true }).ok).toBe(true);
+  expect(apiVerdict(diff, { allowBreaking: () => true }).ok).toBe(true);
 });
 
 test("changed exports pass, and are left for review", () => {
   expect(
     apiVerdict(
       { removed: [], changed: ["@unworklet/core#createNode"], added: [] },
-      { allowBreaking: false },
+      { allowBreaking: () => false },
     ),
+  ).toEqual({ ok: true });
+});
+
+test("a release that removes nothing passes without asking whether it may break", () => {
+  // A release pull request has consumed its changesets, so there is nothing to ask.
+  const unanswerable = () => {
+    throw new Error("Some packages have been changed but no changesets were found.");
+  };
+
+  expect(
+    apiVerdict({ removed: [], changed: [], added: [] }, { allowBreaking: unanswerable }),
   ).toEqual({ ok: true });
 });
