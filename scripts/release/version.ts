@@ -32,6 +32,21 @@ export type ReleasePlan = { version: string; changelog: string; notes: string };
 
 const REPO_URL = "https://github.com/yuichkun/unworklet";
 
+/** Refuses what no release may contain, so a pull request can be checked before a release is cut. */
+export function checkChangesets(status: ChangesetStatus): void {
+  for (const changeset of status.changesets) {
+    for (const release of changeset.releases) {
+      const oldVersion = status.releases.find((r) => r.name === release.name)?.oldVersion;
+      if (release.type === "major" && oldVersion?.startsWith("0.")) {
+        throw new Error(
+          `Changeset "${changeset.id}" marks ${release.name} as major. Before 1.0 a breaking ` +
+            "change is a minor; change the changeset to minor.",
+        );
+      }
+    }
+  }
+}
+
 export function planRelease(
   status: ChangesetStatus,
   options: { changelog: string; date: string },
@@ -48,23 +63,13 @@ export function planRelease(
     );
   }
   const version = versions[0]!;
-
-  for (const changeset of status.changesets) {
-    for (const release of changeset.releases) {
-      const oldVersion = released.find((r) => r.name === release.name)?.oldVersion ?? version;
-      if (release.type === "major" && oldVersion.startsWith("0.")) {
-        throw new Error(
-          `Changeset "${changeset.id}" marks ${release.name} as major. Before 1.0 a breaking ` +
-            "change is a minor; change the changeset to minor.",
-        );
-      }
-    }
-  }
+  checkChangesets(status);
 
   const isBreaking = (c: ChangesetStatus["changesets"][number]) =>
     c.releases.some((r) => r.type === "minor" || r.type === "major");
-  const breaking = status.changesets.filter(isBreaking);
-  const changes = status.changesets.filter((c) => !isBreaking(c));
+  const listed = status.changesets.filter((c) => c.releases.length > 0);
+  const breaking = listed.filter(isBreaking);
+  const changes = listed.filter((c) => !isBreaking(c));
 
   const groups = [
     { title: "Breaking", items: breaking },
