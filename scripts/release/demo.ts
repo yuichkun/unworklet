@@ -6,6 +6,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -72,6 +73,12 @@ export function assembleDemo(options: {
   writeFileSync(path.join(options.out, "pnpm-workspace.yaml"), stringify(settings));
 }
 
+/** A short name for a set of tarballs, shown by the demo built from them and in the release summary. */
+export function tarballFingerprint(tarballs: Tarball[]): string {
+  const lines = tarballs.map((t) => `${t.name}@${t.version} ${t.integrity}`).sort();
+  return createHash("sha256").update(lines.join("\n")).digest("hex").slice(0, 8);
+}
+
 /** Lays the built demo out in Vercel's Build Output API format, with the headers from vercel.json. */
 export function writeVercelOutput(options: {
   dist: string;
@@ -111,7 +118,13 @@ function main(): void {
   assembleDemo({ repo: process.cwd(), tarballDir, tarballs, out: demo });
   execFileSync("vp", ["install"], { cwd: demo, stdio: "inherit" });
   if (flag === "--install-only") return;
-  execFileSync("vp", ["build"], { cwd: demo, stdio: "inherit" });
+  const fingerprint = tarballFingerprint(tarballs);
+  execFileSync("vp", ["build"], {
+    cwd: demo,
+    stdio: "inherit",
+    env: { ...process.env, VITE_UNWORKLET_TARBALLS: fingerprint },
+  });
+  writeFileSync(path.join(out, "fingerprint"), fingerprint + "\n");
   writeVercelOutput({ dist: path.join(demo, "dist"), vercelJson: "vercel.json", out });
   console.log(`Candidate demo built into ${path.join(out, ".vercel", "output")}`);
 }
