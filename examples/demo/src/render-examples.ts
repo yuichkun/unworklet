@@ -3,13 +3,15 @@
 // this once against the published version and once against the candidate, and
 // compares the two directories. An example that fails to build is recorded with
 // its error, since an older version may not support what a newer example uses.
+// The packages are imported as namespaces for the same reason: a function the
+// published version lacks fails each example rather than the whole render.
 //
 //   node src/render-examples.ts <out dir>
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { lowerToProcessor } from "@unworklet/lang/browser";
-import { renderOffline } from "@unworklet/offline";
+import * as lang from "@unworklet/lang/browser";
+import * as offline from "@unworklet/offline";
 
 import { exampleList } from "./example-list.ts";
 import { DURATION, SAMPLE_RATE, soundScenario } from "./sound-scenarios.ts";
@@ -30,7 +32,7 @@ export async function renderExamples(out: string): Promise<RenderIndexEntry[]> {
         new URL(`./examples/${example.slug}.uwk.ts`, import.meta.url),
         "utf8",
       );
-      const result = await renderOffline(lowerToProcessor(source), {
+      const result = await offline.renderOffline(lang.lowerToProcessor(source), {
         sampleRate: SAMPLE_RATE,
         duration: DURATION,
         ...soundScenario(example),
