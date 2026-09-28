@@ -4,7 +4,7 @@
 // computed from fixed parameters, so a render depends only on the packages.
 import type { OfflineEvent } from "@unworklet/offline";
 
-import type { Example } from "./examples.ts";
+import type { ExampleInfo } from "./example-list.ts";
 
 export const SAMPLE_RATE = 48_000;
 export const DURATION = 1;
@@ -42,7 +42,7 @@ const PHRASE: Array<[atSample: number, type: "noteOn" | "noteOff", note: number]
   [42_000, "noteOff", 67],
 ];
 
-export function soundScenario(example: Example): {
+export function soundScenario(example: ExampleInfo): {
   inputs?: Record<string, Float32Array[]>;
   events?: OfflineEvent[];
 } {

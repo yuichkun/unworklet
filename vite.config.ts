@@ -65,8 +65,13 @@ const workletRealmGlobalsRule = [
   })),
 ] as ["error", ...Array<{ name: string; message: string }>];
 
+const DEMO_EXAMPLE_SOURCES = "examples/demo/src/examples/*.uwk.ts";
+
 export default defineConfig({
-  fmt: {},
+  // The demo examples are `.uwk.ts` sugar, shown verbatim in the demo editor and
+  // lowered by the plugin; they are not TypeScript until lowered, and their
+  // hand-aligned layout is part of what the demo shows.
+  fmt: { ignorePatterns: [DEMO_EXAMPLE_SOURCES] },
   staged: {
     // Run vp check --fix automatically on staged files in the pre-commit hook
     // (i.e. fmt + lint auto-fix). Tests are not run (failing tests within a
@@ -76,6 +81,7 @@ export default defineConfig({
     "*.{js,jsx,ts,tsx,json,yaml,yml}": "vp check --fix",
   },
   lint: {
+    ignorePatterns: [DEMO_EXAMPLE_SOURCES],
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
     options: { typeAware: true, typeCheck: true },

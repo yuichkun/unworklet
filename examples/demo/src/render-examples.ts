@@ -5,13 +5,13 @@
 // its error, since an older version may not support what a newer example uses.
 //
 //   node src/render-examples.ts <out dir>
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { lowerToProcessor } from "@unworklet/lang/browser";
 import { renderOffline } from "@unworklet/offline";
 
-import { examples } from "./examples.ts";
+import { exampleList } from "./example-list.ts";
 import { DURATION, SAMPLE_RATE, soundScenario } from "./sound-scenarios.ts";
 
 export type RenderIndexEntry = {
@@ -24,9 +24,13 @@ export type RenderIndexEntry = {
 export async function renderExamples(out: string): Promise<RenderIndexEntry[]> {
   mkdirSync(out, { recursive: true });
   const index: RenderIndexEntry[] = [];
-  for (const example of examples) {
+  for (const example of exampleList) {
     try {
-      const result = await renderOffline(lowerToProcessor(example.source), {
+      const source = readFileSync(
+        new URL(`./examples/${example.slug}.uwk.ts`, import.meta.url),
+        "utf8",
+      );
+      const result = await renderOffline(lowerToProcessor(source), {
         sampleRate: SAMPLE_RATE,
         duration: DURATION,
         ...soundScenario(example),

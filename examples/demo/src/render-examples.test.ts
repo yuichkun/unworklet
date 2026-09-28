@@ -10,7 +10,7 @@ import path from "node:path";
 
 import { expect, test } from "vite-plus/test";
 
-import { examples } from "./examples.ts";
+import { exampleList } from "./example-list.ts";
 import { renderExamples } from "./render-examples.ts";
 
 const SECOND = 48_000;
@@ -22,7 +22,7 @@ test("every example renders one second of audio, identically on every run", asyn
   const index = await renderExamples(first);
   await renderExamples(second);
 
-  expect(index.map((e) => e.slug)).toEqual(examples.map((e) => e.slug));
+  expect(index.map((e) => e.slug)).toEqual(exampleList.map((e) => e.slug));
   expect(JSON.parse(readFileSync(path.join(first, "index.json"), "utf8"))).toEqual(index);
   for (const entry of index) {
     expect(entry.error, entry.slug).toBeUndefined();
