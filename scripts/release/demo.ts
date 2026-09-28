@@ -94,10 +94,15 @@ export function writeVercelOutput(options: {
   );
 }
 
-/** `demo.ts <tarball dir> <out dir>`: assembles, installs and builds the candidate demo into `<out dir>/.vercel/output`. */
+/**
+ * `demo.ts <tarball dir> <out dir> [--install-only]`: assembles, installs and
+ * builds the candidate demo into `<out dir>/.vercel/output`. `--install-only`
+ * stops after the install, for rendering the examples without deploying.
+ */
 function main(): void {
-  const tarballDir = path.resolve(process.argv[2] ?? "release-tarballs");
-  const out = path.resolve(process.argv[3] ?? "release-demo");
+  const [tarballArg, outArg, flag] = process.argv.slice(2);
+  const tarballDir = path.resolve(tarballArg ?? "release-tarballs");
+  const out = path.resolve(outArg ?? "release-demo");
   const tarballs = JSON.parse(
     readFileSync(path.join(tarballDir, "tarballs.json"), "utf8"),
   ) as Tarball[];
@@ -105,6 +110,7 @@ function main(): void {
 
   assembleDemo({ repo: process.cwd(), tarballDir, tarballs, out: demo });
   execFileSync("vp", ["install"], { cwd: demo, stdio: "inherit" });
+  if (flag === "--install-only") return;
   execFileSync("vp", ["build"], { cwd: demo, stdio: "inherit" });
   writeVercelOutput({ dist: path.join(demo, "dist"), vercelJson: "vercel.json", out });
   console.log(`Candidate demo built into ${path.join(out, ".vercel", "output")}`);
