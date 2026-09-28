@@ -16,6 +16,12 @@ import { compileSource } from "@unworklet/lang/browser";
 const FADE = 0.08;
 const MASTER = 0.9;
 
+// `browser` compiles the edited source in the page; `build` plays the module the
+// Vite plugin compiled when the demo was built, which is how most applications
+// load a processor. The plugin compiles for 48 kHz, so that mode plays at 48 kHz.
+export type CompileMode = "browser" | "build";
+const BUILD_SAMPLE_RATE = 48_000;
+
 export type SourceType = "sawtooth" | "sine" | "square" | "triangle" | "noise";
 export type ParamControl = {
   name: string;
@@ -42,8 +48,12 @@ export function useUnworkletDemo() {
   let fileBuffer: AudioBuffer | null = null;
   let current: Example | null = null;
 
-  const ensureCtx = async (): Promise<AudioContext> => {
-    ctx ??= new AudioContext();
+  const ensureCtx = async (sampleRate?: number): Promise<AudioContext> => {
+    if (ctx && sampleRate !== undefined && ctx.sampleRate !== sampleRate) {
+      await ctx.close();
+      ctx = null;
+    }
+    ctx ??= sampleRate === undefined ? new AudioContext() : new AudioContext({ sampleRate });
     if (ctx.state === "suspended") await ctx.resume();
     return ctx;
   };
@@ -93,16 +103,19 @@ export function useUnworkletDemo() {
   // Compile + instantiate the example and wire it to the speakers, WITHOUT
   // starting any input source — silent until the user plays. Populates the param
   // sliders so the controls are live before the first note.
-  async function prepare(ex: Example): Promise<void> {
-    const c = await ensureCtx();
+  async function prepare(ex: Example, mode: CompileMode = "browser"): Promise<void> {
     await teardown();
+    const c = await ensureCtx(mode === "build" ? BUILD_SAMPLE_RATE : undefined);
     current = ex;
     busy.value = true;
     ready.value = false;
     error.value = null;
-    status.value = "compiling…";
+    status.value = mode === "build" ? "loading the build-time module…" : "compiling…";
     try {
-      node = await createNode(c, await compileSource(ex.source));
+      node = await createNode(
+        c,
+        mode === "build" ? await ex.worklet() : await compileSource(ex.source),
+      );
       master = c.createGain();
       master.gain.value = MASTER;
       node.outputs["main"]!.connect(master);

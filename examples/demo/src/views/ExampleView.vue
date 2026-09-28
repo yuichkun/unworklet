@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
 
 import MonacoEditor from "../components/MonacoEditor.vue";
 import { useUnworkletDemo } from "../composables/useUnworkletDemo.ts";
-import type { SourceType } from "../composables/useUnworkletDemo.ts";
+import type { CompileMode, SourceType } from "../composables/useUnworkletDemo.ts";
 import { exampleBySlug } from "../examples.ts";
 
 const props = defineProps<{ slug: string }>();
@@ -61,8 +61,15 @@ function release(note: number): void {
   if (down.delete(note)) noteOff(note);
 }
 
+const mode = ref<CompileMode>("browser");
+function setMode(next: CompileMode): void {
+  if (!ex || mode.value === next) return;
+  mode.value = next;
+  void prepare(ex, next);
+}
+
 function doRecompile(): void {
-  void recompile(src.value);
+  if (mode.value === "browser") void recompile(src.value);
 }
 function onFile(e: Event): void {
   const file = (e.target as HTMLInputElement).files?.[0];
@@ -122,9 +129,38 @@ onBeforeUnmount(() => {
               <button class="primary" :disabled="busy || !ready" @click="play">▶ Play</button>
               <button :disabled="!playing" @click="stop">■ Stop</button>
             </template>
-            <button :disabled="busy || !ready" @click="doRecompile">↻ Recompile</button>
+            <button :disabled="busy || !ready || mode === 'build'" @click="doRecompile">
+              ↻ Recompile
+            </button>
           </div>
           <p v-if="ex.kind === 'effect'" class="panel-hint"><kbd>Space</kbd> play / stop</p>
+        </div>
+
+        <div class="panel-block">
+          <span class="label">Compiled</span>
+          <div class="transport">
+            <button
+              :class="{ primary: mode === 'browser' }"
+              :disabled="busy"
+              @click="setMode('browser')"
+            >
+              In the browser
+            </button>
+            <button
+              :class="{ primary: mode === 'build' }"
+              :disabled="busy"
+              @click="setMode('build')"
+            >
+              At build time
+            </button>
+          </div>
+          <p class="panel-hint">
+            {{
+              mode === "browser"
+                ? "Compiled from the editor in this page; edits recompile live."
+                : "The module @unworklet/unplugin compiled when this demo was built, as most apps load a processor. Plays at 48 kHz; edits apply to the in-browser version."
+            }}
+          </p>
         </div>
 
         <div v-if="ex.kind === 'effect'" class="panel-block">
