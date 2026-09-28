@@ -6,7 +6,7 @@ import path from "node:path";
 import { expect, test } from "vite-plus/test";
 import { parse } from "yaml";
 
-import { assembleDemo, writeVercelOutput } from "./demo.ts";
+import { assembleDemo, tarballFingerprint, writeVercelOutput } from "./demo.ts";
 import type { Tarball } from "./tarballs.ts";
 
 function write(root: string, file: string, content: string): void {
@@ -172,4 +172,14 @@ test("the Vercel output serves the built demo with the headers vercel.json decla
       },
     ],
   });
+});
+
+test("the tarballs' fingerprint names the set of packages the demo was built from", () => {
+  const fingerprint = tarballFingerprint(TARBALLS);
+
+  expect(fingerprint).toMatch(/^[0-9a-f]{8}$/);
+  expect(tarballFingerprint([...TARBALLS].reverse())).toBe(fingerprint);
+  expect(
+    tarballFingerprint([{ ...TARBALLS[0]!, integrity: "sha512-other" }, TARBALLS[1]!]),
+  ).not.toBe(fingerprint);
 });
