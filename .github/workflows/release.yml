@@ -306,15 +306,21 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           SHA: ${{ needs.prepare.outputs.sha }}
         run: |
+          body="Released in [v$VERSION](https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION)."
           previous=$(git describe --tags --abbrev=0 "$SHA^")
           git log --format=%s "$previous..$SHA" |
             sed -nE 's/^Merge pull request #([0-9]+).*/\1/p; s/.*\(#([0-9]+)\)$/\1/p' |
             sort -u |
-            while read -r pr; do
-              gh pr view "$pr" --json closingIssuesReferences --jq '.closingIssuesReferences[].number'
+            while read -r number; do
+              # A number in a commit subject can be an issue rather than a pull request.
+              gh pr view "$number" --json closingIssuesReferences \
+                --jq '.closingIssuesReferences[] | select(.url | startswith("https://github.com/" + env.GITHUB_REPOSITORY + "/issues/")) | .number' \
+                2> /dev/null || true
             done |
             sort -u |
             while read -r issue; do
-              gh issue comment "$issue" \
-                --body "Released in [v$VERSION](https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION)."
+              if gh api "repos/$GITHUB_REPOSITORY/issues/$issue/comments" --paginate --jq '.[].body' | grep -qxF "$body"; then
+                continue
+              fi
+              gh issue comment "$issue" --body "$body"
             done
