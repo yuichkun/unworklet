@@ -34,8 +34,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
-          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
-            --pattern demo-deployment.txt --dir "$RUNNER_TEMP"
+          if ! gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern demo-deployment.txt --dir "$RUNNER_TEMP"; then
+            echo "::error::v$VERSION has no recorded demo deployment; only releases made by the Release workflow have one. The production demo is unchanged, so release a fixed version to bring it back in line with npm."
+            exit 1
+          fi
           echo "url=$(cat "$RUNNER_TEMP/demo-deployment.txt")" >> "$GITHUB_OUTPUT"
       - name: Roll the production domain back to it
         env:
