@@ -102,16 +102,43 @@ export function planRelease(
   return { version, changelog, notes };
 }
 
+function readStatus(work: string, since?: string): ChangesetStatus {
+  const statusFile = path.join(work, "status.json");
+  const range = since === undefined ? [] : ["--since", since];
+  execFileSync("vp", ["exec", "changeset", "status", ...range, "--output", statusFile], {
+    stdio: "inherit",
+  });
+  return JSON.parse(readFileSync(statusFile, "utf8")) as ChangesetStatus;
+}
+
 /**
- * Applies the plan to the working tree: writes CHANGELOG.md, lets Changesets
- * bump the package versions and delete the consumed changeset files, and
- * reports the version and notes path to the workflow.
+ * `version.ts --check <base>` checks a pull request: every changed package needs
+ * a changeset, and none may be major before 1.0.
+ *
+ * `version.ts` applies the plan to the working tree: writes CHANGELOG.md, lets
+ * Changesets bump the package versions and delete the consumed changeset files,
+ * and reports the version and notes path to the workflow.
  */
 function main(): void {
   const work = mkdtempSync(path.join(tmpdir(), "uwk-version-"));
-  const statusFile = path.join(work, "status.json");
-  execFileSync("vp", ["exec", "changeset", "status", "--output", statusFile], { stdio: "inherit" });
-  const status = JSON.parse(readFileSync(statusFile, "utf8")) as ChangesetStatus;
+  const [mode, since] = process.argv.slice(2);
+  if (mode === "--check") {
+    let pending: ChangesetStatus;
+    try {
+      pending = readStatus(work, since);
+    } catch {
+      console.error(
+        "::error::This pull request changes a published package without a changeset. Add one " +
+          "with `vp exec changeset`: patch, or minor when the change breaks existing code. Use " +
+          "`vp exec changeset --empty` when the change does not ship.",
+      );
+      process.exit(1);
+    }
+    checkChangesets(pending);
+    return;
+  }
+
+  const status = readStatus(work);
 
   const plan = planRelease(status, {
     changelog: readFileSync("CHANGELOG.md", "utf8"),
