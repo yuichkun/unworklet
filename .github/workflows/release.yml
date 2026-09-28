@@ -57,6 +57,14 @@ jobs:
       - name: Derive the version and changelog from the changesets
         id: version
         run: vp exec node scripts/release/version.ts
+      - name: Refuse a version npm already has
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if curl -fsS "https://registry.npmjs.org/@unworklet/core/$VERSION" > /dev/null 2>&1; then
+            echo "::error::v$VERSION is already on npm, but main does not have its release commit. Rerun the promote job of the run that published it, so that its release pull request merges, then start the next release."
+            exit 1
+          fi
       - name: Commit to the release branch
         id: commit
         env:
