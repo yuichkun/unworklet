@@ -46,6 +46,9 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          # Pushes made with the workflow's own token start no workflows, so the
+          # release branch is pushed with the App's token to get its checks.
+          token: ${{ steps.app.outputs.token }}
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: "24"
@@ -270,6 +273,25 @@ jobs:
         run: |
           echo "$CANDIDATE_URL" > "$RUNNER_TEMP/demo-deployment.txt"
           gh release upload "v$VERSION" "$RUNNER_TEMP/demo-deployment.txt" --clobber
+      - name: Merge the release pull request once its checks pass
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ needs.prepare.outputs.pr }}
+        run: |
+          if [ "$(gh pr view "$PR" --json state --jq .state)" = "MERGED" ]; then
+            exit 0
+          fi
+          gh pr update-branch "$PR"
+          head=$(gh pr view "$PR" --json headRefOid --jq .headRefOid)
+          # A new head has no checks until its workflows start.
+          for attempt in $(seq 1 30); do
+            if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/check-runs" --jq .total_count)" -gt 0 ]; then
+              break
+            fi
+            sleep 10
+          done
+          gh pr checks "$PR" --watch --fail-fast
+          gh pr merge "$PR" --merge --match-head-commit "$head"
       - name: Tell the issues this release fixes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -288,14 +310,3 @@ jobs:
               gh issue comment "$issue" \
                 --body "Released in [v$VERSION](https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION)."
             done
-      - name: Merge the release pull request once its checks pass
-        env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
-          PR: ${{ needs.prepare.outputs.pr }}
-        run: |
-          if [ "$(gh pr view "$PR" --json state --jq .state)" = "MERGED" ]; then
-            exit 0
-          fi
-          gh pr update-branch "$PR"
-          gh pr checks "$PR" --watch --fail-fast
-          gh pr merge "$PR" --merge
