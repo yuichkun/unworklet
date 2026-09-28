@@ -155,6 +155,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
+      pull-requests: read
     steps:
       - uses: actions/create-github-app-token@v3
         id: app
@@ -216,6 +218,32 @@ jobs:
             gh release create "v$VERSION" --verify-tag --latest --title "v$VERSION" \
               --notes-file "$RUNNER_TEMP/notes/release-notes.md"
           fi
+      - name: Record which deployment is this version's demo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          CANDIDATE_URL: ${{ needs.candidate.outputs.url }}
+        run: |
+          echo "$CANDIDATE_URL" > "$RUNNER_TEMP/demo-deployment.txt"
+          gh release upload "v$VERSION" "$RUNNER_TEMP/demo-deployment.txt" --clobber
+      - name: Tell the issues this release fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          previous=$(git describe --tags --abbrev=0 "$SHA^")
+          git log --format=%s "$previous..$SHA" |
+            sed -nE 's/^Merge pull request #([0-9]+).*/\1/p; s/.*\(#([0-9]+)\)$/\1/p' |
+            sort -u |
+            while read -r pr; do
+              gh pr view "$pr" --json closingIssuesReferences --jq '.closingIssuesReferences[].number'
+            done |
+            sort -u |
+            while read -r issue; do
+              gh issue comment "$issue" \
+                --body "Released in [v$VERSION](https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION)."
+            done
       - name: Merge the release pull request once its checks pass
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
