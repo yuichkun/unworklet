@@ -16,7 +16,7 @@ import path from "node:path";
 import ts from "typescript";
 
 import type { Tarball } from "./tarballs.ts";
-import { readStatus } from "./version.ts";
+import { readStatus, type ChangesetStatus } from "./version.ts";
 
 export type ApiSurface = Record<string, string>;
 export type ApiDiff = { removed: string[]; changed: string[]; added: string[] };
@@ -77,11 +77,12 @@ export function compareApiSurfaces(before: ApiSurface, after: ApiSurface): ApiDi
   };
 }
 
+/** `allowBreaking` is only asked when an export was removed. */
 export function apiVerdict(
   diff: ApiDiff,
-  options: { allowBreaking: boolean },
+  options: { allowBreaking: () => boolean },
 ): { ok: true } | { ok: false; message: string } {
-  if (diff.removed.length === 0 || options.allowBreaking) return { ok: true };
+  if (diff.removed.length === 0 || options.allowBreaking()) return { ok: true };
   return {
     ok: false,
     message:
@@ -130,12 +131,19 @@ function main(): void {
 
   const version = (dir: string) =>
     (JSON.parse(readFileSync(path.join(dir, "tarballs.json"), "utf8")) as Tarball[])[0]!.version;
-  const allowBreaking =
-    flag === "--since"
-      ? readStatus(mkdtempSync(path.join(tmpdir(), "uwk-api-status-")), base).changesets.some((c) =>
-          c.releases.some((r) => r.type === "minor" || r.type === "major"),
-        )
-      : minorOf(version(beforeDir!)) !== minorOf(version(afterDir!));
+  const allowBreaking = () => {
+    if (flag !== "--since") return minorOf(version(beforeDir!)) !== minorOf(version(afterDir!));
+    let status: ChangesetStatus;
+    try {
+      status = readStatus(mkdtempSync(path.join(tmpdir(), "uwk-api-status-")), base);
+    } catch {
+      // Changesets has already said why it could not read them; the Changeset job fails too.
+      return false;
+    }
+    return status.changesets.some((c) =>
+      c.releases.some((r) => r.type === "minor" || r.type === "major"),
+    );
+  };
 
   const report = formatApiReport(diff, { before: beforeLabel!, after: afterLabel! });
   console.log(report);
