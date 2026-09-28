@@ -2,7 +2,7 @@ import { expect, test } from "vite-plus/test";
 
 import { rollbackCommands } from "./rollback.ts";
 
-test("withdrawing a release moves latest back, deprecates the bad version, then rolls the demo back", () => {
+test("withdrawing a release moves latest back on npm and GitHub, deprecates the bad version, then rolls the demo back", () => {
   expect(
     rollbackCommands({
       packages: ["@unworklet/core", "@unworklet/lang"],
@@ -27,6 +27,7 @@ test("withdrawing a release moves latest back, deprecates the bad version, then 
       "@unworklet/lang@0.4.0",
       "Withdrawn; use 0.3.0 until a fixed release. The reverb example clips.",
     ],
+    ["gh", "release", "edit", "v0.3.0", "--latest", "--repo", "yuichkun/unworklet"],
     [
       "gh",
       "workflow",
