@@ -79,6 +79,22 @@ export function tarballFingerprint(tarballs: Tarball[]): string {
   return createHash("sha256").update(lines.join("\n")).digest("hex").slice(0, 8);
 }
 
+/**
+ * Served as /release.json by the demo built from these tarballs, so a check can
+ * tell from outside which release the production demo is.
+ */
+export function releaseManifest(tarballs: Tarball[]): {
+  version: string;
+  fingerprint: string;
+  packages: Record<string, string>;
+} {
+  return {
+    version: tarballs[0]!.version,
+    fingerprint: tarballFingerprint(tarballs),
+    packages: Object.fromEntries(tarballs.map((t) => [t.name, t.integrity])),
+  };
+}
+
 /** Lays the built demo out in Vercel's Build Output API format, with the headers from vercel.json. */
 export function writeVercelOutput(options: {
   dist: string;
@@ -125,6 +141,10 @@ function main(): void {
     env: { ...process.env, VITE_UNWORKLET_TARBALLS: fingerprint },
   });
   writeFileSync(path.join(out, "fingerprint"), fingerprint + "\n");
+  writeFileSync(
+    path.join(demo, "dist", "release.json"),
+    JSON.stringify(releaseManifest(tarballs), null, 2) + "\n",
+  );
   writeVercelOutput({ dist: path.join(demo, "dist"), vercelJson: "vercel.json", out });
   console.log(`Candidate demo built into ${path.join(out, ".vercel", "output")}`);
 }
