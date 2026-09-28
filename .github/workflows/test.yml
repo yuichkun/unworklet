@@ -150,3 +150,20 @@ jobs:
             vp dlx -- @arethetypeswrong/cli "$packed_dir/unworklet-$p-"*.tgz --profile esm-only --ignore-rules "${ignore[@]}"
             echo "::endgroup::"
           done
+
+  changeset:
+    name: Changeset (release notes and version bump)
+    # The release pull request consumes the changesets, so it is the one pull
+    # request that changes packages without adding any.
+    if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'release/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - run: vp exec node scripts/release/version.ts --check "origin/$GITHUB_BASE_REF"
