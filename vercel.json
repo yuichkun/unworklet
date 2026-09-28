@@ -3,6 +3,11 @@
   "buildCommand": "bash scripts/vercel-build.sh",
   "outputDirectory": "examples/demo/dist",
   "framework": null,
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",
