@@ -60,6 +60,47 @@ export function checkReleaseConsistency(state: {
   return problems;
 }
 
+const DEMO_MANIFEST = "https://unworklet.vercel.app/release.json";
+const LATEST_RELEASE = "https://api.github.com/repos/yuichkun/unworklet/releases/latest";
+
+/**
+ * Reads what the three currently serve. A request that fails throws rather than
+ * reading as a disagreement, so an outage is not reported as a bad release.
+ */
+export async function readReleaseState(options: {
+  names: string[];
+  fetch: (url: string, init?: RequestInit) => Promise<Response>;
+  githubToken?: string;
+}): Promise<{ demo: DemoManifest | null; npm: NpmLatest; releaseTag: string }> {
+  const read = async (url: string, init?: RequestInit, missingIsNull = false) => {
+    const response = await options.fetch(url, init);
+    if (response.ok) return response.json();
+    if (missingIsNull && response.status === 404) return null;
+    throw new Error(`Could not read ${url}: HTTP ${response.status}.`);
+  };
+
+  const demo = (await read(DEMO_MANIFEST, undefined, true)) as DemoManifest | null;
+
+  const npm: NpmLatest = {};
+  for (const name of options.names) {
+    const packument = (await read(`https://registry.npmjs.org/${name}`)) as {
+      "dist-tags": { latest: string };
+      versions: Record<string, { dist: { integrity: string } }>;
+    };
+    const latest = packument["dist-tags"].latest;
+    npm[name] = { latest, integrity: packument.versions[latest]!.dist.integrity };
+  }
+
+  const release = (await read(LATEST_RELEASE, {
+    headers: {
+      accept: "application/vnd.github+json",
+      ...(options.githubToken ? { authorization: `Bearer ${options.githubToken}` } : {}),
+    },
+  })) as { tag_name: string };
+
+  return { demo, npm, releaseTag: release.tag_name };
+}
+
 const PACKAGES = [
   "@unworklet/core",
   "@unworklet/lang",
@@ -68,28 +109,17 @@ const PACKAGES = [
   "@unworklet/unplugin",
 ];
 
-/** `watch.ts <report file>`: writes the problems found, and exits non-zero when there are any. */
+/**
+ * `watch.ts <report file>`: writes the problems found, and exits non-zero when
+ * there are any, setting the step output `disagree=true`.
+ */
 async function main(): Promise<void> {
-  const response = await fetch("https://unworklet.vercel.app/release.json");
-  const demo = response.ok ? ((await response.json()) as DemoManifest) : null;
-
-  const npm: NpmLatest = {};
-  for (const name of PACKAGES) {
-    const packument = (await (await fetch(`https://registry.npmjs.org/${name}`)).json()) as {
-      "dist-tags": { latest: string };
-      versions: Record<string, { dist: { integrity: string } }>;
-    };
-    const latest = packument["dist-tags"].latest;
-    npm[name] = { latest, integrity: packument.versions[latest]!.dist.integrity };
-  }
-
-  const release = (await (
-    await fetch("https://api.github.com/repos/yuichkun/unworklet/releases/latest", {
-      headers: { accept: "application/vnd.github+json" },
-    })
-  ).json()) as { tag_name: string };
-
-  const problems = checkReleaseConsistency({ demo, npm, releaseTag: release.tag_name });
+  const state = await readReleaseState({
+    names: PACKAGES,
+    fetch,
+    githubToken: process.env.GITHUB_TOKEN,
+  });
+  const problems = checkReleaseConsistency(state);
   const report =
     problems.length === 0
       ? "The production demo, npm and the latest GitHub Release agree.\n"
@@ -105,7 +135,11 @@ async function main(): Promise<void> {
   writeFileSync(process.argv[2] ?? "watch-report.md", report);
   const stepSummary = process.env.GITHUB_STEP_SUMMARY;
   if (stepSummary) appendFileSync(stepSummary, report);
-  if (problems.length > 0) process.exitCode = 1;
+  if (problems.length > 0) {
+    const output = process.env.GITHUB_OUTPUT;
+    if (output) appendFileSync(output, "disagree=true\n");
+    process.exitCode = 1;
+  }
 }
 
 if (import.meta.main) await main();
