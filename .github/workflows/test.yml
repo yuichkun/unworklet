@@ -4,6 +4,12 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to test. Defaults to the commit of the triggering event.
+        type: string
+        default: ""
 
 jobs:
   check:
@@ -11,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: "24"
@@ -23,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: "24"
@@ -54,6 +64,8 @@ jobs:
         package: [core, lang, offline, test, unplugin]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: "24"
@@ -76,6 +88,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: "24"
@@ -100,6 +114,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: "24"

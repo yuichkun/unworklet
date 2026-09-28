@@ -1,0 +1,99 @@
+name: Candidate
+
+# Builds a release candidate the way it ships: the five package tarballs are
+# packed once, and the demo is built outside the monorepo with every
+# @unworklet package installed from those tarballs. Pull requests build it to
+# keep that path working; the release workflow also deploys it for listening.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build the candidate from.
+        type: string
+        required: true
+      deploy:
+        description: Upload the candidate demo to Vercel as a production deployment, without assigning the production domain.
+        type: boolean
+        default: false
+    secrets:
+      VERCEL_TOKEN:
+        required: false
+    outputs:
+      url:
+        description: URL of the deployed candidate demo.
+        value: ${{ jobs.candidate.outputs.url }}
+
+jobs:
+  candidate:
+    name: Release candidate (tarballs and the demo built from them)
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Build packages in dependency order (unplugin → core → lang → offline → test)
+        run: |
+          vp run --filter @unworklet/unplugin build
+          vp run --filter @unworklet/core build
+          vp run --filter @unworklet/lang build
+          vp run --filter @unworklet/offline build
+          vp run --filter @unworklet/test build
+      - name: Pack the release tarballs
+        run: vp exec node scripts/release/tarballs.ts "$RUNNER_TEMP/tarballs"
+      - name: Build the demo from the tarballs, outside the monorepo
+        run: vp exec node scripts/release/demo.ts "$RUNNER_TEMP/tarballs" "$RUNNER_TEMP/candidate"
+      - uses: actions/upload-artifact@v4
+        if: inputs.deploy
+        with:
+          name: release-tarballs
+          path: ${{ runner.temp }}/tarballs
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: inputs.deploy
+        with:
+          name: candidate-demo
+          path: ${{ runner.temp }}/candidate/.vercel/output
+          include-hidden-files: true
+          if-no-files-found: error
+      - name: Deploy the candidate demo without assigning the production domain
+        id: deploy
+        if: inputs.deploy
+        working-directory: ${{ runner.temp }}/candidate
+        env:
+          VERCEL_ORG_ID: team_Us99kzAzcWnEYDgVZhCpFEvE
+          VERCEL_PROJECT_ID: prj_nJ6tS4mR7AY3udftZFrVpqDcPnqp
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          vp dlx vercel@60.1.3 deploy --prebuilt --prod --skip-domain --token "$VERCEL_TOKEN" | tee deploy.log
+          url=$(grep -Eo 'https://[^[:space:]]+\.vercel\.app' deploy.log | tail -1)
+          test -n "$url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Summarize the candidate
+        if: inputs.deploy
+        env:
+          CANDIDATE_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const tarballs = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/tarballs/tarballs.json", "utf8"));
+            const lines = [
+              `## Release candidate v${tarballs[0].version}`,
+              "",
+              `- Candidate demo: ${process.env.CANDIDATE_URL} (open it while signed in to Vercel)`,
+              "- Current release: https://unworklet.vercel.app",
+              "",
+              "| Package | Integrity |",
+              "| --- | --- |",
+              ...tarballs.map((t) => `| \`${t.name}@${t.version}\` | \`${t.integrity}\` |`),
+              "",
+            ];
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, lines.join("\n") + "\n");
+          '
