@@ -110,6 +110,50 @@ jobs:
     secrets:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
+  soak:
+    name: Soak both transports for 30 minutes each
+    # Shown next to the approval rather than required by it: whether GitHub's
+    # runners, which have no audio device, can hold a live AudioContext for the
+    # full duration is established by the first release run.
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - run: vp run build
+      - name: Install Chromium
+        working-directory: examples/demo
+        run: vp exec playwright install --with-deps chromium
+      - name: Run the release soak
+        run: vp exec node scripts/release-soak/run.mjs --seconds 1800 --out "$RUNNER_TEMP/soak"
+      - name: Summarize the soak
+        if: always()
+        run: |
+          {
+            echo "## Release soak"
+            echo
+            for file in "$RUNNER_TEMP"/soak/*.json; do
+              echo "$(basename "$file")"
+              echo
+              echo '```json'
+              head -c 6000 "$file"
+              echo
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-soak
+          path: ${{ runner.temp }}/soak
+
   publish:
     name: Publish the listened-to tarballs to npm
     needs: [prepare, test, candidate]
