@@ -6,7 +6,7 @@ import path from "node:path";
 import { expect, test } from "vite-plus/test";
 import { parse } from "yaml";
 
-import { assembleDemo, tarballFingerprint, writeVercelOutput } from "./demo.ts";
+import { assembleDemo, releaseManifest, tarballFingerprint, writeVercelOutput } from "./demo.ts";
 import type { Tarball } from "./tarballs.ts";
 
 function write(root: string, file: string, content: string): void {
@@ -182,4 +182,15 @@ test("the tarballs' fingerprint names the set of packages the demo was built fro
   expect(
     tarballFingerprint([{ ...TARBALLS[0]!, integrity: "sha512-other" }, TARBALLS[1]!]),
   ).not.toBe(fingerprint);
+});
+
+test("the demo carries a release manifest naming the version and every tarball it was built from", () => {
+  expect(releaseManifest(TARBALLS)).toEqual({
+    version: "0.4.0",
+    fingerprint: tarballFingerprint(TARBALLS),
+    packages: {
+      "@unworklet/core": "sha512-core",
+      "@unworklet/unplugin": "sha512-unplugin",
+    },
+  });
 });
