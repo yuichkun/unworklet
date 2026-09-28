@@ -26,18 +26,22 @@ jobs:
       - run: vp install
       - name: Compare the production demo, npm and the latest release
         id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: vp exec node scripts/release/watch.ts "$RUNNER_TEMP/watch-report.md"
-      - name: Open or update the issue
-        if: failure() && steps.check.outcome == 'failure'
+      # A check that could not read one of the three fails the run without an issue.
+      - name: Open the issue, or add to it when the disagreement changes
+        if: failure() && steps.check.outputs.disagree == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           title="The production demo, npm and the latest release disagree"
+          report="$RUNNER_TEMP/watch-report.md"
           number=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
-          if [ -n "$number" ]; then
-            gh issue comment "$number" --body-file "$RUNNER_TEMP/watch-report.md"
-          else
-            gh issue create --title "$title" --body-file "$RUNNER_TEMP/watch-report.md"
+          if [ -z "$number" ]; then
+            gh issue create --title "$title" --body-file "$report"
+          elif [ "$(gh issue view "$number" --json body,comments --jq '(.comments | last | .body) // .body')" != "$(cat "$report")" ]; then
+            gh issue comment "$number" --body-file "$report"
           fi
       - name: Close the issue once they agree
         if: success()
