@@ -197,9 +197,10 @@ jobs:
           dir=$(mktemp -d)
           cd "$dir"
           node -e '
+            const { packageManager } = require(process.env.GITHUB_WORKSPACE + "/package.json");
             const packages = ["core", "lang", "offline", "test", "unplugin"];
             const dependencies = Object.fromEntries(packages.map((p) => [`@unworklet/${p}`, process.env.VERSION]));
-            require("fs").writeFileSync("package.json", JSON.stringify({ private: true, type: "module", dependencies }));
+            require("fs").writeFileSync("package.json", JSON.stringify({ private: true, type: "module", packageManager, dependencies }));
           '
           vp install
           node --input-type=module -e 'await import("@unworklet/core"); await import("@unworklet/offline"); console.log("The release installs from npm.");'
