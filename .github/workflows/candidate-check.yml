@@ -1,7 +1,9 @@
 name: Candidate check
 
 # Builds the release candidate for every pull request and for main, so the
-# path a release takes stays working between releases.
+# path a release takes stays working between releases. On a pull request it
+# also compares how the demo examples sound against the base commit and
+# comments when they differ.
 
 on:
   pull_request:
@@ -14,6 +16,11 @@ permissions:
 jobs:
   candidate:
     name: Release candidate
+    permissions:
+      contents: read
+      pull-requests: write
     uses: ./.github/workflows/candidate.yml
     with:
       ref: ${{ github.sha }}
+      compare-with: ${{ github.event.pull_request.base.sha || '' }}
+      pull-request: ${{ github.event.pull_request.head.repo.full_name == github.repository && format('{0}', github.event.pull_request.number) || '' }}

@@ -3,7 +3,8 @@ name: Candidate
 # Builds a release candidate the way it ships: the five package tarballs are
 # packed once, and the demo is built outside the monorepo with every
 # @unworklet package installed from those tarballs. Pull requests build it to
-# keep that path working; the release workflow also deploys it for listening.
+# keep that path working and to report which examples sound different; the
+# release workflow also deploys it for listening.
 
 on:
   workflow_call:
@@ -16,6 +17,14 @@ on:
         description: Upload the candidate demo to Vercel as a production deployment, without assigning the production domain.
         type: boolean
         default: false
+      compare-with:
+        description: What to compare the examples' sound with — `release` (the latest version on npm), a commit, or empty to skip.
+        type: string
+        default: ""
+      pull-request:
+        description: Pull request to comment on when the examples sound different.
+        type: string
+        default: ""
     secrets:
       VERCEL_TOKEN:
         required: false
@@ -39,17 +48,72 @@ jobs:
           node-version: "24"
           cache: true
       - run: vp install
-      - name: Build packages in dependency order (unplugin → core → lang → offline → test)
-        run: |
-          vp run --filter @unworklet/unplugin build
-          vp run --filter @unworklet/core build
-          vp run --filter @unworklet/lang build
-          vp run --filter @unworklet/offline build
-          vp run --filter @unworklet/test build
+      - run: vp run build
       - name: Pack the release tarballs
         run: vp exec node scripts/release/tarballs.ts "$RUNNER_TEMP/tarballs"
       - name: Build the demo from the tarballs, outside the monorepo
         run: vp exec node scripts/release/demo.ts "$RUNNER_TEMP/tarballs" "$RUNNER_TEMP/candidate"
+
+      - name: Download the current release from npm
+        id: previous
+        if: inputs.compare-with == 'release'
+        run: vp exec node scripts/release/fetch-release.ts latest "$RUNNER_TEMP/tarballs" "$RUNNER_TEMP/before-tarballs"
+      - name: Check out the commit to compare with
+        if: inputs.compare-with != '' && inputs.compare-with != 'release'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.compare-with }}
+          path: base
+      - name: Pack the tarballs of the commit to compare with
+        if: inputs.compare-with != '' && inputs.compare-with != 'release'
+        working-directory: base
+        run: |
+          vp install
+          vp run build
+          vp exec node ../scripts/release/tarballs.ts "$RUNNER_TEMP/before-tarballs"
+      - name: Render the examples with both versions
+        if: inputs.compare-with != ''
+        run: |
+          vp exec node scripts/release/demo.ts "$RUNNER_TEMP/before-tarballs" "$RUNNER_TEMP/before" --install-only
+          (cd "$RUNNER_TEMP/before/demo" && vp exec node src/render-examples.ts "$RUNNER_TEMP/renders/before")
+          (cd "$RUNNER_TEMP/candidate/demo" && vp exec node src/render-examples.ts "$RUNNER_TEMP/renders/after")
+      - name: Compare how the examples sound
+        id: sound
+        if: inputs.compare-with != ''
+        env:
+          COMPARE_WITH: ${{ inputs.compare-with }}
+          PREVIOUS: ${{ steps.previous.outputs.version }}
+        run: |
+          version=$(node -p 'require(process.env.RUNNER_TEMP + "/tarballs/tarballs.json")[0].version')
+          if [ "$COMPARE_WITH" = "release" ]; then
+            before="v$PREVIOUS (current release)"
+            after="v$version (candidate)"
+          else
+            before="the base commit (${COMPARE_WITH:0:7})"
+            after="this pull request"
+          fi
+          vp exec node scripts/release/sound-diff.ts "$RUNNER_TEMP/renders/before" "$RUNNER_TEMP/renders/after" \
+            "$before" "$after" "$RUNNER_TEMP/sound-report.md"
+      - name: Comment on the pull request when examples sound different
+        if: inputs.pull-request != '' && inputs.compare-with != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MOVED: ${{ steps.sound.outputs.moved }}
+          PR: ${{ inputs.pull-request }}
+        run: |
+          marker="<!-- unworklet-sound-diff -->"
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | tail -n 1)
+          if [ "$MOVED" = "0" ] && [ -z "$existing" ]; then
+            exit 0
+          fi
+          body="$marker"$'\n'"$(cat "$RUNNER_TEMP/sound-report.md")"
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -f body="$body" > /dev/null
+          else
+            gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body "$body"
+          fi
+
       - uses: actions/upload-artifact@v4
         if: inputs.deploy
         with:

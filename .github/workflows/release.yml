@@ -106,6 +106,7 @@ jobs:
     with:
       ref: ${{ needs.prepare.outputs.sha }}
       deploy: true
+      compare-with: release
     secrets:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
