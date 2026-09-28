@@ -1,0 +1,51 @@
+name: Release watch
+
+# Once a day, checks from outside that the production demo, npm and the latest
+# GitHub Release agree on the latest release, and keeps one open issue
+# describing any disagreement until it is resolved.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watch:
+    name: Production demo, npm and releases agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Compare the production demo, npm and the latest release
+        id: check
+        run: vp exec node scripts/release/watch.ts "$RUNNER_TEMP/watch-report.md"
+      - name: Open or update the issue
+        if: failure() && steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="The production demo, npm and the latest release disagree"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body-file "$RUNNER_TEMP/watch-report.md"
+          else
+            gh issue create --title "$title" --body-file "$RUNNER_TEMP/watch-report.md"
+          fi
+      - name: Close the issue once they agree
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="The production demo, npm and the latest release disagree"
+          number=$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue close "$number" --comment "They agree again: $(cat "$RUNNER_TEMP/watch-report.md")"
+          fi
