@@ -53,6 +53,9 @@ jobs:
         run: vp exec node scripts/release/tarballs.ts "$RUNNER_TEMP/tarballs"
       - name: Build the demo from the tarballs, outside the monorepo
         run: vp exec node scripts/release/demo.ts "$RUNNER_TEMP/tarballs" "$RUNNER_TEMP/candidate"
+      - name: Check that both compile paths produce the same WASM
+        working-directory: ${{ runner.temp }}/candidate/demo
+        run: vp exec node src/compile-paths.ts dist
 
       - name: Download the current release from npm
         id: previous
@@ -150,6 +153,8 @@ jobs:
             const tarballs = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/tarballs/tarballs.json", "utf8"));
             const lines = [
               `## Release candidate v${tarballs[0].version}`,
+              "",
+              `Tarballs \`${fs.readFileSync(process.env.RUNNER_TEMP + "/candidate/fingerprint", "utf8").trim()}\` — the candidate demo shows the same fingerprint on hover over its version label.`,
               "",
               `- Candidate demo: ${process.env.CANDIDATE_URL} (open it while signed in to Vercel)`,
               "- Current release: https://unworklet.vercel.app",
