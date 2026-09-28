@@ -1,8 +1,9 @@
 /**
  * Withdraws a bad release, run by a maintainer from their own machine: npm only
  * lets a person with 2FA move `latest` or deprecate a version, so the release
- * workflow cannot. After npm, it asks the Rollback workflow to put the demo of
- * the restored version back on the production domain, keeping the two in line.
+ * workflow cannot. After npm, it marks the restored version as GitHub's latest
+ * release and asks the Rollback workflow to put its demo back on the production
+ * domain, keeping all three in line.
  * The usual response to a bad release is a fixed one through the release
  * workflow; this is for when that cannot wait.
  *
@@ -36,6 +37,7 @@ export function rollbackCommands(options: {
       "latest",
     ]),
     ...options.packages.map((p) => ["vp", "pm", "deprecate", `${p}@${options.withdraw}`, message]),
+    ["gh", "release", "edit", `v${options.restore}`, "--latest", "--repo", "yuichkun/unworklet"],
     [
       "gh",
       "workflow",
