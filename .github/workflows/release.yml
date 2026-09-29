@@ -3,7 +3,8 @@ name: Release
 # A release is a pull request from a `release/vX.Y.Z` branch that sets the five
 # package versions to X.Y.Z and adds the CHANGELOG section. Its title and
 # description become the GitHub Release. Its Vercel preview is where the release
-# is listened to. Merging it publishes the pull request's last commit, the one
+# is listened to. Merging it publishes the commit the merge creates on main,
+# which must have exactly the files of the pull request's last commit, the one
 # that preview was built from: to npm, as the vX.Y.Z tag and GitHub Release, and
 # to the `production` branch, which Vercel deploys as the production demo. See
 # RELEASE.md.
@@ -16,6 +17,11 @@ on:
 permissions:
   contents: read
 
+# One release at a time, in the order they were merged.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Publish the merged release
@@ -25,21 +31,29 @@ jobs:
       contents: write
       id-token: write
     env:
-      SHA: ${{ github.event.pull_request.head.sha }}
+      # The commit the merge created on main. npm's provenance names this commit,
+      # so it is the one that is built, published and tagged.
+      SHA: ${{ github.sha }}
+      LISTENED: ${{ github.event.pull_request.head.sha }}
       BRANCH: ${{ github.event.pull_request.head.ref }}
       TITLE: ${{ github.event.pull_request.title }}
       NOTES: ${{ github.event.pull_request.body }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
       - uses: voidzero-dev/setup-vp@v1
         with:
           node-version: "24"
           cache: true
       - run: vp install
-      - name: Check the version
+      - name: Check that this is the listened-to release
         run: |
+          git fetch --depth 1 origin "$LISTENED"
+          if [ "$(git rev-parse "$SHA^{tree}")" != "$(git rev-parse "$LISTENED^{tree}")" ]; then
+            echo "::error::main differs from the pull request's last commit, so this is not what was listened to. See RELEASE.md."
+            exit 1
+          fi
           version="${BRANCH#release/v}"
           for p in core lang offline test unplugin; do
             actual=$(node -p "require('./packages/$p/package.json').version")
@@ -54,6 +68,18 @@ jobs:
             exit 1
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Check whether this is the newest release
+        run: |
+          current=0.0.0
+          if git fetch --depth 1 origin production 2> /dev/null; then
+            current=$(git show FETCH_HEAD:packages/core/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
+          fi
+          if [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)" = "$VERSION" ]; then
+            echo "NEWEST=true" >> "$GITHUB_ENV"
+          else
+            echo "::notice::production is at $current, newer than $VERSION, so neither it nor the latest release moves."
+            echo "NEWEST=false" >> "$GITHUB_ENV"
+          fi
       - run: vp run build
       # Trusted publishing: npm checks that this workflow is publishing, so no
       # token is stored. Versions npm already has are skipped, so a rerun is safe.
@@ -69,7 +95,8 @@ jobs:
           fi
           if ! gh release view "v$VERSION" > /dev/null 2>&1; then
             printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
-            gh release create "v$VERSION" --verify-tag --latest --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release create "v$VERSION" --verify-tag --latest="$NEWEST" --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
           fi
       - name: Move the production demo to this release
+        if: env.NEWEST == 'true'
         run: git push --force origin "$SHA:refs/heads/production"
