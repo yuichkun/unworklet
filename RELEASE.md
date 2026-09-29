@@ -23,20 +23,29 @@ publishes exactly the commit you listened to.
 3. **Listen** to the Vercel preview of the pull request's latest commit. Vercel
    links it on the pull request; open it while signed in to Vercel. If a commit
    is pushed after you listened, listen to its preview again.
-4. **Merge** when it sounds right. If it does not, push fixes to the branch and
-   go back to step 2.
+4. **Merge** when it sounds right, with the pull request up to date with `main`.
+   If GitHub offers "Update branch", update it and listen to the new preview
+   first. If it does not sound right, push fixes to the branch and go back to
+   step 2.
 
-Merging runs the Release workflow (`.github/workflows/release.yml`) on the pull
-request's last commit, the one its preview was built from. It checks that the
-five versions match the branch name, then:
+Merging runs the Release workflow (`.github/workflows/release.yml`) on the commit
+the merge creates on `main`. It checks that this commit has exactly the files of
+the pull request's last commit, the one you listened to, and that the five
+versions match the branch name. Then it:
 
 - publishes the five packages to npm through trusted publishing;
-- tags that commit `vX.Y.Z` and creates the GitHub Release;
-- moves the `production` branch to that commit, which Vercel deploys to
+- tags the commit `vX.Y.Z` and creates the GitHub Release;
+- moves the `production` branch to the commit, which Vercel deploys to
   https://unworklet.vercel.app.
 
+Releases run one at a time, and a run for an older version never moves
+`production` or the latest GitHub Release back.
+
 If the workflow fails, rerun it. Versions npm already has, the tag and the
-GitHub Release are skipped when they exist.
+GitHub Release are skipped when they exist. If it stops because `main` differs
+from what you listened to, nothing was published: push an empty commit to
+`release/vX.Y.Z` from the current `main`, open a new pull request, listen to its
+preview and merge it.
 
 ## Version numbers
 
