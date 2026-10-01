@@ -17,15 +17,16 @@ on:
 permissions:
   contents: read
 
-# One release at a time, in the order they were merged.
-concurrency:
-  group: release
-  cancel-in-progress: false
-
 jobs:
   release:
     name: Publish the merged release
     if: github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'release/v')
+    # Release runs never overlap. GitHub keeps only one run waiting and cancels
+    # an older waiting one; a canceled run can be rerun later, because a run for
+    # a version older than the newest release moves nothing back.
+    concurrency:
+      group: release
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -76,15 +77,17 @@ jobs:
           fi
           if [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)" = "$VERSION" ]; then
             echo "NEWEST=true" >> "$GITHUB_ENV"
+            echo "NPM_TAG=latest" >> "$GITHUB_ENV"
           else
-            echo "::notice::production is at $current, newer than $VERSION, so neither it nor the latest release moves."
+            echo "::notice::production is at $current, newer than $VERSION: $VERSION goes to npm under the previous tag, and npm's latest, production and the latest release stay."
             echo "NEWEST=false" >> "$GITHUB_ENV"
+            echo "NPM_TAG=previous" >> "$GITHUB_ENV"
           fi
       - run: vp run build
       # Trusted publishing: npm checks that this workflow is publishing, so no
       # token is stored. Versions npm already has are skipped, so a rerun is safe.
       - name: Publish to npm
-        run: vp pm publish -r --access public --no-git-checks
+        run: vp pm publish -r --access public --no-git-checks --tag "$NPM_TAG"
       - name: Tag the release and create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
