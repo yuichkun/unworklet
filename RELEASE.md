@@ -38,8 +38,11 @@ versions match the branch name. Then it:
 - moves the `production` branch to the commit, which Vercel deploys to
   https://unworklet.vercel.app.
 
-Releases run one at a time, and a run for an older version never moves
-`production` or the latest GitHub Release back.
+Merge release pull requests one at a time. Release runs never overlap, but
+GitHub keeps only one run waiting and cancels an older waiting one; rerun a
+canceled run. A run for a version older than the newest release publishes it
+under npm's `previous` tag and moves neither npm's `latest`, `production` nor
+the latest GitHub Release.
 
 If the workflow fails, rerun it. Versions npm already has, the tag and the
 GitHub Release are skipped when they exist. If it stops because `main` differs
