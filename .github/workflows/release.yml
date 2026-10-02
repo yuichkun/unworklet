@@ -49,44 +49,29 @@ jobs:
           cache: true
       - run: vp install
       - name: Check that this is the listened-to release
+        run: vp exec node scripts/release-check.ts
+      # Otherwise a package whose trusted publisher is missing or wrong would
+      # fail only after the packages before it were published.
+      - name: Check that npm lets this workflow publish every package
         run: |
-          git fetch --depth 1 origin "$LISTENED"
-          if [ "$(git rev-parse "$SHA^{tree}")" != "$(git rev-parse "$LISTENED^{tree}")" ]; then
-            echo "::error::main differs from the pull request's last commit, so this is not what was listened to. See RELEASE.md."
-            exit 1
-          fi
-          version="${BRANCH#release/v}"
-          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::$BRANCH is not release/vX.Y.Z with numbers only."
-            exit 1
-          fi
+          id_token=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" |
+            node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).value')
           for p in core lang offline test unplugin; do
-            actual=$(node -p "require('./packages/$p/package.json').version")
-            if [ "$actual" != "$version" ]; then
-              echo "::error::packages/$p is at $actual, but $BRANCH releases $version."
+            if ! curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $id_token" -H "Content-Length: 0" \
+              "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@unworklet%2f$p"; then
+              echo "::error::npm does not let this workflow publish @unworklet/$p. Check its trusted publisher (RELEASE.md, One-time setup)."
               exit 1
             fi
           done
-          tagged=$(git ls-remote --tags origin "refs/tags/v$version" | cut -f1)
-          if [ -n "$tagged" ] && [ "$tagged" != "$SHA" ]; then
-            echo "::error::v$version was already released from $tagged."
-            exit 1
-          fi
-          # The tag is the first thing a release creates, so the newest tag also
-          # covers a newer release that stopped partway.
-          newest=$(git ls-remote --tags origin 'refs/tags/v*' | sed -E 's#^.*refs/tags/v##' |
-            grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
-          if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$version" | sort -V | tail -1)" != "$version" ]; then
-            echo "::error::v$newest is already released and includes this release's changes, so v$version is not published."
-            exit 1
-          fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Tag the release
         run: |
           if [ -z "$(git ls-remote --tags origin "refs/tags/v$VERSION")" ]; then
             git tag "v$VERSION" "$SHA"
             git push origin "v$VERSION"
           fi
+      # Builds every package in dependency order first; each package's
+      # prepublishOnly then rebuilds it with the others' builds in place.
       - run: vp run build
       # Trusted publishing: npm checks that this workflow is publishing, so no
       # token is stored. Versions npm already has are skipped, so a rerun is safe.
