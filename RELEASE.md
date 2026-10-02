@@ -6,7 +6,7 @@ They are versioned together, and `scripts/release-versions.test.ts` fails the
 suite if they ever disagree.
 
 A release is a pull request. You listen to its Vercel preview, and merging it
-publishes exactly the commit you listened to.
+publishes exactly what you listened to.
 
 ## Steps
 
@@ -30,9 +30,11 @@ publishes exactly the commit you listened to.
    step 2.
 
 Merging runs the Release workflow (`.github/workflows/release.yml`) on the commit
-the merge creates on `main`. It checks that this commit has exactly the files of
-the pull request's last commit, the one you listened to, that the five versions
-match the branch name, and that no newer version is already tagged. Then it:
+the merge creates on `main`. `scripts/release-check.ts` checks that this commit
+has exactly the files of the pull request's last commit, the one you listened
+to, that the five versions match the branch name, and that no newer version is
+already tagged. The workflow then confirms that npm lets it publish all five
+packages, before it uploads anything. Then it:
 
 - tags the commit `vX.Y.Z`;
 - publishes the five packages to npm through trusted publishing;
@@ -47,10 +49,18 @@ version older than the newest tag is never published, so a rerun of an old run
 moves nothing back.
 
 If the workflow fails, rerun it. The tag, versions npm already has and the
-GitHub Release are skipped when they exist. If it stops because `main` differs
-from what you listened to, nothing was published: push an empty commit to
-`release/vX.Y.Z` from the current `main`, open a new pull request, listen to its
-preview and merge it.
+GitHub Release are skipped when they exist. If publishing stops partway, the
+packages already published sit on npm's `latest` next to the older versions of
+the rest, so fix the cause and rerun straight away. If it stops because `main` differs
+from what you listened to, nothing was tagged or published. Start the release
+again from the current `main`, listen to the new pull request's preview and
+merge it:
+
+```sh
+git switch -C release/vX.Y.Z origin/main
+git commit --allow-empty -m "release: vX.Y.Z"
+git push --force origin release/vX.Y.Z
+```
 
 ## Version numbers
 
