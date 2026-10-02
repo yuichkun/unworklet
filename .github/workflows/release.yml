@@ -49,7 +49,7 @@ jobs:
         run: |
           id_token=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" |
-            node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).value')
+            vp exec node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).value')
           for p in core lang offline test unplugin; do
             if ! curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $id_token" -H "Content-Length: 0" \
               "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@unworklet%2f$p"; then
