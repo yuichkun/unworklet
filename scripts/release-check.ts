@@ -15,8 +15,8 @@ export type ReleaseCheckInput = {
 };
 
 const parse = (version: string): number[] | undefined => {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version);
-  return match ? match.slice(1).map(Number) : undefined;
+  const numbers = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(version)?.slice(1).map(Number);
+  return numbers?.every(Number.isSafeInteger) ? numbers : undefined;
 };
 
 const compare = (a: number[], b: number[]): number =>
@@ -32,7 +32,9 @@ export function checkRelease(input: ReleaseCheckInput): { version: string } | { 
   const version = input.branch.slice("release/v".length);
   const parsed = parse(version);
   if (!parsed) {
-    return { error: `${input.branch} is not release/vX.Y.Z with numbers and no leading zeros.` };
+    return {
+      error: `${input.branch} is not release/vX.Y.Z with a valid plain version. See RELEASE.md.`,
+    };
   }
 
   for (const [name, actual] of Object.entries(input.packageVersions)) {
