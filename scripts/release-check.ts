@@ -30,7 +30,7 @@ export function checkRelease(input: ReleaseCheckInput): { version: string } | { 
     };
   }
   const version = input.branch.slice("release/v".length);
-  const parsed = input.branch.startsWith("release/v") ? parse(version) : undefined;
+  const parsed = parse(version);
   if (!parsed) return { error: `${input.branch} is not release/vX.Y.Z with numbers only.` };
 
   for (const [name, actual] of Object.entries(input.packageVersions)) {
