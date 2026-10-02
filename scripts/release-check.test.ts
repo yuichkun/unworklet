@@ -37,10 +37,16 @@ test("a commit with other files than the one listened to is refused", () => {
   });
 });
 
-test("only release/vX.Y.Z with numbers is accepted", () => {
-  for (const branch of ["release/v1.0.0-beta.1", "release/v0.4", "release/vnext"]) {
+test("only release/vX.Y.Z with plain numbers is accepted", () => {
+  for (const branch of [
+    "release/v1.0.0-beta.1",
+    "release/v0.4",
+    "release/vnext",
+    "release/v01.0.0",
+    "release/v0.04.0",
+  ]) {
     expect(release({ branch }), branch).toEqual({
-      error: `${branch} is not release/vX.Y.Z with numbers only.`,
+      error: `${branch} is not release/vX.Y.Z with numbers and no leading zeros.`,
     });
   }
 });
