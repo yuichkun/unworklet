@@ -44,9 +44,10 @@ test("only release/vX.Y.Z with plain numbers is accepted", () => {
     "release/vnext",
     "release/v01.0.0",
     "release/v0.04.0",
+    "release/v9007199254740992.0.0",
   ]) {
     expect(release({ branch }), branch).toEqual({
-      error: `${branch} is not release/vX.Y.Z with numbers and no leading zeros.`,
+      error: `${branch} is not release/vX.Y.Z with a valid plain version. See RELEASE.md.`,
     });
   }
 });
