@@ -5,9 +5,9 @@ name: Release
 # description become the GitHub Release. Its Vercel preview is where the release
 # is listened to. Merging it publishes the commit the merge creates on main,
 # which must have exactly the files of the pull request's last commit, the one
-# that preview was built from: to npm, as the vX.Y.Z tag and GitHub Release, and
-# to the `production` branch, which Vercel deploys as the production demo. See
-# RELEASE.md.
+# that preview was built from: as the vX.Y.Z tag, to npm, as the GitHub Release,
+# and to the `production` branch, which Vercel deploys as the production demo.
+# See RELEASE.md.
 
 on:
   pull_request:
@@ -22,8 +22,8 @@ jobs:
     name: Publish the merged release
     if: github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'release/v')
     # Release runs never overlap. GitHub keeps only one run waiting and cancels
-    # an older waiting one; a canceled run can be rerun later, because a run for
-    # a version older than the newest release moves nothing back.
+    # an older waiting one; the newer release includes its changes, and the
+    # older version is then refused as superseded.
     concurrency:
       group: release
       cancel-in-progress: false
@@ -56,6 +56,10 @@ jobs:
             exit 1
           fi
           version="${BRANCH#release/v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::$BRANCH is not release/vX.Y.Z with numbers only."
+            exit 1
+          fi
           for p in core lang offline test unplugin; do
             actual=$(node -p "require('./packages/$p/package.json').version")
             if [ "$actual" != "$version" ]; then
@@ -68,38 +72,34 @@ jobs:
             echo "::error::v$version was already released from $tagged."
             exit 1
           fi
+          # The tag is the first thing a release creates, so the newest tag also
+          # covers a newer release that stopped partway.
+          newest=$(git ls-remote --tags origin 'refs/tags/v*' | sed -E 's#^.*refs/tags/v##' |
+            grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          if [ -n "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$version" | sort -V | tail -1)" != "$version" ]; then
+            echo "::error::v$newest is already released and includes this release's changes, so v$version is not published."
+            exit 1
+          fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
-      - name: Check whether this is the newest release
-        run: |
-          current=0.0.0
-          if git fetch --depth 1 origin production 2> /dev/null; then
-            current=$(git show FETCH_HEAD:packages/core/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
-          fi
-          if [ "$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)" = "$VERSION" ]; then
-            echo "NEWEST=true" >> "$GITHUB_ENV"
-            echo "NPM_TAG=latest" >> "$GITHUB_ENV"
-          else
-            echo "::notice::production is at $current, newer than $VERSION: $VERSION goes to npm under the previous tag, and npm's latest, production and the latest release stay."
-            echo "NEWEST=false" >> "$GITHUB_ENV"
-            echo "NPM_TAG=previous" >> "$GITHUB_ENV"
-          fi
-      - run: vp run build
-      # Trusted publishing: npm checks that this workflow is publishing, so no
-      # token is stored. Versions npm already has are skipped, so a rerun is safe.
-      - name: Publish to npm
-        run: vp pm publish -r --access public --no-git-checks --tag "$NPM_TAG"
-      - name: Tag the release and create the GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Tag the release
         run: |
           if [ -z "$(git ls-remote --tags origin "refs/tags/v$VERSION")" ]; then
             git tag "v$VERSION" "$SHA"
             git push origin "v$VERSION"
           fi
+      - run: vp run build
+      # Trusted publishing: npm checks that this workflow is publishing, so no
+      # token is stored. Versions npm already has are skipped, so a rerun is safe.
+      - name: Publish to npm
+        run: vp pm publish -r --access public --no-git-checks
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           if ! gh release view "v$VERSION" > /dev/null 2>&1; then
             printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
-            gh release create "v$VERSION" --verify-tag --latest="$NEWEST" --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release create "v$VERSION" --verify-tag --latest --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
           fi
+      # Without --force, git only moves production forward along main.
       - name: Move the production demo to this release
-        if: env.NEWEST == 'true'
-        run: git push --force origin "$SHA:refs/heads/production"
+        run: git push origin "$SHA:refs/heads/production"
