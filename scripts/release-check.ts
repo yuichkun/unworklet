@@ -1,30 +1,16 @@
-/**
- * Decides whether the Release workflow (`.github/workflows/release.yml`) may
- * publish a merged `release/vX.Y.Z` pull request: the commit the merge created
- * on main must have exactly the files of the pull request's last commit (the
- * one its preview was built from), every package must carry the branch's
- * version, and no newer release may already be tagged. The tag is the first
- * thing a release creates, so a newer release that stopped partway counts too.
- *
- * In the workflow it reads BRANCH, SHA and LISTENED from the environment and
- * appends `VERSION=X.Y.Z` to `$GITHUB_ENV`:
- *
- *   vp exec node scripts/release-check.ts
- */
+// The merge commit is compared with the pull request's last commit because npm's
+// provenance names the former while the preview was built from the latter. Tags
+// decide which release is superseded because a release creates its tag first, so
+// a higher release that stopped partway still counts.
 
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 
 export type ReleaseCheckInput = {
-  /** Head branch of the merged pull request, e.g. `release/v0.4.0`. */
   branch: string;
-  /** The commit the merge created on main. */
   sha: string;
-  /** Whether that commit has exactly the files of the pull request's last commit. */
   sameFilesAsListened: boolean;
-  /** `version` of each published package, by package name. */
   packageVersions: Record<string, string>;
-  /** The commit each tag points to, by tag name. */
   tags: Record<string, string>;
 };
 
@@ -58,25 +44,25 @@ export function checkRelease(input: ReleaseCheckInput): { version: string } | { 
     return { error: `v${version} was already released from ${tagged}.` };
   }
 
-  const newer = Object.keys(input.tags)
+  const higher = Object.keys(input.tags)
     .map((tag) => ({ tag, parsed: tag.startsWith("v") ? parse(tag.slice(1)) : undefined }))
     .filter((t): t is { tag: string; parsed: number[] } => t.parsed !== undefined)
     .filter((t) => compare(t.parsed, parsed) > 0)
     .sort((a, b) => compare(b.parsed, a.parsed));
-  if (newer.length > 0) {
+  if (higher.length > 0) {
     return {
-      error: `${newer[0]!.tag} is already released and includes this release's changes, so v${version} is not published.`,
+      error: `${higher[0]!.tag} is already released and includes this release's changes, so v${version} is not published.`,
     };
   }
   return { version };
 }
 
-/** Tags by name from `git ls-remote --tags`, with annotated tags resolved to their commits. */
 export function tagsFromLsRemote(output: string): Record<string, string> {
   const tags: Record<string, string> = {};
   for (const line of output.split("\n").filter(Boolean)) {
     const [sha, ref] = line.split("\t") as [string, string];
     const name = ref.replace(/^refs\/tags\//, "");
+    // An annotated tag is listed twice, and its `^{}` line carries the commit.
     if (name.endsWith("^{}")) tags[name.slice(0, -"^{}".length)] = sha;
     else tags[name] ??= sha;
   }

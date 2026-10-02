@@ -1,9 +1,3 @@
-/**
- * The Release workflow publishes a merged `release/vX.Y.Z` pull request only
- * when its commit is what was listened to, its versions are consistent, and no
- * newer release has already gone out (see `RELEASE.md`).
- */
-
 import { expect, test } from "vite-plus/test";
 
 import { checkRelease, tagsFromLsRemote } from "./release-check.ts";
@@ -63,7 +57,7 @@ test("a version already tagged on another commit is refused", () => {
   });
 });
 
-test("a version older than the newest tag is refused, because that release includes it", () => {
+test("a version lower than the highest tag is refused, because that release includes it", () => {
   expect(
     release({
       branch: "release/v0.4.1",

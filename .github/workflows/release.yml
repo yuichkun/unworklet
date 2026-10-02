@@ -1,13 +1,6 @@
 name: Release
 
-# A release is a pull request from a `release/vX.Y.Z` branch that sets the five
-# package versions to X.Y.Z and adds the CHANGELOG section. Its title and
-# description become the GitHub Release. Its Vercel preview is where the release
-# is listened to. Merging it publishes the commit the merge creates on main,
-# which must have exactly the files of the pull request's last commit, the one
-# that preview was built from: as the vX.Y.Z tag, to npm, as the GitHub Release,
-# and to the `production` branch, which Vercel deploys as the production demo.
-# See RELEASE.md.
+# RELEASE.md describes the release this workflow carries out.
 
 on:
   pull_request:
@@ -21,9 +14,9 @@ jobs:
   release:
     name: Publish the merged release
     if: github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'release/v')
-    # Release runs never overlap. GitHub keeps only one run waiting and cancels
-    # an older waiting one; the newer release includes its changes, and the
-    # older version is then refused as superseded.
+    # GitHub keeps a single waiting run and cancels any other. The release that
+    # runs includes the canceled one's changes, and release-check then refuses
+    # the canceled version because a higher one is tagged.
     concurrency:
       group: release
       cancel-in-progress: false
@@ -50,8 +43,8 @@ jobs:
       - run: vp install
       - name: Check that this is the listened-to release
         run: vp exec node scripts/release-check.ts
-      # Otherwise a package whose trusted publisher is missing or wrong would
-      # fail only after the packages before it were published.
+      # Without this, a package whose trusted publisher is missing or wrong fails
+      # midway through publishing, with the packages ahead of it already on npm.
       - name: Check that npm lets this workflow publish every package
         run: |
           id_token=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
