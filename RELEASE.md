@@ -11,7 +11,7 @@ publishes exactly what you listened to.
 ## Steps
 
 1. **Open the release pull request** from a branch named `release/vX.Y.Z`, with
-   numbers only (no prerelease versions):
+   plain numbers (no leading zeros, no prerelease versions):
    - Set `"version"` to `X.Y.Z` in the five `packages/*/package.json`.
    - Add a `## X.Y.Z — YYYY-MM-DD` section at the top of `CHANGELOG.md`, breaking
      changes first, each with the migration a consumer has to perform.
