@@ -22,19 +22,19 @@ publishes exactly what you listened to.
      and description become the GitHub Release as written.
 2. **Wait for CI to pass**, and run the soak if the release needs it (below).
 3. **Listen** to the Vercel preview of the pull request's latest commit. Vercel
-   links it on the pull request; open it while signed in to Vercel. If a commit
-   is pushed after you listened, listen to its preview again.
+   links it on the pull request; open it while signed in to Vercel. Every pushed
+   commit gets its own preview, and the latest one is what a merge publishes.
 4. **Merge** when it sounds right, with the pull request up to date with `main`.
-   If GitHub offers "Update branch", update it and listen to the new preview
-   first. If it does not sound right, push fixes to the branch and go back to
+   If GitHub offers "Update branch", update it and listen to the resulting
+   preview. If it does not sound right, push fixes to the branch and go back to
    step 2.
 
 Merging runs the Release workflow (`.github/workflows/release.yml`) on the commit
 the merge creates on `main`. `scripts/release-check.ts` checks that this commit
 has exactly the files of the pull request's last commit, the one you listened
-to, that the five versions match the branch name, and that no newer version is
-already tagged. The workflow then confirms that npm lets it publish all five
-packages, before it uploads anything. Then it:
+to, that the five versions match the branch name, and that no higher version is
+already tagged. The workflow also confirms that npm lets it publish all five
+packages. Only when every check passes does it:
 
 - tags the commit `vX.Y.Z`;
 - publishes the five packages to npm through trusted publishing;
@@ -42,18 +42,18 @@ packages, before it uploads anything. Then it:
 - moves the `production` branch forward to the commit, which Vercel deploys to
   https://unworklet.vercel.app.
 
-Merge release pull requests one at a time. Release runs never overlap; if a newer
-release is merged while an older one is still waiting, GitHub cancels the older
-run, and the newer release, which includes its changes, is the one published. A
-version older than the newest tag is never published, so a rerun of an old run
-moves nothing back.
+Merge release pull requests one at a time. Release runs never overlap, and GitHub
+keeps a single waiting run: when a second release is merged while one is
+waiting, the waiting run is canceled, and the release that runs includes its
+changes. A version lower than the highest tag is never published, so rerunning a
+superseded run moves nothing back.
 
 If the workflow fails, rerun it. The tag, versions npm already has and the
-GitHub Release are skipped when they exist. If publishing stops partway, the
-packages already published sit on npm's `latest` next to the older versions of
-the rest, so fix the cause and rerun straight away. If it stops because `main` differs
-from what you listened to, nothing was tagged or published. Start the release
-again from the current `main`, listen to the new pull request's preview and
+GitHub Release are skipped when they exist. If publishing stops partway, npm's
+`latest` mixes the packages already published with the rest at their last
+release, so fix the cause and rerun straight away. If it stops because `main`
+differs from what you listened to, nothing was tagged or published. Start the
+release again from the current `main`, listen to that pull request's preview and
 merge it:
 
 ```sh
@@ -69,8 +69,8 @@ range semantics enforce: `^0.3.0` resolves `0.3.x` and refuses `0.4.0`.
 
 - A change that breaks existing code is a **minor** release: a removed or
   narrowed public type or export, a peer-dependency requirement that moves, or a
-  check that starts failing builds it used to pass.
-- Everything else, including new features, is a **patch** release.
+  check that rejects code the last release accepts.
+- Everything else, including added features, is a **patch** release.
 
 ## The soak
 
@@ -91,7 +91,7 @@ attention while it runs. Put its result in the pull request. A shorter run is
 not a substitute.
 
 Firefox and Safari are not run anywhere. A release carries that gap knowingly,
-and it is worth closing before 1.0.
+and it is worth closing ahead of 1.0.
 
 ## The production demo
 
