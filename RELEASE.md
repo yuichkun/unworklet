@@ -10,7 +10,8 @@ publishes exactly the commit you listened to.
 
 ## Steps
 
-1. **Open the release pull request** from a branch named `release/vX.Y.Z`:
+1. **Open the release pull request** from a branch named `release/vX.Y.Z`, with
+   numbers only (no prerelease versions):
    - Set `"version"` to `X.Y.Z` in the five `packages/*/package.json`.
    - Add a `## X.Y.Z — YYYY-MM-DD` section at the top of `CHANGELOG.md`, breaking
      changes first, each with the migration a consumer has to perform.
@@ -30,21 +31,22 @@ publishes exactly the commit you listened to.
 
 Merging runs the Release workflow (`.github/workflows/release.yml`) on the commit
 the merge creates on `main`. It checks that this commit has exactly the files of
-the pull request's last commit, the one you listened to, and that the five
-versions match the branch name. Then it:
+the pull request's last commit, the one you listened to, that the five versions
+match the branch name, and that no newer version is already tagged. Then it:
 
+- tags the commit `vX.Y.Z`;
 - publishes the five packages to npm through trusted publishing;
-- tags the commit `vX.Y.Z` and creates the GitHub Release;
-- moves the `production` branch to the commit, which Vercel deploys to
+- creates the GitHub Release;
+- moves the `production` branch forward to the commit, which Vercel deploys to
   https://unworklet.vercel.app.
 
-Merge release pull requests one at a time. Release runs never overlap, but
-GitHub keeps only one run waiting and cancels an older waiting one; rerun a
-canceled run. A run for a version older than the newest release publishes it
-under npm's `previous` tag and moves neither npm's `latest`, `production` nor
-the latest GitHub Release.
+Merge release pull requests one at a time. Release runs never overlap; if a newer
+release is merged while an older one is still waiting, GitHub cancels the older
+run, and the newer release, which includes its changes, is the one published. A
+version older than the newest tag is never published, so a rerun of an old run
+moves nothing back.
 
-If the workflow fails, rerun it. Versions npm already has, the tag and the
+If the workflow fails, rerun it. The tag, versions npm already has and the
 GitHub Release are skipped when they exist. If it stops because `main` differs
 from what you listened to, nothing was published: push an empty commit to
 `release/vX.Y.Z` from the current `main`, open a new pull request, listen to its
