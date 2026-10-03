@@ -102,12 +102,17 @@ test("bitcrush: a fine ramp collapses onto a small set of quantization levels", 
   expect(levels).toBeGreaterThan(2); // but not collapsed to a constant
 });
 
-test("gain-meter: applies the 0.8 gain; the 30 fps meter publish doesn't break offline render", async () => {
+test("gain-meter: applies the gain in dB; the 30 fps meter publish doesn't break offline render", async () => {
   const x = tone(0.5, 468.75); // bin-aligned (= 20 × 23.4375 Hz) for a clean FFT read
   const r = await render("gain-meter", { inputs: { main: [x, x] } });
   expectStable(r);
-  // input 0.5 × default gain 0.8 = 0.4 → 20·log10(0.4) = −7.96 dBFS
-  expectGainAtFreq(r, 468.75, -7.96, 0.8, { channel: 0 });
+  // input 0.5 (= −6.02 dBFS) at the default −6 dB = −12.02 dBFS
+  expectGainAtFreq(r, 468.75, -12.02, 0.8, { channel: 0 });
+  const quiet = await render("gain-meter", {
+    inputs: { main: [x, x] },
+    params: { gainDb: [-20] },
+  });
+  expectGainAtFreq(quiet, 468.75, -26.02, 0.8, { channel: 0 });
 });
 
 test("eq3: unity gains reconstruct the input; boosting low lifts a low tone", async () => {
