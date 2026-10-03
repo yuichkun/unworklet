@@ -132,7 +132,7 @@ List the applicable paths in `test.coverage.exclude` in each package's `vite.con
 ## Code style
 
 - **Comments**: prefer none. When required, explain _why_, never _what_ — the code already tells the reader what it does.
-- **No temporal language** in comments or docs: avoid "now", "currently", "previously", "before", "after", "used to", "updated to", "new", "old", "legacy", "originally", "initially". Git history covers change tracking.
+- **No change history** in comments or docs: describe the code as it is, not how it came to be. No "now handles …", "previously …", "the new X", "used to", "updated to", "legacy", "originally", "initially". Git history covers change tracking. The rule is about history, not vocabulary: "before" / "after" for the order of steps in the code ("read `m` before halving it") and `new` as an operator are fine.
 - **Dead code**: delete it. No `_unused` rename hacks, no "removed because …" comments, no compatibility shims for unreachable cases.
 - **No defensive code for impossible cases**. Trust internal callers and framework guarantees; validate only at system boundaries (user input, external APIs).
 - **No premature abstractions**. Three similar lines beats a wrong helper.
