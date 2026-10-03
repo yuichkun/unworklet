@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { SAMPLES_PER_BLOCK } from "@unworklet/core";
 import { lowerToProcessor } from "@unworklet/lang/browser";
 import { renderOffline } from "@unworklet/offline";
 import { expectAudioMatchesSnapshot } from "@unworklet/test";
@@ -47,13 +48,36 @@ function drive(d: SoundCheckDrive): Record<string, unknown> {
         },
       };
     case "events":
-      return { events: d.events };
+      return {
+        messages: d.events.map(({ name, payload, atSample }) => ({
+          name,
+          payload,
+          atQuantum: Math.floor(atSample / SAMPLES_PER_BLOCK),
+        })),
+      };
   }
+}
+
+function expectPitch(channel: Float32Array, start: number, end: number, hz: number) {
+  const crossings: number[] = [];
+  for (let i = start + 1; i < end; i++) {
+    const before = channel[i - 1]!;
+    const after = channel[i]!;
+    if (before <= 0 && after > 0) crossings.push(i - 1 - before / (after - before));
+  }
+  expect(crossings.length).toBeGreaterThan(2);
+  const measured =
+    (SOUND_CHECK_SAMPLE_RATE * (crossings.length - 1)) /
+    (crossings[crossings.length - 1]! - crossings[0]!);
+  expect(Math.abs(measured - hz), `expected pitch ${hz} Hz, measured ${measured}`).toBeLessThan(
+    0.1,
+  );
 }
 
 for (const check of soundChecks) {
   test(`${check.slug}: ${check.exercises}`, async () => {
-    const result = await renderOffline(lowerToProcessor(check.source), {
+    const processor = lowerToProcessor(check.source);
+    const result = await renderOffline(processor, {
       sampleRate: SOUND_CHECK_SAMPLE_RATE,
       duration: SOUND_CHECK_FRAMES / SOUND_CHECK_SAMPLE_RATE,
       ...drive(check.drive),
@@ -73,6 +97,54 @@ for (const check of soundChecks) {
         if (check.drive.kind === "notes") {
           const silentFrom = check.slug === "granular" ? 4096 : 36000;
           expect(channel.subarray(silentFrom).every((v) => v === 0)).toBe(true);
+        }
+      }
+    }
+    if (check.drive.kind === "events") {
+      const events = check.drive.events;
+      expect(events.map((e) => e.atSample)).toEqual([12000, 24000, 36000]);
+      expect(drive(check.drive)).toEqual({
+        messages: [
+          { name: "pitch", payload: { hz: 330 }, atQuantum: 93 },
+          { name: "pitch", payload: { hz: 440 }, atQuantum: 187 },
+          { name: "pitch", payload: { hz: 550 }, atQuantum: 281 },
+        ],
+      });
+      const channel = result.outputs.main![0]!;
+      expectPitch(channel, 1024, 11000, 220);
+      const windows = [
+        { start: 13000, end: 22000, hz: 330, boundary: 11904 },
+        { start: 25000, end: 34000, hz: 440, boundary: 23936 },
+        { start: 37000, end: 46000, hz: 550, boundary: 35968 },
+      ];
+      const renderEvents = async (stimuli: typeof events) => {
+        const rendered = await renderOffline(processor, {
+          sampleRate: SOUND_CHECK_SAMPLE_RATE,
+          duration: SOUND_CHECK_FRAMES / SOUND_CHECK_SAMPLE_RATE,
+          ...drive({ kind: "events", events: stimuli }),
+        });
+        expect(rendered.diagnostics).toEqual({ scrubbedSamples: 0, droppedSysexMessages: 0 });
+        return rendered.outputs.main![0]!;
+      };
+      const control = await renderEvents([]);
+      expect(channel.subarray(0, 11904)).toEqual(control.subarray(0, 11904));
+      expect(channel.findIndex((v, i) => v !== control[i])).toBe(11904);
+      for (const [index, window] of windows.entries()) {
+        expectPitch(channel, window.start, window.end, window.hz);
+        const omitted = await renderEvents(events.filter((_, i) => i !== index));
+        const altered = await renderEvents(
+          events.map((event, i) =>
+            i === index ? { ...event, payload: { hz: window.hz + 37 } } : event,
+          ),
+        );
+        for (const negative of [omitted, altered]) {
+          expect(channel.subarray(0, window.boundary)).toEqual(
+            negative.subarray(0, window.boundary),
+          );
+          expect(channel.findIndex((v, i) => v !== negative[i])).toBe(window.boundary);
+          expect(() => expectPitch(negative, window.start, window.end, window.hz)).toThrow(
+            /expected pitch/,
+          );
         }
       }
     }
