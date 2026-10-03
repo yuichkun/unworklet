@@ -154,3 +154,43 @@ for (const check of soundChecks) {
     });
   });
 }
+
+for (const [form, expression, reversed] of [
+  [
+    "free function",
+    'pipe(p.read().mul(Math.PI * 2), sin, (x: Node<"f32">) => x.mul(0.5))',
+    'pipe(p.read().mul(Math.PI * 2), (x: Node<"f32">) => x.mul(0.5), sin)',
+  ],
+  [
+    "method",
+    'p.read().mul(Math.PI * 2).pipe(sin).pipe((x: Node<"f32">) => x.mul(0.5))',
+    'p.read().mul(Math.PI * 2).pipe((x: Node<"f32">) => x.mul(0.5)).pipe(sin)',
+  ],
+]) {
+  test(`pipe ${form} matches the committed sin golden`, async () => {
+    const original = soundChecks.find((check) => check.slug === "sin")!.source;
+    const source = original.replace("sin(p * (Math.PI * 2)) * 0.5", expression!);
+    expect(source).not.toBe(original);
+    const result = await renderOffline(lowerToProcessor(source), {
+      sampleRate: SOUND_CHECK_SAMPLE_RATE,
+      duration: SOUND_CHECK_FRAMES / SOUND_CHECK_SAMPLE_RATE,
+    });
+    expect(result.diagnostics).toEqual({ scrubbedSamples: 0, droppedSysexMessages: 0 });
+    expect(result.outputs.main![0]!.every(Number.isFinite)).toBe(true);
+    await expectAudioMatchesSnapshot(result, {
+      snapshotPath: path.join(GOLDENS, "sin.wav"),
+    });
+    const wrongOrder = await renderOffline(
+      lowerToProcessor(original.replace("sin(p * (Math.PI * 2)) * 0.5", reversed!)),
+      {
+        sampleRate: SOUND_CHECK_SAMPLE_RATE,
+        duration: SOUND_CHECK_FRAMES / SOUND_CHECK_SAMPLE_RATE,
+      },
+    );
+    await expect(
+      expectAudioMatchesSnapshot(wrongOrder, {
+        snapshotPath: path.join(GOLDENS, "sin.wav"),
+      }),
+    ).rejects.toThrow();
+  });
+}
