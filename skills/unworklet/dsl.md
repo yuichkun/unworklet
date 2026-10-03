@@ -573,9 +573,10 @@ results JavaScript gives exactly (`10 ** 2`, `2 ** -3`) are exact. Other
 exponents go through exp / log, within about 2e-5 relative. All of this holds
 while the result stays in the normal float range: a result smaller than about
 1e-38 or larger than about 2e38 in magnitude can come out as 0 or `Infinity`
-instead, as with `exp`. Both operands are `f32` or `f64`; an integer `Node` (a
-MIDI field, `state.i32`) is refused with an error, so convert it first: MIDI
-note → Hz is `440 * 2 ** (f32(note - 69) / 12)`.
+instead, as with `exp`. Both operands are `f32` or `f64` (an `f64` pair is
+computed in `f32`, see below); an integer `Node` (a MIDI field, `state.i32`) is
+refused with an error, so convert it first: MIDI note → Hz is
+`440 * 2 ** (f32(note - 69) / 12)`.
 
 ```ts
 // gain.uwk.ts — a gain knob in dB
@@ -589,6 +590,14 @@ process(() => {
   });
 });
 ```
+
+The `f64` forms of `sin cos tan tanh exp log pow` compute in `f32`: the operands
+are converted to `f32` and the result back to `f64`, so `exp(x)` on an `f64` node
+equals `f64(exp(f32(x)))`. They carry `f32`'s range and precision. An operand
+beyond about ±3.4e38 becomes ±Infinity (`log` of an `f64` 1e100 is `Infinity`),
+and rounding the operands to `f32` can outweigh the approximation itself
+(`1.0000001 ** 1e6` on `f64` comes out about 2% high). `sqrt floor ceil frac abs
+min max` and the arithmetic operators run natively in `f64`.
 
 ### `defineSubgraph` / `instantiate` (reusable DSP units)
 
