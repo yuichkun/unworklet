@@ -227,6 +227,9 @@ onBeforeUnmount(() => {
     {{ counts.Changed }} changed · {{ counts.New }} new · {{ counts.Same }} same ·
     {{ counts.Error }} errors
   </p>
+  <p v-if="onlyChanged && counts.New" class="muted" role="status">
+    {{ counts.New }} new checks are hidden. Turn off Only changed to listen to them.
+  </p>
   <div class="check-list">
     <article
       v-for="row in shown"

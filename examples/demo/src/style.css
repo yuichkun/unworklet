@@ -128,6 +128,20 @@ header.top .wrap {
   flex: 1;
 }
 
+header.top a {
+  white-space: nowrap;
+}
+@media (max-width: 600px) {
+  header.top .site-description,
+  header.top .top-spacer {
+    display: none;
+  }
+  header.top .wrap {
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+}
+
 main.wrap {
   padding-top: 2.5rem;
   padding-bottom: 5rem;
