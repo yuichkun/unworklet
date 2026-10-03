@@ -11,13 +11,13 @@ on:
       - "!packages/core/src/compile/**"
       - "packages/core/src/compile/layout.ts"
       - "!packages/core/src/dsl/**"
+      - "packages/core/src/dsl/constants.ts"
       - "!packages/core/src/concurrency/**"
       - "!packages/core/src/processor.ts"
       - "!packages/core/src/simd.ts"
       - "!packages/core/src/types.ts"
       - "!packages/core/src/index.ts"
       - "!packages/core/src/dev.ts"
-      - "!packages/core/src/devRegistry.ts"
       - "!packages/core/src/**/*.test.ts"
       - "!packages/core/src/__tests__/**"
       - "scripts/release-soak/**"
@@ -46,7 +46,7 @@ jobs:
           node-version: "24"
           cache: true
       - name: Validate soak duration
-        run: node scripts/release-soak/validate-ci-seconds.mjs
+        run: vp exec node scripts/release-soak/validate-ci-seconds.mjs
       - run: vp install
       - name: Build packages in dependency order
         run: |
