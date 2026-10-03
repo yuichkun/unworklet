@@ -20,7 +20,7 @@ publishes exactly what you listened to.
      breaks, and a link to `CHANGELOG.md` at the tag
      (`https://github.com/yuichkun/unworklet/blob/vX.Y.Z/CHANGELOG.md`). The title
      and description become the GitHub Release as written.
-2. **Wait for CI to pass**, and run the soak if the release needs it (below).
+2. **Wait for CI to pass.**
 3. **Listen** to the Vercel preview of the pull request's latest commit. Vercel
    links it on the pull request; open it while signed in to Vercel. Every pushed
    commit gets its own preview, and the latest one is what a merge publishes.
@@ -74,21 +74,19 @@ range semantics enforce: `^0.3.0` resolves `0.3.x` and refuses `0.4.0`.
 
 ## The soak
 
-Run the soak when the release changes the core runtime, that is, when this
-prints anything (`vPREV` is the previous release's tag):
+The soak keeps the real audio-thread runtime running in headless Chromium on
+both transports (SharedArrayBuffer and postMessage), switching the tab
+between hidden and visible, and requires every event and MIDI message to
+arrive without loss, duplication, reordering or tearing. It runs in CI
+(`.github/workflows/soak.yml`), not on anyone's machine:
 
-```sh
-git diff --name-only vPREV..HEAD -- packages/core/src ':!**/*.test.ts' ':!**/__tests__/**'
-```
+- automatically, for 120 seconds per transport, on every pull request that
+  changes the runtime (the paths listed in that workflow);
+- from the Actions tab (**Soak** → **Run workflow**), for any duration
+  (default 1800 seconds per transport), when a change reworks the transport
+  and deserves a long run.
 
-```sh
-vp exec node scripts/release-soak/run.mjs
-```
-
-It plays 30 minutes on each transport (SharedArrayBuffer and postMessage) with
-real hidden and visible transitions, about an hour in total, and needs no
-attention while it runs. Put its result in the pull request. A shorter run is
-not a substitute.
+Its report is uploaded as the run's `soak-report` artifact.
 
 Firefox and Safari are not run anywhere. A release carries that gap knowingly,
 and it is worth closing ahead of 1.0.
