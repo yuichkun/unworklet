@@ -82,8 +82,8 @@ arrive without loss, duplication, reordering or tearing. It runs in CI
 
 - automatically, for 120 seconds per transport, on every pull request that
   changes the runtime (the paths listed in that workflow);
-- from the Actions tab (**Soak** → **Run workflow**), for any duration
-  (default 1800 seconds per transport), when a change reworks the transport
+- from the Actions tab (**Soak** → **Run workflow**), for 5–3600 seconds per transport
+  (default 1800 seconds), when a change reworks the transport
   and deserves a long run.
 
 Its report is uploaded as the run's `soak-report` artifact.
