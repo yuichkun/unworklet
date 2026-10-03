@@ -88,10 +88,11 @@ function loopCounterLocal(mod: BinaryenModule, binaryen: BinaryenAPI, depth: num
 
 /**
  * The polynomial-approximation math primitives (= sin / cos / tan / tanh / exp /
- * log, Q17) are emitted as shared private WASM functions (= `(f32) -> f32`, not
- * exported), and the call sites reference them via `call`. Each function has its
- * own locals, so they do not interfere with `process`'s temporaries. Only
- * the kinds actually used in the graph are added (= `collectUsedMathKinds`).
+ * log / pow, Q17) are emitted as shared private WASM functions (= `(f32) -> f32`,
+ * `(f32, f32) -> f32` for pow, not exported), and the call sites reference them
+ * via `call`. Each function has its own locals, so they do not interfere with
+ * `process`'s temporaries. Only the kinds actually used in the graph are added
+ * (= `collectUsedMathKinds`).
  */
 const MATH_FN_PREFIX = "$unworklet_";
 
@@ -635,6 +636,29 @@ function emitTranscendental(
     );
   }
   return mod.call(`${MATH_FN_PREFIX}${kind}`, [value], binaryen.f32);
+}
+
+/**
+ * `pow(base, exponent)` call into the shared `(f32, f32) -> f32` function, with
+ * the same f32 bridge as {@link emitTranscendental} for an f64 operand pair.
+ */
+function emitPow(
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+  type: ScalarType,
+  base: number,
+  exponent: number,
+): number {
+  if (type === "f64") {
+    return mod.f64.promote(
+      mod.call(
+        `${MATH_FN_PREFIX}pow`,
+        [mod.f32.demote(base), mod.f32.demote(exponent)],
+        binaryen.f32,
+      ),
+    );
+  }
+  return mod.call(`${MATH_FN_PREFIX}pow`, [base, exponent], binaryen.f32);
 }
 
 /**
@@ -1308,6 +1332,14 @@ function emitExpressionInScope(
         node.kind,
         node.type,
         emitExpression(node.value, layout, mod, binaryen),
+      );
+    case "pow":
+      return emitPow(
+        mod,
+        binaryen,
+        node.type,
+        emitExpression(node.lhs, layout, mod, binaryen),
+        emitExpression(node.rhs, layout, mod, binaryen),
       );
     case "max":
     case "min":
@@ -2686,8 +2718,8 @@ function emitMidiEmitIf(
 
 // ─────────────────────────────────────────────────────────────────────────
 // Shared-function emit for the polynomial-approximation math primitives (= Q17,
-// sin / cos / tan / tanh / exp / log). Degree-5..7 minimax / Taylor, max error
-// ~1e-4 = inaudible at 24-bit audio.
+// sin / cos / tan / tanh / exp / log, and pow built on exp). Degree-5..7
+// minimax / Taylor, max error ~1e-4 = inaudible at 24-bit audio.
 // no-trap invariant: integer conversion uses trunc_s_sat (= saturating /
 // non-trapping); reinterpret / nearest / convert are non-trapping to begin with.
 // ─────────────────────────────────────────────────────────────────────────
@@ -2699,6 +2731,7 @@ const TRANSCENDENTAL_KINDS: ReadonlySet<string> = new Set([
   "tanh",
   "exp",
   "log",
+  "pow",
 ]);
 
 /** Walk the graph's AST and collect the transcendental kinds actually used. */
@@ -2712,6 +2745,7 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
       case "sub":
       case "div":
       case "mod":
+      case "pow":
       case "max":
       case "min":
       case "eq":
@@ -2852,7 +2886,7 @@ function expandMathDeps(used: Set<string>): Set<string> {
   const out = new Set(used);
   if (out.has("cos") || out.has("tan")) out.add("sin");
   if (out.has("tan")) out.add("cos");
-  if (out.has("tanh")) out.add("exp");
+  if (out.has("tanh") || out.has("pow")) out.add("exp");
   return out;
 }
 
@@ -2865,6 +2899,7 @@ function addMathFunctions(used: Set<string>, mod: BinaryenModule, binaryen: Bina
   if (expanded.has("exp")) buildExpFn(mod, binaryen);
   if (expanded.has("log")) buildLogFn(mod, binaryen);
   if (expanded.has("tanh")) buildTanhFn(mod, binaryen);
+  if (expanded.has("pow")) buildPowFn(mod, binaryen);
 }
 
 const MATH_PI = Math.PI;
@@ -3120,4 +3155,184 @@ function buildTanhFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
     mod.f32.div(mod.f32.const(2), mod.f32.add(e2x, mod.f32.const(1))),
   );
   mod.addFunction(`${MATH_FN_PREFIX}tanh`, binaryen.f32, binaryen.f32, [], body);
+}
+
+/** Bits of |exponent| `$unworklet_pow` multiplies through exactly (= |y| ≤ 127). */
+const EXACT_POW_BITS = 7;
+const EXACT_POW_LIMIT = 2 ** EXACT_POW_BITS - 1;
+
+/**
+ * `$unworklet_pow`: JavaScript `**` on f32.
+ *
+ * An integral exponent with |y| ≤ 127 multiplies by squaring over its bits, so
+ * every result JavaScript gives exactly (`10 ** 2`, `2 ** -3`, `(-3) ** 3`) is
+ * exact here too and a square equals `x * x`. Zero, infinite and NaN bases follow
+ * from the multiplications themselves, and a negative exponent takes the
+ * reciprocal. Squaring compounds rounding error with every step, which is why
+ * larger exponents leave this path.
+ *
+ * Every other exponent goes through exp(y·ln|x|). The sign bit of the base is
+ * read (so -0 and -Inf keep their sign) and restored for an odd integral
+ * exponent, and a finite negative base with a non-integral exponent is NaN. The
+ * remaining special values fall out of exp and the logarithm: `1 ** Inf` is
+ * exp(Inf·0) = NaN and `0.5 ** Inf` is exp(-Inf) = 0, as in JavaScript.
+ *
+ * The logarithm is computed here rather than by `$unworklet_log`, whose absolute
+ * error (~1e-5 for |x| just below a power of two) a large exponent multiplies:
+ * `0.99 ** -401` would be 0.4% off. Centering the mantissa on [√½, √2) keeps
+ * t = (m-1)/(m+1) within ±0.172, so ln m = 2·atanh(t) is accurate relative to
+ * ln|x| itself and the result stays within exp's ~2.4e-6 plus |y·ln x|·~2e-7
+ * (the f32 rounding of y·ln|x| and of exp's k·ln2 included). On this path a
+ * result beyond the normal float range comes out as 0 or Infinity, as from exp.
+ * locals: 0=x(param) / 1=y(param) / 2=n(i32 = |y|) / 3=acc / 4=p(= x^(2^bit)) /
+ * 5=r / 6=xn(= |x| scaled out of the subnormal range) / 7=bits(i32) / 8=m / 9=e /
+ * 10=t / 11=s(= t²).
+ */
+function buildPowFn(mod: BinaryenModule, binaryen: BinaryenAPI): void {
+  const f = binaryen.f32;
+  const i = binaryen.i32;
+  const X = 0;
+  const Y = 1;
+  const N = 2;
+  const ACC = 3;
+  const P = 4;
+  const R = 5;
+  const XN = 6;
+  const BITS = 7;
+  const M = 8;
+  const E = 9;
+  const T = 10;
+  const S = 11;
+  const x = (): number => mod.local.get(X, f);
+  const y = (): number => mod.local.get(Y, f);
+  const acc = (): number => mod.local.get(ACC, f);
+  const p = (): number => mod.local.get(P, f);
+  const integral = (): number => mod.f32.eq(mod.f32.floor(y()), y());
+
+  const squaring: number[] = [
+    mod.local.set(N, mod.i32.trunc_s_sat.f32(mod.f32.abs(y()))),
+    mod.local.set(ACC, mod.f32.const(1)),
+    mod.local.set(P, x()),
+  ];
+  for (let bit = 0; bit < EXACT_POW_BITS; bit++) {
+    squaring.push(
+      mod.local.set(
+        ACC,
+        mod.select(
+          mod.i32.and(mod.local.get(N, i), mod.i32.const(1 << bit)),
+          mod.f32.mul(acc(), p()),
+          acc(),
+        ),
+      ),
+    );
+    if (bit < EXACT_POW_BITS - 1) squaring.push(mod.local.set(P, mod.f32.mul(p(), p())));
+  }
+  squaring.push(
+    mod.select(mod.f32.lt(y(), mod.f32.const(0)), mod.f32.div(mod.f32.const(1), acc()), acc()),
+  );
+
+  // y - 2·floor(y/2) is y mod 2, which is exactly 1 only for an odd integer
+  // (NaN for ±Inf, so neither infinity counts as odd).
+  const odd = mod.f32.eq(
+    mod.f32.sub(
+      y(),
+      mod.f32.mul(mod.f32.const(2), mod.f32.floor(mod.f32.mul(y(), mod.f32.const(0.5)))),
+    ),
+    mod.f32.const(1),
+  );
+  const signBit = mod.i32.lt_s(mod.i32.reinterpret(x()), mod.i32.const(0));
+  const finiteNegative = mod.i32.and(
+    mod.f32.lt(x(), mod.f32.const(0)),
+    mod.f32.gt(x(), mod.f32.const(Number.NEGATIVE_INFINITY)),
+  );
+  const ax = (): number => mod.f32.abs(x());
+  const subnormal = (): number => mod.f32.lt(ax(), mod.f32.const(2 ** -126));
+  const m = (): number => mod.local.get(M, f);
+  const s = (): number => mod.local.get(S, f);
+  const aboveSqrt2 = (): number => mod.f32.gt(m(), mod.f32.const(Math.SQRT2));
+  let series = mod.f32.add(mod.f32.const(1 / 5), mod.f32.mul(s(), mod.f32.const(1 / 7)));
+  series = mod.f32.add(mod.f32.const(1 / 3), mod.f32.mul(s(), series));
+  series = mod.f32.add(mod.f32.const(1), mod.f32.mul(s(), series));
+  const lnM = mod.f32.mul(mod.f32.mul(mod.f32.const(2), mod.local.get(T, f)), series);
+  const lnAbs = mod.select(
+    mod.f32.gt(ax(), mod.f32.const(0)),
+    mod.select(
+      mod.f32.eq(ax(), mod.f32.const(Number.POSITIVE_INFINITY)),
+      mod.f32.const(Number.POSITIVE_INFINITY),
+      mod.f32.add(mod.f32.mul(mod.local.get(E, f), mod.f32.const(MATH_LN2)), lnM),
+    ),
+    mod.select(
+      mod.f32.eq(ax(), mod.f32.const(0)),
+      mod.f32.const(Number.NEGATIVE_INFINITY),
+      mod.f32.const(Number.NaN),
+    ),
+  );
+  const viaExpLog = [
+    mod.local.set(
+      XN,
+      mod.f32.mul(ax(), mod.select(subnormal(), mod.f32.const(2 ** 24), mod.f32.const(1))),
+    ),
+    mod.local.set(BITS, mod.i32.reinterpret(mod.local.get(XN, f))),
+    // m = the mantissa in [1, 2), e = the unbiased exponent (24 less for a subnormal).
+    mod.local.set(
+      M,
+      mod.f32.reinterpret(
+        mod.i32.or(
+          mod.i32.and(mod.local.get(BITS, i), mod.i32.const(0x7fffff)),
+          mod.i32.const(0x3f800000),
+        ),
+      ),
+    ),
+    mod.local.set(
+      E,
+      mod.f32.sub(
+        mod.f32.convert_s.i32(
+          mod.i32.sub(
+            mod.i32.and(
+              mod.i32.shr_u(mod.local.get(BITS, i), mod.i32.const(23)),
+              mod.i32.const(0xff),
+            ),
+            mod.i32.const(127),
+          ),
+        ),
+        mod.select(subnormal(), mod.f32.const(24), mod.f32.const(0)),
+      ),
+    ),
+    // Center m on [√½, √2): both read m before it is halved.
+    mod.local.set(
+      E,
+      mod.f32.add(
+        mod.local.get(E, f),
+        mod.select(aboveSqrt2(), mod.f32.const(1), mod.f32.const(0)),
+      ),
+    ),
+    mod.local.set(
+      M,
+      mod.f32.mul(m(), mod.select(aboveSqrt2(), mod.f32.const(0.5), mod.f32.const(1))),
+    ),
+    mod.local.set(
+      T,
+      mod.f32.div(mod.f32.sub(m(), mod.f32.const(1)), mod.f32.add(m(), mod.f32.const(1))),
+    ),
+    mod.local.set(S, mod.f32.mul(mod.local.get(T, f), mod.local.get(T, f))),
+    mod.local.set(R, mod.call(`${MATH_FN_PREFIX}exp`, [mod.f32.mul(y(), lnAbs)], f)),
+    mod.select(
+      mod.i32.and(finiteNegative, mod.i32.eqz(integral())),
+      mod.f32.const(Number.NaN),
+      mod.select(mod.i32.and(signBit, odd), mod.f32.neg(mod.local.get(R, f)), mod.local.get(R, f)),
+    ),
+  ];
+
+  const body = mod.if(
+    mod.i32.and(integral(), mod.f32.le(mod.f32.abs(y()), mod.f32.const(EXACT_POW_LIMIT))),
+    mod.block(null, squaring, f),
+    mod.block(null, viaExpLog, f),
+  );
+  mod.addFunction(
+    `${MATH_FN_PREFIX}pow`,
+    binaryen.createType([f, f]),
+    f,
+    [i, f, f, f, f, i, f, f, f, f],
+    body,
+  );
 }

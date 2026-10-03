@@ -49,6 +49,7 @@ export {
   neg,
   not,
   or,
+  pow,
   select,
   sin,
   sqrt,

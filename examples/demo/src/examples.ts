@@ -103,18 +103,19 @@ process(() => {
 });
 `;
 
-const GAINMETER = `// gain-meter.uwk.ts — a gain knob + a 30 fps output level meter
-const input = audioInput({ channels: 2, name: "main" });
-const out   = audioOutput({ channels: 2, name: "main" });
-const gain  = param.f32({ default: 0.8, min: 0, max: 2, automationRate: "a-rate" }).named();
+const GAINMETER = `// gain-meter.uwk.ts — a gain knob in dB + a 30 fps output level meter
+const input  = audioInput({ channels: 2, name: "main" });
+const out    = audioOutput({ channels: 2, name: "main" });
+const gainDb = param.f32({ default: -6, min: -60, max: 6, automationRate: "a-rate" }).named();
 
 // a transient state published to the main thread 30×/sec — drives a live meter
 const level = state.f32(0).expose({ snapshot: "transient", publish: { rateFps: 30 } });
 
 process(() => {
   forSample((i) => {
-    const l = input.left[i] * gain[i];
-    const r = input.right[i] * gain[i];
+    const gain = 10 ** (gainDb[i] / 20);        // dB → linear gain
+    const l = input.left[i] * gain;
+    const r = input.right[i] * gain;
     out.left[i]  = l;
     out.right[i] = r;
     const mag = l < 0 ? -l : l;                 // |left|
@@ -408,7 +409,7 @@ export const examples: Example[] = [
     slug: "gain-meter",
     title: "Gain + level meter",
     blurb:
-      "A gain knob plus a `state` published 30×/sec — `expose({ publish })` drives a live meter.",
+      "A gain knob in dB (`10 ** (dB / 20)`) plus a `state` published 30×/sec — `expose({ publish })` drives a live meter.",
     kind: "effect",
     source: GAINMETER,
   },

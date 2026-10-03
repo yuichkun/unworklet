@@ -56,6 +56,7 @@ const CORE_AUTHORING_EXPORTS = new Set<string>([
   "tanh",
   "exp",
   "log",
+  "pow",
   "sqrt",
   "floor",
   "ceil",

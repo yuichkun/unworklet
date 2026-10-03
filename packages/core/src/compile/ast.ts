@@ -43,6 +43,8 @@ export type AstNode =
   | { kind: "exp"; type: ScalarType; value: AstNode }
   | { kind: "log"; type: ScalarType; value: AstNode }
   | { kind: "tanh"; type: ScalarType; value: AstNode }
+  // `lhs` is the base, `rhs` the exponent.
+  | { kind: "pow"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "max"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "min"; type: ScalarType; lhs: AstNode; rhs: AstNode }
   | { kind: "eq"; type: ScalarType; lhs: AstNode; rhs: AstNode }
@@ -464,6 +466,7 @@ export function inferAstType(ast: AstNode): ScalarType {
     case "tanh":
     case "exp":
     case "log":
+    case "pow":
     case "max":
     case "min":
     case "clamp":

@@ -66,6 +66,7 @@ declare global {
   const tanh: typeof import("@unworklet/core").tanh;
   const exp: typeof import("@unworklet/core").exp;
   const log: typeof import("@unworklet/core").log;
+  const pow: typeof import("@unworklet/core").pow;
   const sqrt: typeof import("@unworklet/core").sqrt;
   const floor: typeof import("@unworklet/core").floor;
   const ceil: typeof import("@unworklet/core").ceil;

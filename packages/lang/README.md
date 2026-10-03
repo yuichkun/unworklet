@@ -73,6 +73,7 @@ write the result into `state`: `keys.onEvent("noteOn", e => freq.write(f32(e.not
 | `.uwk.ts`                                    | lowers to `@unworklet/core`                      |
 | -------------------------------------------- | ------------------------------------------------ |
 | `a * b` `a + b` `a - b` `a / b` `a % b` `-a` | `mul(a, b)` `add(a, b)` … `neg(a)`               |
+| `a ** b`                                     | `pow(a, b)`                                      |
 | `a == b` `a < b` `a <= b` `a > b` `a >= b`   | `eq(a, b)` `lt(a, b)` …                          |
 | `!b`                                         | `not(b)`                                         |
 | `cond ? x : y`                               | `select(cond, x, y)`                             |

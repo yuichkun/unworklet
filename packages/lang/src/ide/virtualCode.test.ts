@@ -65,6 +65,15 @@ test("arithmetic operators lower to the chain primitive call", () => {
   );
 });
 
+test("the exponent operator lowers to pow; number ** number stays JavaScript", () => {
+  expect(code(mono("", `out.ch(0)[i] = input.ch(0)[i] ** 2;`))).toContain(
+    "write(pow(input.ch(0).at(i), 2))",
+  );
+  expect(code(mono("", `out.ch(0)[i] = input.ch(0)[i] * 2 ** 3;`))).toContain(
+    "mul(input.ch(0).at(i), 2 ** 3)",
+  );
+});
+
 test("precedence is preserved by nesting, left-associative", () => {
   expect(code(mono("", `out.ch(0)[i] = input.ch(0)[i] * 2 + 1;`))).toContain(
     "add(mul(input.ch(0).at(i), 2), 1)",
