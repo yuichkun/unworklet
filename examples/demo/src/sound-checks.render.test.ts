@@ -1,8 +1,9 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 
 import { SAMPLES_PER_BLOCK } from "@unworklet/core";
 import { lowerToProcessor } from "@unworklet/lang/browser";
-import { renderOffline } from "@unworklet/offline";
+import { encodeWav, renderOffline } from "@unworklet/offline";
 import { expectAudioMatchesSnapshot } from "@unworklet/test";
 import { expect, test } from "vite-plus/test";
 
@@ -177,9 +178,11 @@ for (const [form, expression, reversed] of [
     });
     expect(result.diagnostics).toEqual({ scrubbedSamples: 0, droppedSysexMessages: 0 });
     expect(result.outputs.main![0]!.every(Number.isFinite)).toBe(true);
-    await expectAudioMatchesSnapshot(result, {
-      snapshotPath: path.join(GOLDENS, "sin.wav"),
-    });
+    const goldenPath = path.join(GOLDENS, "sin.wav");
+    const golden = readFileSync(goldenPath);
+    expect(Buffer.from(encodeWav(result.outputs.main!, result.sampleRate)).equals(golden)).toBe(
+      true,
+    );
     const wrongOrder = await renderOffline(
       lowerToProcessor(original.replace("sin(p * (Math.PI * 2)) * 0.5", reversed!)),
       {
@@ -187,10 +190,9 @@ for (const [form, expression, reversed] of [
         duration: SOUND_CHECK_FRAMES / SOUND_CHECK_SAMPLE_RATE,
       },
     );
-    await expect(
-      expectAudioMatchesSnapshot(wrongOrder, {
-        snapshotPath: path.join(GOLDENS, "sin.wav"),
-      }),
-    ).rejects.toThrow();
+    expect(
+      Buffer.from(encodeWav(wrongOrder.outputs.main!, wrongOrder.sampleRate)).equals(golden),
+    ).toBe(false);
+    expect(readFileSync(goldenPath).equals(golden)).toBe(true);
   });
 }
