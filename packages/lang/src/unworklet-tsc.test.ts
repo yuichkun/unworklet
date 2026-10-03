@@ -358,6 +358,19 @@ void boot();`,
   expect(r.status).toBe(0);
 });
 
+test("unworklet-tsc accepts the exponent operator on DSP values", () => {
+  const { code, output } = check(`const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const gainDb = param.f32({ default: -6, min: -60, max: 6, automationRate: "a-rate" }).named();
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = input.ch(0)[i] * 10 ** (gainDb[i] / 20);
+  });
+});`);
+  expect(output).toBe("");
+  expect(code).toBe(0);
+});
+
 // F-11-types: guidance-dogfood F-11 discovered that misuse of factory-handle
 // primitives (a `NoiseSource` used as a `Node<"f32">` — missing `.next()`)
 // passes tsc silently and only crashes at graph capture. The sugar pass's
