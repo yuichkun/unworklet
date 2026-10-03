@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/test",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Vitest matchers for `@unworklet/core` processors (wraps `@unworklet/offline`).",
   "keywords": [
     "audio",
