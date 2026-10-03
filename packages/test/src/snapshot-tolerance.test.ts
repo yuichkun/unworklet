@@ -18,7 +18,7 @@ const signal = () => new Float32Array(128).fill(0.25);
 
 test("tolerance: a later run within tolerance passes", async () => {
   const opts = options();
-  await expectAudioMatchesSnapshot(signal(), opts);
+  writeFileSync(opts.snapshotPath, encodeWav([signal()], opts.sampleRate));
   await expectAudioMatchesSnapshot(
     signal().map((v) => v + 5e-6),
     opts,
@@ -27,25 +27,25 @@ test("tolerance: a later run within tolerance passes", async () => {
 test("tolerance: one sample beyond tolerance fails and names it", async () => {
   const opts = options();
   const x = signal();
-  await expectAudioMatchesSnapshot(x, opts);
+  writeFileSync(opts.snapshotPath, encodeWav([x], opts.sampleRate));
   x[100]! += 2e-5;
   await expect(expectAudioMatchesSnapshot(x, opts)).rejects.toThrow(/sample 100.*tolerance/);
 });
 test("tolerance: a sample-rate mismatch fails even when samples match", async () => {
   const opts = options();
-  await expectAudioMatchesSnapshot(signal(), opts);
+  writeFileSync(opts.snapshotPath, encodeWav([signal()], opts.sampleRate));
   await expect(
     expectAudioMatchesSnapshot(signal(), { ...opts, sampleRate: 44100 }),
   ).rejects.toThrow(/sampleRate/);
 });
 test("tolerance: a length mismatch fails", async () => {
   const opts = options();
-  await expectAudioMatchesSnapshot(signal(), opts);
+  writeFileSync(opts.snapshotPath, encodeWav([signal()], opts.sampleRate));
   await expect(expectAudioMatchesSnapshot(new Float32Array(129), opts)).rejects.toThrow(/length/);
 });
 test("tolerance: a channel count mismatch fails", async () => {
   const opts = options();
-  await expectAudioMatchesSnapshot(signal(), opts);
+  writeFileSync(opts.snapshotPath, encodeWav([signal()], opts.sampleRate));
   await expect(expectAudioMatchesSnapshot([signal(), signal()], opts)).rejects.toThrow(
     /channel count/,
   );
@@ -66,7 +66,7 @@ test.each([NaN, Infinity, -Infinity])(
   "tolerance: actual non-finite sample fails (%s)",
   async (value) => {
     const opts = options();
-    await expectAudioMatchesSnapshot(signal(), opts);
+    writeFileSync(opts.snapshotPath, encodeWav([signal()], opts.sampleRate));
     const x = signal();
     x[100] = value;
     await expect(expectAudioMatchesSnapshot(x, opts)).rejects.toThrow(/sample 100.*(NaN|Infinity)/);
@@ -75,13 +75,13 @@ test.each([NaN, Infinity, -Infinity])(
 test.each([undefined, 0])("no tolerance stays byte-exact (%s)", async (tolerance) => {
   const opts = { ...options(), tolerance };
   const x = signal();
-  await expectAudioMatchesSnapshot(x, opts);
+  writeFileSync(opts.snapshotPath, encodeWav([x], opts.sampleRate));
   x[100]! += 2 ** -25;
   await expect(expectAudioMatchesSnapshot(x, opts)).rejects.toThrow(/byte .* mismatch/);
 });
 test("tolerance: the exact boundary passes and the next float fails", async () => {
   const opts = { ...options(), tolerance: 2 ** -16 };
-  await expectAudioMatchesSnapshot(new Float32Array([0]), opts);
+  writeFileSync(opts.snapshotPath, encodeWav([new Float32Array([0])], opts.sampleRate));
   await expectAudioMatchesSnapshot(new Float32Array([opts.tolerance]), opts);
   await expect(
     expectAudioMatchesSnapshot(new Float32Array([opts.tolerance + 2 ** -39]), opts),
