@@ -216,6 +216,14 @@ test("pow on f64 operands tracks JavaScript within 1e-4 relative", async () => {
   });
 });
 
+test("pow on f64 operands computes in f32, operand range and rounding included", async () => {
+  const [beyondF32] = await run([[0, 0]], () => f32(pow(f64(1e100), f64(0.1))));
+  expect(beyondF32).toEqual({ value: 0, kind: "+inf" });
+  const [viaF64] = await run([[0, 0]], () => f32(pow(f64(1.0000001), f64(1e6))));
+  const [viaF32] = await run([[0, 0]], () => pow(f32(1.0000001), f32(1e6)));
+  expect(viaF64).toEqual(viaF32);
+});
+
 test("an integer operand is refused with a message that names the conversion", async () => {
   await expect(run([[2, 3]], () => f32(pow(i32(2) as unknown as Node<"f32">, 3)))).rejects.toThrow(
     /pow\(\) needs f32 or f64 operands, got i32.*f32\(x\)/,
