@@ -7,6 +7,59 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
+## 0.4.0 — 2026-10-03
+
+The exponent operator works on DSP values. In 0.3.x, `x ** y` in a `.uwk.ts`
+file compiled without an error and played silence; it computes a power through
+a new `pow` primitive. This release includes one compatibility change; check it
+below when upgrading from 0.3.x.
+
+### Breaking
+
+**The exponent operator on an integer value fails the build.** An `i32` or
+`i64` operand of `**`, such as a MIDI field or a `state.i32`, stops the build
+with `pow() needs f32 or f64 operands`. Without a type check, 0.3.x built it and
+the expression evaluated to `NaN`; the editor and `unworklet-tsc` already
+reported it as a type error. Convert the integer to `f32` first.
+
+For example, a MIDI note converted to a frequency:
+
+```ts
+// Before: note is a Node<"i32">, so the exponent is an integer.
+hz.write(440 * 2 ** ((note - 69) / 12));
+```
+
+converts the note before dividing:
+
+```ts
+hz.write(440 * 2 ** (f32(note - 69) / 12));
+```
+
+### Added
+
+- **`pow(base, exponent)` and the exponent operator in `.uwk.ts`.** `a ** b`
+  lowers to `pow(a, b)` whenever an operand is a DSP value, in the build, the
+  in-browser compile and the editor; `number ** number` stays a build-time
+  constant. `pow` is also a `Node` method (`x.pow(y)`). Results follow
+  JavaScript's `**`, special values included: a negative base with a fractional
+  exponent is `NaN`, and `x ** 0` is 1. An integral exponent up to ±127 is
+  multiplied out, so `x ** 2` equals `x * x` and results JavaScript gives
+  exactly stay exact. Other exponents are within about 2e-5 relative. A result
+  smaller than about 1e-38 or larger than about 2e38 in magnitude can come out
+  as 0 or `Infinity`, as with `exp`.
+
+### Docs
+
+- The guide states that the `f64` forms of `sin`, `cos`, `tan`, `tanh`, `exp`,
+  `log` and `pow` compute in `f32`, with `f32`'s range and precision: an `f64`
+  operand beyond about ±3.4e38 becomes `Infinity`, and rounding an operand to
+  `f32` can outweigh the approximation. The behaviour is unchanged.
+
+### Examples
+
+- The demo's gain-meter example takes its gain in dB, converted with
+  `10 ** (gainDb[i] / 20)`.
+
 ## 0.3.0 — 2026-09-14
 
 Faster repeated offline audio tests, fixes for audio calculations and UI/MIDI
