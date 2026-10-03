@@ -570,9 +570,12 @@ written directly.
 base with a fractional exponent is `NaN`, `x ** 0` is 1, `0 ** -1` is `Infinity`.
 An integral exponent up to ±127 is multiplied out, so `x ** 2` equals `x * x` and
 results JavaScript gives exactly (`10 ** 2`, `2 ** -3`) are exact. Other
-exponents go through exp / log, within about 1e-5 relative. Both operands are
-`f32` or `f64`; an integer `Node` (a MIDI field, `state.i32`) is refused with an
-error, so convert it first: MIDI note → Hz is `440 * 2 ** (f32(note - 69) / 12)`.
+exponents go through exp / log, within about 2e-5 relative. All of this holds
+while the result stays in the normal float range: a result smaller than about
+1e-38 or larger than about 2e38 in magnitude can come out as 0 or `Infinity`
+instead, as with `exp`. Both operands are `f32` or `f64`; an integer `Node` (a
+MIDI field, `state.i32`) is refused with an error, so convert it first: MIDI
+note → Hz is `440 * 2 ** (f32(note - 69) / 12)`.
 
 ```ts
 // gain.uwk.ts — a gain knob in dB

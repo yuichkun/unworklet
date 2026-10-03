@@ -3181,7 +3181,9 @@ const EXACT_POW_LIMIT = 2 ** EXACT_POW_BITS - 1;
  * error (~1e-5 for |x| just below a power of two) a large exponent multiplies:
  * `0.99 ** -401` would be 0.4% off. Centering the mantissa on [√½, √2) keeps
  * t = (m-1)/(m+1) within ±0.172, so ln m = 2·atanh(t) is accurate relative to
- * ln|x| itself and the result stays within exp's ~2.4e-6 plus |y·ln x|·~1e-7.
+ * ln|x| itself and the result stays within exp's ~2.4e-6 plus |y·ln x|·~2e-7
+ * (the f32 rounding of y·ln|x| and of exp's k·ln2 included). On this path a
+ * result beyond the normal float range comes out as 0 or Infinity, as from exp.
  * locals: 0=x(param) / 1=y(param) / 2=n(i32 = |y|) / 3=acc / 4=p(= x^(2^bit)) /
  * 5=r / 6=xn(= |x| scaled out of the subnormal range) / 7=bits(i32) / 8=m / 9=e /
  * 10=t / 11=s(= t²).
