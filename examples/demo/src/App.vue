@@ -6,6 +6,7 @@
       <RouterLink to="/" class="brand">unworklet<span class="brand-dot">.</span></RouterLink>
       <span class="top-tag">live examples</span>
       <span class="top-spacer" />
+      <RouterLink to="/checks" class="top-tag">Sound checks</RouterLink>
       <a class="top-tag" href="https://github.com/yuichkun/unworklet" target="_blank" rel="noopener"
         >GitHub ↗</a
       >
