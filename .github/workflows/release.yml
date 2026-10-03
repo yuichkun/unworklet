@@ -1,0 +1,83 @@
+name: Release
+
+# RELEASE.md describes the release this workflow carries out.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Publish the merged release
+    if: github.event.pull_request.merged && startsWith(github.event.pull_request.head.ref, 'release/v')
+    # GitHub keeps a single waiting run and cancels any other. The release that
+    # runs includes the canceled one's changes, and release-check then refuses
+    # the canceled version because a higher one is tagged.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      # The commit the merge created on main. npm's provenance names this commit,
+      # so it is the one that is built, published and tagged.
+      SHA: ${{ github.sha }}
+      LISTENED: ${{ github.event.pull_request.head.sha }}
+      BRANCH: ${{ github.event.pull_request.head.ref }}
+      TITLE: ${{ github.event.pull_request.title }}
+      NOTES: ${{ github.event.pull_request.body }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Check that this is the listened-to release
+        run: vp exec node scripts/release-check.ts
+      # Without this, a package whose trusted publisher is missing or wrong fails
+      # midway through publishing, with the packages ahead of it already on npm.
+      - name: Check that npm lets this workflow publish every package
+        run: |
+          id_token=$(curl -fsS -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" |
+            vp exec node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).value')
+          for p in core lang offline test unplugin; do
+            if ! curl -fsS -o /dev/null -X POST -H "Authorization: Bearer $id_token" -H "Content-Length: 0" \
+              "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@unworklet%2f$p"; then
+              echo "::error::npm does not let this workflow publish @unworklet/$p. Check its trusted publisher (RELEASE.md, One-time setup)."
+              exit 1
+            fi
+          done
+      - name: Tag the release
+        run: |
+          if [ -z "$(git ls-remote --tags origin "refs/tags/v$VERSION")" ]; then
+            git tag "v$VERSION" "$SHA"
+            git push origin "v$VERSION"
+          fi
+      # Builds every package in dependency order first; each package's
+      # prepublishOnly then rebuilds it with the others' builds in place.
+      - run: vp run build
+      # Trusted publishing: npm checks that this workflow is publishing, so no
+      # token is stored. Versions npm already has are skipped, so a rerun is safe.
+      - name: Publish to npm
+        run: vp pm publish -r --access public --no-git-checks
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "v$VERSION" > /dev/null 2>&1; then
+            printf '%s\n' "$NOTES" > "$RUNNER_TEMP/notes.md"
+            gh release create "v$VERSION" --verify-tag --latest --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+      # Without --force, git only moves production forward along main.
+      - name: Move the production demo to this release
+        run: git push origin "$SHA:refs/heads/production"
