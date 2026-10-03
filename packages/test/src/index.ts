@@ -540,6 +540,18 @@ export async function expectAudioMatchesSnapshotWithState(
   }
 
   const existing = readFileSync(snapshotPath);
+  if ((opts.tolerance ?? 0) > 0) {
+    const decoded = decodeWav(existing);
+    if (decoded.sampleRate !== result.sampleRate) {
+      throw new Error(
+        `expectAudioMatchesSnapshot: sampleRate mismatch — actual=${result.sampleRate}, snapshot=${decoded.sampleRate}`,
+      );
+    }
+    expectNoNaN({ ...result, outputs: { [portName]: decoded.channels } });
+    compareChannels(portName, channels, decoded.channels, opts.tolerance!);
+    return;
+  }
+
   if (existing.length !== wavBytes.length) {
     throw new Error(
       `expectAudioMatchesSnapshot: snapshot byte length mismatch at ${snapshotPath} — actual=${wavBytes.length}, snapshot=${existing.length}`,
@@ -572,7 +584,7 @@ export async function expectAudioMatchesSnapshotWithState(
  * 3. Both omitted = auto-infer = `<test-file-dir>/__snapshots__/<test-file-base>__<safe(test-name)>__<counter>.wav` (the test name is inferred automatically, so a prefix + counter are required to prevent collisions)
  *
  * On the first run the wav is written automatically and the assertion passes;
- * subsequent runs do a bit-exact comparison. `vitest -u` forces an overwrite,
+ * subsequent runs compare within `opts.tolerance` (default `0` = bit-exact). `vitest -u` forces an overwrite,
  * and CI mode fails when the snapshot is missing (the update / CI mode is
  * decided via vitest snapshot state).
  *

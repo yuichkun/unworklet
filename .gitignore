@@ -14,6 +14,7 @@ coverage
 *.local
 *.wav
 !**/__snapshots__/*.wav
+!examples/demo/src/__goldens__/*.wav
 
 # Editor directories and files
 .vscode/*

@@ -9,7 +9,8 @@
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
-    "check": "vp check"
+    "check": "vp check",
+    "sound-checks:update": "vp test run -u src/sound-checks.render.test.ts"
   },
   "dependencies": {
     "@fontsource-variable/geist": "catalog:",

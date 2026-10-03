@@ -34,6 +34,7 @@ The full surface of unworklet — every primitive, declaration, and main-side me
 
 - **`packages/offline/src/canonical.test.ts`** — realistic end-to-end processors rendered through `renderOffline` and asserted on behaviour.
 - **`examples/demo`** — the same shapes driven through the real plugin pipeline in a browser, plus its offline-render tests.
+- **`examples/demo/src/sound-checks.render.test.ts`** — one second of sound for every public DSP operation and every demo example, compared against the WAV goldens in `examples/demo/src/__goldens__/` within `1e-5`. When a change is meant to alter a sound, run `vp run sound-checks:update` in `examples/demo` and commit the changed WAV files; an unexplained golden change is a regression.
 - **`packages/offline/src/docs-examples.test.ts`** — every complete processor example in the READMEs and the Skill is extracted from the markdown and compiled, so a documented example cannot rot into something that no longer builds.
 
 A markdown set of canonical examples used to hold this role, which meant the anchor could silently disagree with the code. It was deleted for that reason. The rule that replaces it:
