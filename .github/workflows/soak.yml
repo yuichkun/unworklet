@@ -51,6 +51,7 @@ jobs:
           vp run --filter @unworklet/offline build
           vp run --filter @unworklet/test build
       - name: Install playwright chromium
+        working-directory: examples/demo
         run: vp exec playwright install --with-deps chromium
       - name: Run the soak
         env:
