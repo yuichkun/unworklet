@@ -21,9 +21,7 @@ publishes exactly what you listened to.
      (`https://github.com/yuichkun/unworklet/blob/vX.Y.Z/CHANGELOG.md`). The title
      and description become the GitHub Release as written.
 2. **Wait for CI to pass**, and run the soak if the release needs it (below).
-3. **Listen** to the Vercel preview of the pull request's latest commit. Vercel
-   links it on the pull request; open it while signed in to Vercel. Every pushed
-   commit gets its own preview, and the latest one is what a merge publishes.
+3. **Listen** to the Vercel preview of the pull request's latest commit. Vercel links it on the pull request; open it while signed in to Vercel. Start with the preview's **Sound checks** page (`/#/checks`): it compares every sound check with the last release and puts the changed ones first, so listen to those, then to the demo. Every pushed commit gets its own preview, and the latest one is what a merge publishes.
 4. **Merge** when it sounds right, with the pull request up to date with `main`.
    If GitHub offers "Update branch", update it and listen to the resulting
    preview. If it does not sound right, push fixes to the branch and go back to

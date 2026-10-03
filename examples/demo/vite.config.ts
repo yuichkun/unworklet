@@ -24,7 +24,7 @@ export default defineConfig(({ command }) => ({
     // inferred trips TS2321 (excessive comparison depth). Routing `vue()` through
     // `unknown` keeps the element types uniform — it's a valid plugin regardless.
     vue() as unknown as Plugin,
-    unworklet(),
+    unworklet({ crossOriginIsolation: false }),
     // `@vitejs/devtools` hosts the Vite DevTools overlay the unworklet panel docks
     // into — without it the panel never appears. Dev-only (`vp dev`): it's pointless
     // in a production build, and its long-lived server keeps `vp test` from exiting.
