@@ -175,6 +175,7 @@ export function isSugarBinaryOperator(kind: ts.SyntaxKind): boolean {
     case ts.SyntaxKind.AsteriskToken:
     case ts.SyntaxKind.SlashToken:
     case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
     case ts.SyntaxKind.EqualsEqualsToken:
     case ts.SyntaxKind.EqualsEqualsEqualsToken:
     case ts.SyntaxKind.ExclamationEqualsToken:

@@ -77,6 +77,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
     case "sub":
     case "div":
     case "mod":
+    case "pow":
     case "max":
     case "min":
     case "eq":

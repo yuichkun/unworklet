@@ -418,6 +418,29 @@ export function log<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T>
 registerNodeMethod("log", function (this: Node<"f32">): Node<"f32"> {
   return log(this);
 });
+// `pow` is JavaScript's `**`. The emitted function works in floats only, so an
+// integer operand is refused here with the conversion that fixes it instead of
+// reaching the emitter as a type it cannot lower.
+export function pow(base: Node<"f32"> | number, exponent: Node<"f32"> | number): Node<"f32">;
+export function pow(base: Node<"f64"> | number, exponent: Node<"f64"> | number): Node<"f64">;
+export function pow<T extends FloatScalar = "f32">(
+  base: Node<T> | number,
+  exponent: Node<T> | number,
+): Node<T> {
+  const t = sameType("pow", base, exponent);
+  if (t !== "f32" && t !== "f64") {
+    throw new Error(
+      `unworklet: pow() needs f32 or f64 operands, got ${t}. Convert first, e.g. pow(f32(x), 2).`,
+    );
+  }
+  return wrapAst<T>({ kind: "pow", type: t, lhs: lift(base, t), rhs: lift(exponent, t) });
+}
+registerNodeMethod(
+  "pow",
+  function (this: Node<"f32">, exponent: Node<"f32"> | number): Node<"f32"> {
+    return pow(this, exponent);
+  },
+);
 export function sqrt<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "sqrt", type: t, value: lift(x, t) });

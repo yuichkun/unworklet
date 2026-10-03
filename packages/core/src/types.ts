@@ -103,6 +103,7 @@ declare const typedArrayFieldRefBrand: unique symbol;
  */
 type NumericScalar = "f32" | "f64" | "i32" | "i64";
 type FloatMethod<T> = T extends "f32" | "f64" ? () => Node<T> : never;
+type FloatBinary<T> = T extends "f32" | "f64" ? (other: Node<T> | number) => Node<T> : never;
 type NumericVecBinary<T> = T extends NumericScalar | "f32x4"
   ? (other: Node<T> | number) => Node<T>
   : never;
@@ -151,6 +152,8 @@ export interface Node<T extends ScalarType | "f32x4" = ScalarType> {
   tanh: FloatMethod<T>;
   exp: FloatMethod<T>;
   log: FloatMethod<T>;
+  /** `x.pow(y)` ≡ `pow(x, y)` ≡ `x ** y` in `.uwk.ts`. */
+  pow: FloatBinary<T>;
   sqrt: FloatMethod<T>;
   floor: FloatMethod<T>;
   ceil: FloatMethod<T>;

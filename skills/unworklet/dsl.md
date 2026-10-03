@@ -89,7 +89,7 @@ Source: `packages/lang/src/ambient.ts:17` (= shipped `dist/ambient.d.ts`).
 - Loop / control: `forSample` `select`
 - Scalar constructors: `f32` `f64` `i32` `i64` `bool`
 - Free fns: `add sub mul div mod neg eq lt gt lte gte not and or sin cos tan tanh exp
-log sqrt floor ceil frac abs min max clamp pipe`
+log pow sqrt floor ceil frac abs min max clamp pipe`
 - Constants: `SAMPLES_PER_BLOCK`, `CAPACITY_16` … `CAPACITY_16384`
 - `.uwk.ts`-only ambients: `process` `migrations` `options` `input` `out` `ctx`
   `$prev`
@@ -109,6 +109,7 @@ build-time JS. Operands recurse bottom-up, so JS precedence is preserved.
 | sugar                                   | lowers to                              |
 | --------------------------------------- | -------------------------------------- |
 | `a + b` `a - b` `a * b` `a / b` `a % b` | `add` `sub` `mul` `div` `mod` `(a, b)` |
+| `a ** b`                                | `pow(a, b)`                            |
 | `-a` `!b`                               | `neg(a)` `not(b)`                      |
 | `a == b` / `a === b`                    | `eq(a, b)`                             |
 | `a != b` / `a !== b`                    | `not(eq(a, b))`                        |
@@ -557,12 +558,34 @@ anywhere a `Node` is and lifts to the operand's type.
 | compare            | `eq` `lt` `gt` `lte` `gte` `(a, b) → Node<"bool">`                                   |
 | logic              | `not(b) → Node<"bool">`; `and(a, b)` `or(a, b) → Node<"bool">` (both operands eager) |
 | float math (unary) | `sin cos tan tanh exp log sqrt floor ceil frac (x) → Node<T>`                        |
+| power              | `pow(base, exponent) → Node<T>` (float only; `a ** b` in `.uwk.ts`)                  |
 | numeric            | `abs(x) → Node<T>`; `min(a, b)` `max(a, b) → Node<T>`; `clamp(x, lo, hi) → Node<T>`  |
 | composition        | `pipe(x, f1, f2, …) → applies fns left-to-right`                                     |
 
-In `.uwk.ts` arithmetic/compare/`neg`/`not` are written with operators (§2); the
-named functions remain available and `sin`/`exp`/`clamp`/`pipe`/etc. are written
-directly.
+In `.uwk.ts` arithmetic/compare/power/`neg`/`not` are written with operators (§2);
+the named functions remain available and `sin`/`exp`/`clamp`/`pipe`/etc. are
+written directly.
+
+`pow` gives what JavaScript's `**` gives, special values included: a negative
+base with a fractional exponent is `NaN`, `x ** 0` is 1, `0 ** -1` is `Infinity`.
+An integral exponent up to ±127 is multiplied out, so `x ** 2` equals `x * x` and
+results JavaScript gives exactly (`10 ** 2`, `2 ** -3`) are exact. Other
+exponents go through exp / log, within about 1e-5 relative. Both operands are
+`f32` or `f64`; an integer `Node` (a MIDI field, `state.i32`) is refused with an
+error, so convert it first: MIDI note → Hz is `440 * 2 ** (f32(note - 69) / 12)`.
+
+```ts
+// gain.uwk.ts — a gain knob in dB
+const input = audioInput({ channels: 1, name: "main" });
+const out = audioOutput({ channels: 1, name: "main" });
+const gainDb = param.f32({ default: -6, min: -60, max: 6, automationRate: "a-rate" }).named();
+
+process(() => {
+  forSample((i) => {
+    out.ch(0)[i] = input.ch(0)[i] * 10 ** (gainDb[i] / 20);
+  });
+});
+```
 
 ### `defineSubgraph` / `instantiate` (reusable DSP units)
 

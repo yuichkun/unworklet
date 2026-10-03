@@ -162,6 +162,7 @@ eq lt lte gt gte                   // comparison → Node<'bool'>
 not select                        // select(cond, then, else)
 abs min max clamp floor ceil frac  // numeric
 sin cos tan tanh exp log sqrt      // float math
+pow                                // pow(base, exponent), JavaScript's **
 pipe                               // pipe(x, f, g) or x.pipe(f).pipe(g)
 ```
 

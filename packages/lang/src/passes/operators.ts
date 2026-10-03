@@ -5,7 +5,7 @@
  *   a + b      → add(a, b)        a == b     → eq(a, b)        -a   → neg(a)
  *   a - b      → sub(a, b)        a != b     → not(eq(a, b))   !b   → not(b)
  *   a * b / %  → mul / div / mod  a < > <= >=→ lt / gt / lte / gte
- *   c ? x : y  → select(c, x, y)
+ *   a ** b     → pow(a, b)        c ? x : y  → select(c, x, y)
  *
  * Dispatch is type-directed (`isDspExpr`): an operator lowers iff an operand is —
  * or lowers to — a `Node<T>`. A bare `State<T>` operand is wrapped in `.read()`;
@@ -26,6 +26,7 @@ export const BINARY_FN: Partial<Record<ts.SyntaxKind, string>> = {
   [ts.SyntaxKind.AsteriskToken]: "mul",
   [ts.SyntaxKind.SlashToken]: "div",
   [ts.SyntaxKind.PercentToken]: "mod",
+  [ts.SyntaxKind.AsteriskAsteriskToken]: "pow",
   [ts.SyntaxKind.LessThanToken]: "lt",
   [ts.SyntaxKind.GreaterThanToken]: "gt",
   [ts.SyntaxKind.LessThanEqualsToken]: "lte",
