@@ -10,7 +10,7 @@
 
 import "./extend.ts";
 
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -308,15 +308,28 @@ test("`.not.toMatchAudioSnapshot()` (chain) = pass=true message thunk hit (snaps
 
 // ━━━━━━━━━━━ chain snapshot catch path — pass=false branch on content mismatch ━━━━━━━━━━━
 
-test("`toMatchAudioSnapshot` (chain) two consecutive invocations in same test reuse `_unworkletCounters` (= else branch hit)", async () => {
-  // The `this` MatcherState is shared across invocations within the same test
-  // in vitest. A second consecutive call therefore takes the already-attached
-  // `_unworkletCounters` path (the else branch at `toMatchAudioSnapshotChain`
-  // L169-171). Exercised via the auto-infer path to hit the counter-map reuse
-  // branch.
-  const result = monoResult(filled(8, 0));
-  await expect(result).toMatchAudioSnapshot();
-  await expect(result).toMatchAudioSnapshot();
+test("chain snapshots write distinct files on disk", async () => {
+  const original = expect.getState().testPath;
+  const directory = mkdtempSync(join(tmpdir(), "unworklet-chain-numbering-"));
+  const state = expect.getState().snapshotState as unknown as { _updateSnapshot: string };
+  const mode = state._updateSnapshot;
+  expect.setState({ testPath: join(directory, "audio.test.ts") });
+  state._updateSnapshot = "new";
+  try {
+    await expect(Float32Array.of(0.25)).toMatchAudioSnapshot();
+    await expect(Float32Array.of(0.75)).toMatchAudioSnapshot();
+    const paths = readdirSync(join(directory, "__snapshots__")).sort();
+    expect(paths).toHaveLength(2);
+    for (const [i, path] of paths.entries()) {
+      expect(path).toMatch(new RegExp(`__${i + 1}\\.wav$`));
+      const bytes = readFileSync(join(directory, "__snapshots__", path));
+      expect(bytes.readFloatLE(bytes.length - 4)).toBe([0.25, 0.75][i]);
+    }
+  } finally {
+    expect.setState({ testPath: original });
+    state._updateSnapshot = mode;
+    rmSync(directory, { recursive: true });
+  }
 });
 
 test("`toMatchAudioSnapshot` (chain) byte content mismatch = zips to vitest fail", async () => {
@@ -460,4 +473,23 @@ test("`@vitest/expect` is a required peer, because the shipped augmentation cann
   };
   expect(pkg.peerDependencies?.["@vitest/expect"]).toBeDefined();
   expect(pkg.peerDependenciesMeta?.["@vitest/expect"]?.optional).not.toBe(true);
+});
+
+test.fails("importing chain matchers preserves global assertion-count checks", () => {
+  expect.assertions(2);
+  expect(true).toBe(true);
+});
+
+test("chain gain and MIDI matchers use DC and zero-velocity semantics", () => {
+  expect(monoResult(new Float32Array(128).fill(1))).toHaveGainAtFreq(0, 0, 0.001);
+  const events = [100, 0].map((velocity, atSample) => ({
+    name: "midi",
+    atSample,
+    payload: { type: "noteOn", channel: 0, note: 60, velocity },
+  }));
+  const result = { ...monoResult(new Float32Array()), events };
+  expect(result).toHaveBalancedMidi("midi");
+  expect(() => expect({ ...result, events: events.slice(1) }).toHaveBalancedMidi("midi")).toThrow(
+    /stray/,
+  );
 });

@@ -7,6 +7,32 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
+## Unreleased — requires a pre-1.0 minor release
+
+### Breaking
+
+- **MIDI balance follows velocity-zero Note On termination semantics.**
+  `expectMidiBalance` / `toHaveBalancedMidi` treat `noteOn` with velocity `0`
+  as a note termination. A zero-velocity Note On followed by Note Off contains
+  two terminations and fails, including when `hangingNotes` permits open notes.
+  Update fixtures to use a positive-velocity Note On to start a note, and emit
+  exactly one termination per outstanding note.
+- **Golden audio comparisons normalize integer PCM.** PCM8/16/24/32 references
+  are compared with normalized audio samples; callers supplying raw integer
+  amplitudes must normalize their actual samples. Compressed WAV references
+  must be converted to integer PCM or floating-point WAV.
+- **DC gain uses the undoubled FFT amplitude.** A constant amplitude of `1`
+  measures `0 dB`, and amplitude `0.5` measures approximately `-6.02 dB`.
+  Remove any `+6.02 dB` compensation from DC expectations.
+
+### Fixed
+
+- Automatic chain audio snapshots use distinct filenames within a test and
+  restart numbering for retries, repeats, and reruns, including cached setup
+  dependencies with `isolate: false`. Tests with multiple unnamed assertions
+  need a separate reference for each assertion; review those references rather
+  than overwriting a shared golden.
+
 ## 0.4.1 — 2026-10-04
 
 Audio snapshot comparisons honor the configured tolerance, and the demo identifies

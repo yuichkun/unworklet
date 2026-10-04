@@ -109,7 +109,7 @@ unless noted.
 Audio compare:
 
 - `expectAudioMatches(actual, expected: RenderOfflineResult | Float32Array[], opts?: { tolerance?: number })` — default tolerance `0` (bit-exact). `Float32Array[]` form requires single-port actual; multi-port: pass full `RenderOfflineResult` (compares port set + sampleRate). (`:136`)
-- `expectAudioMatchesGolden(actual, wavPath: string, opts?: { tolerance?: number })` — compares vs a WAV file; sampleRate must match; single-port only. (`:319`)
+- `expectAudioMatchesGolden(actual, wavPath: string, opts?: { tolerance?: number })` — compares vs a WAV file; integer PCM8/16/24/32 is normalized to audio amplitudes (PCM8 is unsigned, centered at 128); float WAV values are unchanged; compressed formats are rejected; sampleRate must match; single-port only. (`:319`)
 - `await expectAudioMatchesSnapshot(actual: RenderOfflineResult | Float32Array | Float32Array[], opts?: SnapshotOptions): Promise<void>` — vitest-style auto WAV snapshot; first run writes, later runs compare within `opts.tolerance` (default `0` = bit-exact); `vitest -u` overwrites; `--ci` fails if missing. (`:589`)
 - `await expectAudioMatchesSnapshotWithState(actual, opts: SnapshotOptions, state): Promise<void>` — state-explicit worker, concurrent-safe (the chain form uses this). (`:463`)
 
@@ -127,7 +127,7 @@ Timing / spectrum (single-port; multichannel needs `channel`):
 
 - `expectPeakAtSample(result, expectedAtSample: number, opts?: { tolerance?: number; port?: string })` — index of max|x|; multi-PORT needs `port`. (`:680`)
 - `expectLatency(result, expectedSamples: number, opts?: { tolerance?: number; channel?: number })` — impulse delay; single-port; multichannel needs `channel`. (`:891`)
-- `expectGainAtFreq(result, freqHz: number, expectedDb: number, tolerance: number, opts?: { channel?: number })` — internal FFT; `tolerance` is the POSITIONAL 4th arg; single-port; multichannel needs `channel`. (`:812`)
+- `expectGainAtFreq(result, freqHz: number, expectedDb: number, tolerance: number, opts?: { channel?: number })` — internal FFT; DC uses the absolute mean amplitude without the positive-frequency doubling factor; `tolerance` is the POSITIONAL 4th arg; single-port; multichannel needs `channel`. (`:812`)
 
 Events / MIDI / state:
 
@@ -136,9 +136,9 @@ Events / MIDI / state:
 - `expectEventCount(result, name: string, expectedCount: number)`. (`:980`)
 - `expectStateMatches(result, expectedSnapshot: Uint8Array)` — byte-exact snapshot blob. (`:290`)
 - `expectMidiOut(result, portName: string, expectedMidiEvents: ExpectedMidiEvent[], opts?: { tolerance?: number })` — ordered MIDI on a `midiOutput` / `event.midi({to})` port. `ExpectedMidiEvent = MidiEvent & { atSample?: number }` (omit `atSample` = ignore timing). (`:1044`, `:1032`)
-- `expectMidiBalance(result, portName: string, opts?: { hangingNotes?: number })` — noteOn/noteOff balance; a stray noteOff always fails. `hangingNotes` is an upper bound (default `0`) on unclosed noteOns; there is no "unlimited" sentinel — passing `-1` / `Infinity` does not disable the check and will still fail. If you only want to observe the count without asserting a bound, skip this matcher and read `result.events.filter((e) => e.name === portName && e.payload.type === "noteOn").length` directly. (`:1097`)
+- `expectMidiBalance(result, portName: string, opts?: { hangingNotes?: number })` — noteOn/noteOff balance; a velocity-zero noteOn terminates a note just like noteOff; an unmatched termination always fails. `hangingNotes` is an upper bound (default `0`) on unclosed noteOns; there is no "unlimited" sentinel — passing `-1` / `Infinity` does not disable the check and will still fail. If you only want to observe the count without asserting a bound, skip this matcher and read `result.events.filter((e) => e.name === portName && e.payload.type === "noteOn").length` directly. (`:1097`)
 
-`SnapshotOptions = { snapshotPath?: string; snapshotName?: string; sampleRate?: number; tolerance?: number; port?: string }` (`:336`). Precedence: `snapshotPath` > `snapshotName` > auto-infer from test name.
+`SnapshotOptions = { snapshotPath?: string; snapshotName?: string; sampleRate?: number; tolerance?: number; port?: string }` (`:336`). Precedence: `snapshotPath` > `snapshotName` > auto-infer from test name. Chain-form automatic names count assertions within each test and reset for retries, repeats, and watch reruns. Concurrent tests should use the test context’s `expect`.
 
 ## Signal generators (return `Float32Array`)
 
