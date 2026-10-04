@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { build as bundle } from "vite-plus";
+import { build as bundle, loadConfigFromFile } from "vite-plus";
 import { afterEach, expect, test } from "vite-plus/test";
 import { demoBuildPlugin, prepareDemoBuild } from "./demo-build.ts";
 
@@ -143,4 +143,40 @@ test("embeds exactly the verified identity in bundled code and its build report"
 
 test("refuses a bundle resolved from a different package artifact", async () => {
   await expect(bundleFixture(true)).rejects.toThrow(/resolution does not match/);
+});
+
+test("loads the demo config from a clean checkout before plugin dist exists", async () => {
+  const { root } = fixture();
+  const repo = join(import.meta.dirname, "..");
+  mkdirSync(join(root, "examples/demo"), { recursive: true });
+  mkdirSync(join(root, "scripts"));
+  mkdirSync(join(root, "node_modules/@unworklet"), { recursive: true });
+  mkdirSync(join(root, "node_modules/@vitejs"), { recursive: true });
+  for (const name of ["devtools", "plugin-vue"]) {
+    symlinkSync(
+      join(repo, "examples/demo/node_modules/@vitejs", name),
+      join(root, "node_modules/@vitejs", name),
+    );
+  }
+  symlinkSync(join(repo, "node_modules/vite-plus"), join(root, "node_modules/vite-plus"));
+  symlinkSync(join(root, "packages/unplugin"), join(root, "node_modules/@unworklet/unplugin"));
+  writeFileSync(
+    join(root, "packages/unplugin/package.json"),
+    '{"name":"@unworklet/unplugin","type":"module","exports":"./dist/index.mjs"}',
+  );
+  const config = join(root, "examples/demo/vite.config.ts");
+  writeFileSync(config, readFileSync(join(repo, "examples/demo/vite.config.ts")));
+  writeFileSync(
+    join(root, "scripts/demo-build.ts"),
+    `
+    import { writeFileSync } from "node:fs";
+    export function prepareDemoBuild(root) {
+      writeFileSync(root + "/packages/unplugin/dist/index.mjs", 'export default () => ({name: "fresh-unplugin"})');
+      return {};
+    }
+    export function demoBuildPlugin() { return {name: "fixture-identity"}; }
+  `,
+  );
+  const loaded = await loadConfigFromFile({ command: "build", mode: "production" }, config);
+  expect(loaded?.config.plugins).toContainEqual({ name: "fresh-unplugin" });
 });

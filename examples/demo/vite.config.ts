@@ -19,7 +19,11 @@ const crossOriginIsolation = {
 export default defineConfig(async ({ command }) => {
   const root = fileURLToPath(new URL("../../", import.meta.url)).replace(/\/$/, "");
   const prepared = command === "build" ? prepareDemoBuild(root) : undefined;
-  const { default: unworklet } = await import("@unworklet/unplugin");
+  // Defer resolution as well as loading until the clean-checkout build finishes.
+  const pluginUrl = new URL("../../packages/unplugin/dist/index.mjs", import.meta.url);
+  const { default: unworklet } = (await import(
+    pluginUrl.href
+  )) as typeof import("@unworklet/unplugin");
   return {
     define: {
       __DEMO_BUILD_LABEL__: JSON.stringify("Development · version unavailable"),
