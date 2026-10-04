@@ -401,10 +401,8 @@ const shortHash = (s: string): string => {
  * `expect.getState()` (sequential use only — concurrent use risks cross-test
  * interference).
  *
- * `_unworkletCounters` carries the chain form's shared counter Map. Its entry
- * for the current test is reset by a beforeEach hook, including retries and
- * repeats. The plain form leaves this field unset and uses a sequential-only
- * module-global Map.
+ * `_unworkletCounters` carries the chain form's per-test-attempt counter Map.
+ * The plain form leaves this field unset and uses a sequential-only global Map.
  */
 export type SnapshotResolutionState = {
   testPath?: string;
@@ -446,7 +444,7 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
   const base = basename(state.testPath, extname(state.testPath));
   const safeName = sanitizeForFilename(state.currentTestName);
   const key = `${state.testPath}::${state.currentTestName}`;
-  // The chain form resets its test entry in beforeEach. The plain form uses
+  // The chain form supplies per-attempt counters. The plain form uses
   // a test-name boundary heuristic and needs explicit names for retries.
   const counterMap = state._unworkletCounters ?? snapshotCounters;
   if (counterMap === snapshotCounters && snapshotTestBoundary.lastKey !== key) {

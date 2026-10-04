@@ -23,7 +23,8 @@
  * plain function to a chain-test failure.
  */
 
-import { beforeEach, expect } from "vitest";
+import { expect } from "vitest";
+import { getCurrentTest } from "vitest/suite";
 
 import type {
   AudioMatchOptions,
@@ -162,16 +163,16 @@ const wrap =
     }
   };
 
-const chainSnapshotCounters = new Map<string, number>();
-
-beforeEach(({ task }) => {
-  const names = [task.name];
-  for (let suite = task.suite; suite && suite !== task.file; suite = suite.suite) {
-    if (suite.name) names.unshift(suite.name);
+type TestTask = NonNullable<ReturnType<typeof getCurrentTest>>;
+const chainSnapshotCounters = new WeakMap<
+  TestTask,
+  {
+    result: TestTask["result"];
+    retry: number | undefined;
+    repeat: number | undefined;
+    counters: Map<string, number>;
   }
-  const testName = task.fullTestName ?? names.join(" > ");
-  chainSnapshotCounters.delete(`${task.file.filepath}::${testName}`);
-});
+>();
 
 /**
  * The chain matcher specific to `toMatchAudioSnapshot`. Inside vitest's
@@ -193,9 +194,27 @@ async function toMatchAudioSnapshotChain(
   opts?: SnapshotOptions,
 ): Promise<MatcherResult> {
   try {
+    const host = this as SnapshotResolutionState & { task?: TestTask };
+    const task = host.task ?? getCurrentTest();
+    const result = task?.result;
+    let invocation = task && chainSnapshotCounters.get(task);
+    if (
+      !invocation ||
+      invocation.result !== result ||
+      invocation.retry !== result?.retryCount ||
+      invocation.repeat !== result?.repeatCount
+    ) {
+      invocation = {
+        result,
+        retry: result?.retryCount,
+        repeat: result?.repeatCount,
+        counters: new Map(),
+      };
+      if (task) chainSnapshotCounters.set(task, invocation);
+    }
     const state: SnapshotResolutionState = {
-      ...(this as SnapshotResolutionState),
-      _unworkletCounters: chainSnapshotCounters,
+      ...host,
+      _unworkletCounters: invocation.counters,
     };
     await expectAudioMatchesSnapshotWithState(
       received as RenderResultLike | Float32Array | Float32Array[],
