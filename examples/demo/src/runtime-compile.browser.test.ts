@@ -15,7 +15,9 @@
  * without an audio device — is that the browser emits a correct, self-contained
  * module + valid WASM with no bundler step.
  */
-import { beforeAll, expect, test } from "vite-plus/test";
+import { beforeAll, expect, test, vi } from "vite-plus/test";
+
+import { createNode, extractWorkletMeta } from "@unworklet/core";
 
 import { compileSource } from "@unworklet/lang/browser";
 
@@ -113,4 +115,38 @@ test("each compile produces a distinct processor name (no addModule name collisi
   const a = await compileSource(DISTORTION);
   const b = await compileSource(DISTORTION);
   expect(a.worklet.processorName).not.toEqual(b.worklet.processorName);
+});
+
+test.each([
+  "out.ch(0)[i] = ctx.sampleRate / 100000;",
+  "out.ch(0).at(i).write(div(ctx.sampleRate, 100000));",
+])("runtime compilation rejects a mismatched context before loading: %s", async (write) => {
+  const proc = await compileSource(`const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => { ${write} }); });`);
+  const context = new OfflineAudioContext(1, 128, 44100);
+  const addModule = vi
+    .spyOn(context.audioWorklet, "addModule")
+    .mockRejectedValue(new Error("unexpected module load"));
+  try {
+    await expect(createNode(context, proc)).rejects.toThrow(/compiled for 48000 Hz.*44100 Hz/);
+    expect(addModule).not.toHaveBeenCalled();
+    expect(proc.worklet.bakedSampleRate).toBe(48000);
+    const wasm = await fetchBytes(proc.worklet.wasmUrl!);
+    const module = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+    const instance = await WebAssembly.instantiate(module);
+    (instance.exports.process as () => void)();
+    const meta = extractWorkletMeta(
+      (proc as unknown as { graph: Parameters<typeof extractWorkletMeta>[0] }).graph,
+    );
+    const samples = new Float32Array(
+      (instance.exports.memory as WebAssembly.Memory).buffer,
+      meta.layout.regions.ioScratch.outputs.main!,
+      128,
+    );
+    expect(Array.from(samples)).toEqual(Array(128).fill(Math.fround(48000 / 100000)));
+  } finally {
+    addModule.mockRestore();
+    URL.revokeObjectURL(proc.worklet.moduleUrl!);
+    URL.revokeObjectURL(proc.worklet.wasmUrl!);
+  }
 });
