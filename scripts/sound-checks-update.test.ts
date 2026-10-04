@@ -30,7 +30,12 @@ const hashes = (directory: string) =>
   );
 
 test("sound-checks:update preserves every golden when sources are unchanged", async () => {
-  const fixture = mkdtempSync(path.join(tmpdir(), "sound-check-update-"));
+  const root = mkdtempSync(path.join(tmpdir(), "sound-check-update-"));
+  const fixture = path.join(root, "examples/demo");
+  mkdirSync(fixture, { recursive: true });
+  mkdirSync(path.join(root, "scripts"));
+  cpSync(path.join(import.meta.dirname, "demo-build.ts"), path.join(root, "scripts/demo-build.ts"));
+  symlinkSync(path.resolve(demo, "../../packages"), path.join(root, "packages"));
   try {
     for (const file of [
       "package.json",
@@ -83,6 +88,6 @@ test("sound-checks:update preserves every golden when sources are unchanged", as
       expect(result.output).toContain(fixture);
     }
   } finally {
-    rmSync(fixture, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 }, 150000);
