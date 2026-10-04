@@ -20,7 +20,7 @@ publishes exactly what you listened to.
      breaks, and a link to `CHANGELOG.md` at the tag
      (`https://github.com/yuichkun/unworklet/blob/vX.Y.Z/CHANGELOG.md`). The title
      and description become the GitHub Release as written.
-2. **Wait for CI to pass**, and run the soak if the release needs it (below).
+2. **Wait for CI to pass.**
 3. **Listen** to the Vercel preview of the pull request's latest commit. Vercel
    links it on the pull request; open it while signed in to Vercel. Every pushed
    commit gets its own preview, and the latest one is what a merge publishes.
@@ -33,8 +33,13 @@ Merging runs the Release workflow (`.github/workflows/release.yml`) on the commi
 the merge creates on `main`. `scripts/release-check.ts` checks that this commit
 has exactly the files of the pull request's last commit, the one you listened
 to, that the five versions match the branch name, and that no higher version is
-already tagged. The workflow also confirms that npm lets it publish all five
-packages. Only when every check passes does it:
+already tagged. The workflow builds the release and runs the full 1800-second
+soak on both transports concurrently, on this exact checkout. It verifies the
+report against the release SHA and unchanged tracked source, and rejects failed,
+interrupted, incomplete or short runs before any tag or publication. Reports
+upload on success and failure; hard cancellation can prevent upload. The workflow
+then confirms that npm lets it publish all five packages. Only when every check
+passes does it:
 
 - tags the commit `vX.Y.Z`;
 - publishes the five packages to npm through trusted publishing;
@@ -74,21 +79,30 @@ range semantics enforce: `^0.3.0` resolves `0.3.x` and refuses `0.4.0`.
 
 ## The soak
 
-Run the soak when the release changes the core runtime, that is, when this
-prints anything (`vPREV` is the previous release's tag):
+The soak keeps the real audio-thread runtime running in headless Chromium on
+both transports (SharedArrayBuffer and postMessage), switching the tab
+between hidden and visible, and requires every event and MIDI message to
+arrive without loss, duplication, reordering or tearing. It runs in CI
+through the Release and Soak workflows:
 
-```sh
-git diff --name-only vPREV..HEAD -- packages/core/src ':!**/*.test.ts' ':!**/__tests__/**'
-```
+- the Release workflow runs 1800 seconds per transport concurrently after the
+  listened-head identity check and build, before tagging, npm publication, GitHub
+  Release creation or the production push. Its attempt-specific
+  `release-soak-report-<run>-<attempt>` artifact is the evidence for the checked runtime/source. Package prepublish hooks rebuild
+  the published tarballs;
+- the Soak workflow runs 120 seconds per transport on pull requests that change
+  runtime paths. If the cumulative PR diff changes `.github/workflows/release.yml`,
+  `.github/workflows/soak.yml` or `scripts/release-soak/verify-release.mjs`, it instead
+  runs 1800 seconds per transport concurrently and verifies the full report against
+  the exact PR head SHA. This validates the release gate; ordinary runtime PRs
+  retain the short early-warning run. Neither replaces release evidence;
+- from the Actions tab (**Soak** → **Run workflow**), for 5–3600 seconds per transport
+  (default 1800 seconds), when a change reworks the transport
+  and deserves a long run.
 
-```sh
-vp exec node scripts/release-soak/run.mjs
-```
-
-It plays 30 minutes on each transport (SharedArrayBuffer and postMessage) with
-real hidden and visible transitions, about an hour in total, and needs no
-attention while it runs. Put its result in the pull request. A shorter run is
-not a substitute.
+Manual Soak runs upload `soak-report` artifacts for diagnosis. They do not replace
+the Release workflow's mandatory run. No local long soak or manual result
+transcription is required.
 
 Firefox and Safari are not run anywhere. A release carries that gap knowingly,
 and it is worth closing ahead of 1.0.

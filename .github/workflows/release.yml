@@ -20,7 +20,8 @@ jobs:
     concurrency:
       group: release
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
     permissions:
       contents: write
       id-token: write
@@ -28,6 +29,7 @@ jobs:
       # The commit the merge created on main. npm's provenance names this commit,
       # so it is the one that is built, published and tagged.
       SHA: ${{ github.sha }}
+      SOAK_REPORT: release-soak-${{ github.run_id }}-${{ github.run_attempt }}
       LISTENED: ${{ github.event.pull_request.head.sha }}
       BRANCH: ${{ github.event.pull_request.head.ref }}
       TITLE: ${{ github.event.pull_request.title }}
@@ -47,6 +49,23 @@ jobs:
       - run: vp install
       - name: Check that this is the listened-to release
         run: vp exec node scripts/release-check.ts
+      - run: vp run build
+      - name: Install Chromium for the release soak
+        working-directory: examples/demo
+        run: vp exec playwright install --with-deps chromium
+      - name: Run the full release soak
+        timeout-minutes: 36
+        run: |
+          rm -rf "$RUNNER_TEMP/$SOAK_REPORT"
+          timeout --signal=TERM --kill-after=15s 35m vp exec node scripts/release-soak/run.mjs --seconds 1800 --out "$RUNNER_TEMP/$SOAK_REPORT"
+      - name: Verify release soak evidence
+        run: vp exec node scripts/release-soak/verify-release.mjs "$RUNNER_TEMP/$SOAK_REPORT/summary.json" "$SHA"
+      - name: Upload release soak reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-soak-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/${{ env.SOAK_REPORT }}
       # Without this, a package whose trusted publisher is missing or wrong fails
       # midway through publishing, with the packages ahead of it already on npm.
       - name: Check that npm lets this workflow publish every package
@@ -69,9 +88,6 @@ jobs:
             git tag "v$VERSION" "$SHA"
             git push origin "v$VERSION"
           fi
-      # Builds every package in dependency order first; each package's
-      # prepublishOnly then rebuilds it with the others' builds in place.
-      - run: vp run build
       # Trusted publishing: npm checks that this workflow is publishing, so no
       # token is stored. Versions npm already has are skipped, so a rerun is safe.
       - name: Publish to npm

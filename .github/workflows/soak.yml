@@ -1,0 +1,96 @@
+name: Soak
+
+# The soak keeps the real audio-thread runtime running in headless Chromium and
+# requires every event and MIDI message to arrive intact. It runs on pull
+# requests that change the runtime, with full runs for release gate changes.
+
+on:
+  pull_request:
+    paths:
+      - "packages/core/src/**"
+      - "!packages/core/src/compile/**"
+      - "packages/core/src/compile/layout.ts"
+      - "!packages/core/src/dsl/**"
+      - "packages/core/src/dsl/constants.ts"
+      - "!packages/core/src/concurrency/**"
+      - "!packages/core/src/processor.ts"
+      - "!packages/core/src/simd.ts"
+      - "!packages/core/src/types.ts"
+      - "!packages/core/src/index.ts"
+      - "!packages/core/src/dev.ts"
+      - "!packages/core/src/**/*.test.ts"
+      - "!packages/core/src/__tests__/**"
+      - "scripts/release-soak/**"
+      - ".github/workflows/soak.yml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per transport (5–3600)
+        required: true
+        default: "1800"
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    name: Soak (real Chromium, both transports)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      SOAK_SECONDS: ${{ inputs.seconds || '120' }}
+      SOAK_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Select PR soak duration
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet --no-renames "$BASE_SHA...$HEAD_SHA" -- \
+            .github/workflows/release.yml \
+            .github/workflows/soak.yml \
+            scripts/release-soak/verify-release.mjs; then
+            seconds=120
+          else
+            status=$?
+            if [ "$status" -ne 1 ]; then
+              echo "Cannot determine cumulative PR changes" >&2
+              exit "$status"
+            fi
+            seconds=1800
+          fi
+          echo "SOAK_SECONDS=$seconds" >> "$GITHUB_ENV"
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - name: Validate soak duration
+        run: vp exec node scripts/release-soak/validate-ci-seconds.mjs
+      - run: vp install
+      - name: Build packages in dependency order
+        run: |
+          vp run --filter @unworklet/unplugin build
+          vp run --filter @unworklet/core build
+          vp run --filter @unworklet/lang build
+          vp run --filter @unworklet/offline build
+          vp run --filter @unworklet/test build
+      - name: Install playwright chromium
+        working-directory: examples/demo
+        run: vp exec playwright install --with-deps chromium
+      - name: Run the soak
+        run: vp exec node scripts/release-soak/run.mjs --seconds "$SOAK_SECONDS" --out "$RUNNER_TEMP/soak"
+      - name: Verify full soak evidence
+        if: success() && env.SOAK_SECONDS == '1800'
+        run: vp exec node scripts/release-soak/verify-release.mjs "$RUNNER_TEMP/soak/summary.json" "$SOAK_SHA"
+      - name: Upload the soak report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-report
+          path: ${{ runner.temp }}/soak
