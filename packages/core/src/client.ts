@@ -1266,15 +1266,12 @@ export async function createNode<C>(
       ) as Record<string, number>)
     : undefined;
 
-  // `outputChannelCount` is only legal when `numberOfOutputs > 0`. With
-  // zero outputs the W3C AudioWorkletNode constructor throws
-  // `IndexSizeError` if `outputChannelCount.length` does not match
-  // `numberOfOutputs` (= conservative engines reject `[]` mismatch even
-  // though both lengths are 0). Omit the field for input-only / MIDI-only
-  // processors instead of forcing the empty array.
+  // Web Audio requires at least one native input or output. A portless DSP
+  // gets a silent native output, without adding a public audio port.
+  const needsSilentOutput = inputs.length === 0 && outputs.length === 0;
   const nodeOptions: AudioWorkletNodeOptions = {
     numberOfInputs: inputs.length,
-    numberOfOutputs: outputs.length,
+    numberOfOutputs: needsSilentOutput ? 1 : outputs.length,
     parameterData,
     // Hand the audio thread a pre-compiled `WebAssembly.Module` (= structured
     // cloneable per W3C wasm-web-api spec) so the worklet only needs to
@@ -1343,7 +1340,9 @@ export async function createNode<C>(
         : {}),
     },
   };
-  if (outputs.length > 0) {
+  if (needsSilentOutput) {
+    nodeOptions.outputChannelCount = [1];
+  } else if (outputs.length > 0) {
     nodeOptions.outputChannelCount = outputs.map((o) => o.channels);
   }
 
@@ -1881,6 +1880,7 @@ export async function createNode<C>(
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      node.port.postMessage({ kind: "shutdown" });
       if (ingressTimer !== null) clearTimeout(ingressTimer);
       ingressTimer = null;
       // Settle any in-flight snapshot / restore before tearing down listeners, so

@@ -344,6 +344,7 @@ type WorkletState = {
    * and the node keeps outputting silence, per docs/05-client.md §4).
    */
   failed: boolean;
+  stopped: boolean;
 };
 
 type SelfWithState = {
@@ -1110,6 +1111,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         midiInQueues,
         lastSentMidiInOverflows,
         failed: false,
+        stopped: false,
       };
 
       // Minimum pool-buffer size for this node's worst-case egress frame
@@ -1328,6 +1330,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             | null
             | undefined;
           if (typeof data !== "object" || data === null) return;
+          if (data.kind === "shutdown") {
+            (self as SelfWithState)[STATE_KEY]!.stopped = true;
+            return;
+          }
           if (data.kind === "egress-buffer" || data.kind === "egress-recycle") {
             // A pool buffer arriving from main — the initial seed, or a frame
             // coming back after consumption (`egressFrame.ts`). Views are bound
@@ -1518,6 +1524,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
       fillOutputsSilent(outputs);
       return true;
+    }
+    if (state.stopped) {
+      fillOutputsSilent(outputs);
+      return false;
     }
     if (state.failed) {
       // A previous quantum trapped inside `state.process()`. Per
