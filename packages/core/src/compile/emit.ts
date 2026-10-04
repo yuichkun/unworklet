@@ -1741,7 +1741,7 @@ function emitStatementInScope(
             mod.i32.add(mod.global.get(SCRUB_GLOBAL, binaryen.i32), mod.i32.const(1)),
           ),
         ),
-        mod.f32.store(0, BYTES_PER_F32, ptr, mod.select(getCond(), mod.f32.const(0), getValue())),
+        mod.f32.store(0, BYTES_PER_F32, ptr, mod.f32.const(0)),
       ]);
     }
     case "forSample": {
