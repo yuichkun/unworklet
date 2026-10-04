@@ -7,6 +7,36 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
+## 0.4.1 — 2026-10-04
+
+Audio snapshot comparisons honor the configured tolerance, and the demo identifies
+its actual workspace build. Public APIs and DSP/runtime behavior remain compatible
+with 0.4.0; no migration is required.
+
+### Fixed
+
+- **Audio snapshot tolerance.** `expectAudioMatchesSnapshot` and
+  `expectAudioMatchesSnapshotWithState` compare decoded WAV samples when
+  `tolerance > 0`. Omitted or zero tolerance retains byte-exact comparison.
+  Sample-rate, channel-count and frame-count mismatches, non-finite samples, and
+  differences beyond the tolerance still fail.
+
+### Verification and release
+
+- One-second WAV goldens cover the public DSP operations and every demo example.
+  Golden-update tests verify that unchanged sources preserve the corpus, including
+  pipe-composition comparisons against the existing sine golden.
+- The release workflow requires a verified 1800-second soak on both transports,
+  run concurrently against the exact release checkout, before tagging or
+  publication. Relevant runtime pull requests receive a short soak; changes to
+  the release gate receive a full soak. Full checkout history supports the
+  production branch's fast-forward push.
+- The demo footer and `build-info.json` identify the verified workspace package
+  version, actual checkout revision and freshly rebuilt package artifacts.
+  Previews and dirty builds are explicit, and development mode reports version
+  unavailable. Inconsistent versions, stale inputs or unexpected package
+  resolution fail the production demo build.
+
 ## 0.4.0 — 2026-10-03
 
 The exponent operator works on DSP values. In 0.3.x, `x ** y` in a `.uwk.ts`
