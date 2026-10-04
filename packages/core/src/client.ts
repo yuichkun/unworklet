@@ -1686,11 +1686,18 @@ export async function createNode<C>(
     rejectAllPending("the audio thread reported a failure (processorerror)");
   };
   node.addEventListener("processorerror", onProcessorErrorSettle);
-  const currentSnapshotSlots = (slots: SnapshotSlot[]): SnapshotSlot[] => {
-    if (context.state !== "suspended") return slots;
+  const captureParamSettings = (): ReadonlyMap<string, number> | undefined =>
+    context.state === "suspended"
+      ? new Map(Object.entries(params).map(([name, param]) => [name, param.value]))
+      : undefined;
+  const currentSnapshotSlots = (
+    slots: SnapshotSlot[],
+    settings: ReadonlyMap<string, number> | undefined,
+  ): SnapshotSlot[] => {
+    if (settings === undefined) return slots;
     return slots.map((slot) => {
-      const param = slot.kind === "param" ? params[slot.name] : undefined;
-      return param === undefined ? slot : { ...slot, data: encodeScalar("f32", param.value) };
+      const value = slot.kind === "param" ? settings.get(slot.name) : undefined;
+      return value === undefined ? slot : { ...slot, data: encodeScalar("f32", value) };
     });
   };
   const onSnapshotMessage = (event: MessageEvent): void => {
@@ -1712,9 +1719,7 @@ export async function createNode<C>(
       const pending = pendingSnapshots.get(data.requestId);
       if (pending === undefined) return;
       pendingSnapshots.delete(data.requestId);
-      pending.resolve(
-        currentSnapshotSlots(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []),
-      );
+      pending.resolve(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []);
     } else if (data.kind === "restore-done") {
       const pending = pendingRestores.get(data.requestId);
       if (pending === undefined) return;
@@ -1729,9 +1734,7 @@ export async function createNode<C>(
       if (pending === undefined) return;
       pendingDevDumps.delete(data.requestId);
       pending.resolve({
-        slots: currentSnapshotSlots(
-          Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [],
-        ),
+        slots: Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [],
         scrubbedSamples: typeof data.scrubbedSamples === "number" ? data.scrubbedSamples : 0,
       });
     }
@@ -1745,11 +1748,17 @@ export async function createNode<C>(
     }
     const requestId = snapshotRequestSeq++;
     const profile = options?.profile;
+    const settings = captureParamSettings();
     return new Promise<Uint8Array>((resolve, reject) => {
       pendingSnapshots.set(requestId, {
         resolve: (slots) =>
           resolve(
-            encodeSnapshot(processor.schemaHash, profile ?? null, slots, processor.id ?? null),
+            encodeSnapshot(
+              processor.schemaHash,
+              profile ?? null,
+              currentSnapshotSlots(slots, settings),
+              processor.id ?? null,
+            ),
           ),
         reject,
       });
@@ -1974,8 +1983,13 @@ export async function createNode<C>(
         return Promise.reject(new Error("unworklet: devDump() called on a disposed node"));
       }
       const requestId = snapshotRequestSeq++;
+      const settings = captureParamSettings();
       return new Promise<DevDump>((resolve, reject) => {
-        pendingDevDumps.set(requestId, { resolve, reject });
+        pendingDevDumps.set(requestId, {
+          resolve: (dump) =>
+            resolve({ ...dump, slots: currentSnapshotSlots(dump.slots, settings) }),
+          reject,
+        });
         node.port.postMessage({ kind: "dev-dump-request", requestId });
       });
     };

@@ -810,8 +810,10 @@ const off = node.onError((e) => errors.push(e));
 ```
 
 Snapshot and devtools parameter captures use the current `AudioParam.value` while
-its context is suspended, including before the first render. While running, they
-capture the last rendered parameter sample. State and buffer restores require the
+its context is suspended, including before the first render. The context mode and
+suspended settings are captured when the request is issued, so a pending resume or
+suspend does not change the parameter source. Requests issued while running capture
+the last rendered parameter sample. State and buffer restores require the
 saved element type and byte length to match the destination declaration; incompatible
 slots are skipped. This also applies to offline restore. Use a migration to convert
 values when changing a slot's type.
