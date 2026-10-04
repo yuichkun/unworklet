@@ -7,7 +7,7 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
-## Unreleased — requires a pre-1.0 minor release
+## Unreleased — requires 0.5.0
 
 ### Breaking
 
@@ -24,6 +24,18 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 - **DC gain uses the undoubled FFT amplitude.** A constant amplitude of `1`
   measures `0 dB`, and amplitude `0.5` measures approximately `-6.02 dB`.
   Remove any `+6.02 dB` compensation from DC expectations.
+- **Snapshot restore requires matching state and buffer element types.** Worklet
+  and offline restore skip a saved slot when its type differs from the destination,
+  even if the byte length matches. For example, an `f32` state is not reinterpreted
+  as `i32`, and an `f32` buffer is not copied into an equally sized `f64` buffer.
+  The destination retains its initialized value; live restore reports the name in
+  `skipped`. This change must ship on the pre-1.0 minor axis, not in a 0.4.x patch.
+  When changing a declaration's type, add a migration from the old schema hash to
+  the new one that decodes the old type, converts its values, and writes the slot
+  with the destination type. For scalar `f32` to `i32`, use
+  `helpers.parseSlot(blob, "value", "f32")`, choose the required rounding, and call
+  `helpers.writeSlot("value", "i32", convertedValue)`. Unchanged slot types require
+  no migration.
 
 ### Fixed
 
@@ -39,6 +51,8 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   default rate; browser compilation has no sample-rate option.
 - The lang CLI and helper-free sugar compilation resolve package-relative paths
   on Node 20.0.0, preserving the declared Node >=20 support.
+- Parameter snapshots and devtools captures preserve current `AudioParam.value`
+  settings while the context is suspended, including before the first render.
 
 ## 0.4.1 — 2026-10-04
 
