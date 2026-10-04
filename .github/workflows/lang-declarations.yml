@@ -1,0 +1,30 @@
+name: Lang declaration compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  declarations:
+    name: Packed lang types on TypeScript ${{ matrix.typescript }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        typescript: ["5.0.4", "5.5.4", "5.9.3"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Select the consumer TypeScript compiler
+        run: |
+          compiler_path="$(vp dlx --silent --package typescript@${{ matrix.typescript }} --shell-mode 'realpath "$(dirname "$(command -v tsc)")/../typescript/bin/tsc"')"
+          node "$compiler_path" --version
+          echo "UWK_TEST_TSC=$compiler_path" >> "$GITHUB_ENV"
+      - name: Check the packed declarations
+        working-directory: packages/lang
+        run: vp test run src/packed-declarations.test.ts

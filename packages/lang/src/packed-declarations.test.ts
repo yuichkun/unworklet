@@ -56,7 +56,7 @@ test("packed FsSnapshot imports type-check with ESNext and skipLibCheck false", 
     );
     const result = spawnSync(
       process.execPath,
-      [path.join(modules, "typescript/bin/tsc"), "-p", dir],
+      [process.env.UWK_TEST_TSC ?? path.join(modules, "typescript/bin/tsc"), "-p", dir],
       { encoding: "utf8", timeout: 60_000 },
     );
     expect(result.error).toBeUndefined();
