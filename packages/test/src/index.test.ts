@@ -1479,3 +1479,13 @@ test.each([
     expect(() => expectMidiBalance(result, "midi", { hangingNotes: 100 })).toThrow(/stray/);
   else expectMidiBalance(result, "midi");
 });
+
+test.each(["noteOn", "noteOff"])("stray %s reports the actual termination event", (type) => {
+  const result: RenderResultLike = {
+    ...monoResult(new Float32Array()),
+    events: [{ name: "midi", atSample: 7, payload: { type, channel: 2, note: 60, velocity: 0 } }],
+  };
+  expect(() => expectMidiBalance(result, "midi")).toThrow(
+    `1 stray note termination (= no in-flight noteOn at event time) [${type} velocity=0 2/60 @ atSample 7]`,
+  );
+});

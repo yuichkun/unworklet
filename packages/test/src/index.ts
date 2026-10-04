@@ -1099,16 +1099,12 @@ export function expectMidiOut(
 }
 
 /**
- * noteOn / noteOff pairs are balanced, with up to `opts.hangingNotes` (default
- * `0`) hanging notes allowed (a noteOn with no following noteOff). A stray
- * noteOff (a noteOff with no in-flight noteOn for its (channel, note) at the
- * time it appears — a lifecycle inversion, or two or more noteOffs for one
- * noteOn) always fails: a stray is always a bug in the MIDI lifecycle, so there
- * is no tolerance option. Walks the events in time order, tracking a running
- * counter per (channel, note); when a noteOff arrives with cur ≤ 0, it is
- * immediately counted as stray, detecting "noteOff → noteOn (net 0)" and
- * "noteOn 1 → noteOff 2" in an order-sensitive way (closing false passes that a
- * final-sum path would miss).
+ * Positive-velocity noteOn events open notes; noteOff and velocity-zero noteOn
+ * events terminate them. Up to `opts.hangingNotes` (default `0`) open notes
+ * are allowed. A termination with no in-flight note for its (channel, note)
+ * always fails, regardless of the hanging-note allowance. Events are checked
+ * in their supplied order, so an early or duplicate termination cannot be
+ * canceled out by a later noteOn.
  *
  * Chain form: `expect(result).toHaveBalancedMidi(portName, opts?)` (`@unworklet/test/extend`).
  */
@@ -1132,7 +1128,7 @@ export function expectMidiBalance(
       const cur = running.get(k) ?? 0;
       if (cur <= 0) {
         strayCount += 1;
-        strayList.push(`${k} @ atSample ${e.atSample}`);
+        strayList.push(`${m.type} velocity=${m.velocity} ${k} @ atSample ${e.atSample}`);
       } else {
         running.set(k, cur - 1);
       }
@@ -1149,12 +1145,12 @@ export function expectMidiBalance(
   const failures: string[] = [];
   if (hangingCount > allowed) {
     failures.push(
-      `${hangingCount} hanging noteOn (= no matching noteOff) > allowed ${allowed} [${hangingList.join(", ")}]`,
+      `${hangingCount} hanging noteOn (= no matching note termination) > allowed ${allowed} [${hangingList.join(", ")}]`,
     );
   }
   if (strayCount > 0) {
     failures.push(
-      `${strayCount} stray noteOff (= no in-flight noteOn at event time) [${strayList.join(", ")}]`,
+      `${strayCount} stray note termination (= no in-flight noteOn at event time) [${strayList.join(", ")}]`,
     );
   }
   if (failures.length > 0) {
