@@ -12,6 +12,8 @@ import {
   compile,
   defineProcessor,
   encodeSnapshot,
+  decodeSnapshot,
+  encodeScalar,
   f32,
   forSample,
   state,
@@ -48,4 +50,66 @@ test("offline restore skips a width-mismatched slot instead of overrunning the n
   });
   // The width-mismatched slot is skipped, so y keeps its declared default 42.
   expect(r.outputs.main![0]![0]).toBe(42);
+});
+
+for (const type of ["i32", "f64"] as const) {
+  test(`offline restore skips f32 state and buffer bytes declared as ${type}`, async () => {
+    const proc = defineProcessor(() => {
+      state.named("scalar")[type](7);
+      state.buffer[type]({ size: type === "i32" ? 2 : 1 }).expose({
+        name: "samples",
+        snapshot: "persistent",
+      });
+      return { process: () => {} };
+    });
+    const { schemaHash } = await compile(proc);
+    const blob = encodeSnapshot(schemaHash, null, [
+      {
+        name: "scalar",
+        kind: "state",
+        type: "f32",
+        data: new Uint8Array(new Float32Array([1]).buffer),
+      },
+      {
+        name: "samples",
+        kind: "buffer",
+        type: "f32",
+        data: new Uint8Array(new Float32Array([1, 2]).buffer),
+      },
+    ]);
+    const result = await renderOffline(proc, { sampleRate: 48000, duration: 0, restore: blob });
+    const decoded = decodeSnapshot(result.state);
+    expect(decoded.slots.find((s) => s.name === "scalar")!.data).toEqual(encodeScalar(type, 7));
+    expect(decoded.slots.find((s) => s.name === "samples")!.data).toEqual(new Uint8Array(8));
+  });
+}
+
+test("offline restore accepts an explicit migration that converts a slot type", async () => {
+  const body = () => {
+    const value = state.named("value").i32(7);
+    const out = audioOutput({ name: "main", channels: 1 });
+    return { process: () => forSample((i) => out.ch(0).at(i).write(f32(value.read()))) };
+  };
+  const to = defineProcessor(body).schemaHash;
+  const processor = defineProcessor(body, {
+    migrations: [
+      {
+        from: "OLDHASH00000000",
+        to,
+        migrate: (blob, helpers) => {
+          const value = helpers.parseSlot(blob, "value", "f32");
+          if (value !== undefined) helpers.writeSlot("value", "i32", Math.round(value));
+        },
+      },
+    ],
+  });
+  const restore = encodeSnapshot("OLDHASH00000000", null, [
+    { name: "value", kind: "state", type: "f32", data: encodeScalar("f32", 3.5) },
+  ]);
+  const rendered = await renderOffline(processor, {
+    sampleRate: 48000,
+    duration: 128 / 48000,
+    restore,
+  });
+  expect(Array.from(rendered.outputs.main![0]!)).toEqual(Array(128).fill(4));
 });

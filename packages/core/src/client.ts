@@ -39,7 +39,7 @@ import {
 import { ringLeads, ringSlotIndex } from "./ringIndex.ts";
 import { bindSabIngress, createSabIngressWriter, type SabIngressWriter } from "./sabIngress.ts";
 import { captureOutRing, createOutRingSnapshot } from "./outRingSnapshot.ts";
-import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
+import { decodeScalar, encodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
 import {
@@ -1686,6 +1686,13 @@ export async function createNode<C>(
     rejectAllPending("the audio thread reported a failure (processorerror)");
   };
   node.addEventListener("processorerror", onProcessorErrorSettle);
+  const currentSnapshotSlots = (slots: SnapshotSlot[]): SnapshotSlot[] => {
+    if (context.state !== "suspended") return slots;
+    return slots.map((slot) => {
+      const param = slot.kind === "param" ? params[slot.name] : undefined;
+      return param === undefined ? slot : { ...slot, data: encodeScalar("f32", param.value) };
+    });
+  };
   const onSnapshotMessage = (event: MessageEvent): void => {
     const data = event.data as
       | {
@@ -1705,7 +1712,9 @@ export async function createNode<C>(
       const pending = pendingSnapshots.get(data.requestId);
       if (pending === undefined) return;
       pendingSnapshots.delete(data.requestId);
-      pending.resolve(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []);
+      pending.resolve(
+        currentSnapshotSlots(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []),
+      );
     } else if (data.kind === "restore-done") {
       const pending = pendingRestores.get(data.requestId);
       if (pending === undefined) return;
@@ -1720,7 +1729,9 @@ export async function createNode<C>(
       if (pending === undefined) return;
       pendingDevDumps.delete(data.requestId);
       pending.resolve({
-        slots: Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [],
+        slots: currentSnapshotSlots(
+          Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [],
+        ),
         scrubbedSamples: typeof data.scrubbedSamples === "number" ? data.scrubbedSamples : 0,
       });
     }

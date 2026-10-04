@@ -4705,3 +4705,52 @@ test("SAB event serialization isolates a reentrant getter from its outer payload
     h.cleanup();
   }
 });
+
+for (const contextState of ["suspended", "running"] as const) {
+  for (const method of ["snapshot", "devDump"] as const) {
+    test(`${method} uses ${contextState === "suspended" ? "current" : "rendered"} params when ${contextState}`, async () => {
+      vi.stubGlobal("__UNWORKLET_DEVTOOLS__", true);
+      const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+      Object.assign(h.context, { state: contextState });
+      try {
+        const node = await startCreate(
+          () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+          h.fireReady,
+        );
+        node.params.freq!.value = 440;
+        const posted: unknown[] = [];
+        h.lastNode!.port.postMessage = (m) => posted.push(m);
+        const pending =
+          method === "snapshot"
+            ? node.snapshot()
+            : getDevNodes()
+                .find((n) => n.node === node)!
+                .devDump();
+        const request = posted[0] as { requestId: number };
+        for (const listener of h.lastNode!.port.__listeners)
+          listener({
+            data: {
+              kind: method === "snapshot" ? "snapshot-response" : "dev-dump-response",
+              requestId: request.requestId,
+              slots: [
+                { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 220) },
+                { name: "missing", kind: "param", type: "f32", data: encodeScalar("f32", 12) },
+                { name: "value", kind: "state", type: "f32", data: encodeScalar("f32", 7) },
+              ],
+            },
+          });
+        const result = await pending;
+        const slots = result instanceof Uint8Array ? decodeSnapshot(result).slots : result.slots;
+        expect(slots.map((s) => s.data)).toEqual([
+          encodeScalar("f32", contextState === "suspended" ? 440 : 220),
+          encodeScalar("f32", 12),
+          encodeScalar("f32", 7),
+        ]);
+        node.dispose();
+      } finally {
+        h.cleanup();
+        vi.unstubAllGlobals();
+      }
+    });
+  }
+}
