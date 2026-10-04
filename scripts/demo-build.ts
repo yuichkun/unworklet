@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { Plugin } from "vite-plus";
 
 const packages = ["core", "unplugin", "offline", "test", "lang"];
@@ -10,9 +10,13 @@ function git(root: string, args: string[]) {
   return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 }
 
-function digest(root: string, files: string[]) {
+function digest(root: string, files: string[], deleted = new Set<string>()) {
   const hash = createHash("sha256");
   for (const file of [...new Set(files)].sort()) {
+    if (deleted.has(file)) {
+      hash.update(`${file}\0deleted\0`);
+      continue;
+    }
     const bytes = readFileSync(join(root, file));
     hash.update(`${file}\0${bytes.length}\0`).update(bytes);
   }
@@ -25,6 +29,7 @@ function sourceDigest(root: string) {
     git(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
       .split("\0")
       .filter(Boolean),
+    new Set(git(root, ["ls-files", "-z", "--deleted"]).split("\0")),
   );
 }
 
@@ -33,7 +38,7 @@ function artifactDigest(root: string) {
     const dir = `packages/${name}/dist`;
     const entries = readdirSync(join(root, dir), { recursive: true, withFileTypes: true })
       .filter((entry) => entry.isFile())
-      .map((entry) => join(entry.parentPath, entry.name).slice(root.length + 1));
+      .map((entry) => relative(root, join(entry.parentPath, entry.name)));
     if (!entries.length) throw new Error(`No built artifacts for ${name}`);
     return entries;
   });

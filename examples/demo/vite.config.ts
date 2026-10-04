@@ -1,6 +1,7 @@
 import { DevTools } from "@vitejs/devtools";
 import vue from "@vitejs/plugin-vue";
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { prepareDemoBuild, demoBuildPlugin } from "../../scripts/demo-build.ts";
 import { defineConfig } from "vite-plus";
 import type { Plugin } from "vite-plus";
@@ -17,7 +18,7 @@ const crossOriginIsolation = {
 } as const;
 
 export default defineConfig(async ({ command }) => {
-  const root = fileURLToPath(new URL("../../", import.meta.url)).replace(/\/$/, "");
+  const root = resolve(fileURLToPath(new URL("../../", import.meta.url)));
   const prepared = command === "build" ? prepareDemoBuild(root) : undefined;
   // Defer resolution as well as loading until the clean-checkout build finishes.
   const pluginUrl = new URL("../../packages/unplugin/dist/index.mjs", import.meta.url);

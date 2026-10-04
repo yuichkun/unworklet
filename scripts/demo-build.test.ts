@@ -12,6 +12,7 @@ function fixture() {
   roots.push(root);
   execFileSync("git", ["init", "-q", root]);
   writeFileSync(join(root, ".gitignore"), "dist\n");
+  writeFileSync(join(root, "README.md"), "Fixture workspace");
   for (const name of ["core", "unplugin", "offline", "test", "lang"]) {
     mkdirSync(join(root, "packages", name, "dist"), { recursive: true });
     writeFileSync(
@@ -179,4 +180,25 @@ test("loads the demo config from a clean checkout before plugin dist exists", as
   );
   const loaded = await loadConfigFromFile({ command: "build", mode: "production" }, config);
   expect(loaded?.config.plugins).toContainEqual({ name: "fresh-unplugin" });
+});
+
+test("accepts a root with a trailing separator without corrupting artifact paths", () => {
+  const { root, build } = fixture();
+  const plain = prepareDemoBuild(root, build, {});
+  const trailing = prepareDemoBuild(root + "/", build, {});
+  expect(trailing.info).toEqual(plain.info);
+  expect(() => trailing.verify()).not.toThrow();
+});
+
+test("fingerprints tracked deletions in dirty builds and detects deletion changes", () => {
+  const { root, build } = fixture();
+  const clean = prepareDemoBuild(root, build, {});
+  rmSync(join(root, "README.md"));
+  const deleted = prepareDemoBuild(root, build, {});
+  expect(deleted.info.dirty).toBe(true);
+  expect(deleted.info.source).not.toBe(clean.info.source);
+  expect(() => deleted.verify()).not.toThrow();
+  expect(() => clean.verify()).toThrow(/source changed/);
+  writeFileSync(join(root, "README.md"), "Fixture workspace");
+  expect(() => deleted.verify()).toThrow(/source changed/);
 });
