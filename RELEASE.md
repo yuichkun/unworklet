@@ -110,8 +110,24 @@ and it is worth closing ahead of 1.0.
 ## The production demo
 
 Vercel builds every pushed commit as a preview from that commit's own source:
-`scripts/vercel-build.sh` builds the five packages, and the demo uses them from
-the workspace. Only the `production` branch is deployed to production, and only
+`scripts/vercel-build.sh` invokes the demo build, whose Vite config rebuilds the
+five workspace packages before loading the plugin and bundling the app. Core is
+built before lang because the browser compiler embeds the worklet runtime.
+
+The demo footer identifies a **workspace build**, not a claim about npm publication:
+its lockstep package version, checked-out revision, and a fingerprint of the freshly
+built package artifacts. Vercel previews explicitly say "Preview workspace"; local
+modified checkouts say "dirty". The same verified metadata is available at
+`/build-info.json`, including full revision, source and artifact SHA-256 hashes.
+The build fails on mismatched versions or deployment revision, unexpected package
+resolution, or source/artifact changes during bundling. Development mode displays
+"version unavailable" because its live source and compiler dist can differ.
+
+To check a preview, compare its footer revision with the PR head and the full
+`revision` in `/build-info.json`, then exercise the examples. The footer and report
+are emitted together from the build; neither queries GitHub or npm for a version.
+
+Only the `production` branch is deployed to production, and only
 the Release workflow moves it, so the production demo always runs the latest
 release. Merging to `main` does not change it.
 

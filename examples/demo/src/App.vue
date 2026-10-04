@@ -1,4 +1,6 @@
-<script setup lang="ts"></script>
+<script setup lang="ts">
+const buildLabel = __DEMO_BUILD_LABEL__;
+</script>
 
 <template>
   <header class="top">
@@ -14,4 +16,5 @@
   <main class="wrap">
     <RouterView :key="$route.fullPath" />
   </main>
+  <footer class="wrap build-version" data-testid="build-version">{{ buildLabel }}</footer>
 </template>
