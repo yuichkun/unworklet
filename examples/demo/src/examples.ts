@@ -81,7 +81,7 @@ const lfo   = state.f32(0).named();
 
 process(() => {
   forSample((i) => {
-    lfo.write((lfo + rate[i] / 48000) % 1);                 // phase 0..1
+    lfo.write((lfo + rate[i] / 40000) % 1);                 // phase 0..1
     const g = 1 - depth[i] * (0.5 - 0.5 * cos(lfo * (Math.PI * 2)));
     out.left[i]  = input.left[i] * g;
     out.right[i] = input.right[i] * g;
