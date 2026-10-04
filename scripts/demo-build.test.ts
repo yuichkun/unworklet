@@ -146,7 +146,7 @@ test("refuses a bundle resolved from a different package artifact", async () => 
   await expect(bundleFixture(true)).rejects.toThrow(/resolution does not match/);
 });
 
-test("loads the demo config from a clean checkout before plugin dist exists", async () => {
+async function loadDemoConfig(command: "build" | "serve") {
   const { root } = fixture();
   const repo = join(import.meta.dirname, "..");
   mkdirSync(join(root, "examples/demo"), { recursive: true });
@@ -161,9 +161,15 @@ test("loads the demo config from a clean checkout before plugin dist exists", as
   }
   symlinkSync(join(repo, "node_modules/vite-plus"), join(root, "node_modules/vite-plus"));
   symlinkSync(join(root, "packages/unplugin"), join(root, "node_modules/@unworklet/unplugin"));
+  mkdirSync(join(root, "packages/unplugin/src"));
+  writeFileSync(
+    join(root, "packages/unplugin/src/index.ts"),
+    'const name: string = "source-unplugin"; export default () => ({name, configResolved: () => import("./lazy.ts")});',
+  );
+  writeFileSync(join(root, "packages/unplugin/src/lazy.ts"), "export const value = 42;");
   writeFileSync(
     join(root, "packages/unplugin/package.json"),
-    '{"name":"@unworklet/unplugin","type":"module","exports":"./dist/index.mjs"}',
+    '{"name":"@unworklet/unplugin","type":"module","exports":{"development":"./src/index.ts","import":"./dist/index.mjs"}}',
   );
   const config = join(root, "examples/demo/vite.config.ts");
   writeFileSync(config, readFileSync(join(repo, "examples/demo/vite.config.ts")));
@@ -178,8 +184,30 @@ test("loads the demo config from a clean checkout before plugin dist exists", as
     export function demoBuildPlugin() { return {name: "fixture-identity"}; }
   `,
   );
-  const loaded = await loadConfigFromFile({ command: "build", mode: "production" }, config);
+  return loadConfigFromFile(
+    { command, mode: command === "build" ? "production" : "development" },
+    config,
+  );
+}
+
+test("loads the demo config from a clean checkout before plugin dist exists", async () => {
+  const loaded = await loadDemoConfig("build");
   expect(loaded?.config.plugins).toContainEqual({ name: "fresh-unplugin" });
+});
+
+test("loads the workspace development export without requiring plugin dist", async () => {
+  const loaded = await loadDemoConfig("serve");
+  const source = loaded?.config.plugins?.find(
+    (plugin) => plugin && "name" in plugin && plugin.name === "source-unplugin",
+  ) as unknown as { configResolved: () => Promise<{ value: number }> };
+  expect((await source.configResolved()).value).toBe(42);
+  const loader = loaded?.config.plugins?.find(
+    (plugin) => plugin && "name" in plugin && plugin.name === "demo-source-plugin-loader",
+  ) as { closeBundle: () => Promise<void> };
+  await loader.closeBundle();
+  expect(loaded?.config.define?.__DEMO_BUILD_LABEL__).toBe(
+    JSON.stringify("Development · version unavailable"),
+  );
 });
 
 test("accepts a root with a trailing separator without corrupting artifact paths", () => {

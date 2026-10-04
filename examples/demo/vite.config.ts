@@ -3,7 +3,7 @@ import vue from "@vitejs/plugin-vue";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { prepareDemoBuild, demoBuildPlugin } from "../../scripts/demo-build.ts";
-import { defineConfig } from "vite-plus";
+import { createRunnableDevEnvironment, defineConfig, resolveConfig } from "vite-plus";
 import type { Plugin } from "vite-plus";
 
 // COOP/COEP make the page cross-origin isolated, which the SharedArrayBuffer
@@ -22,9 +22,27 @@ export default defineConfig(async ({ command }) => {
   const prepared = command === "build" ? prepareDemoBuild(root) : undefined;
   // Defer resolution as well as loading until the clean-checkout build finishes.
   const pluginUrl = new URL("../../packages/unplugin/dist/index.mjs", import.meta.url);
-  const { default: unworklet } = (await import(
-    pluginUrl.href
-  )) as typeof import("@unworklet/unplugin");
+  const sourceEnvironment = prepared
+    ? undefined
+    : createRunnableDevEnvironment(
+        "ssr",
+        await resolveConfig(
+          {
+            configFile: false,
+            root: fileURLToPath(new URL("./", import.meta.url)),
+            ssr: { noExternal: [/^@unworklet\//] },
+            environments: { ssr: { dev: { moduleRunnerTransform: true } } },
+          },
+          "serve",
+        ),
+        { hot: false },
+      );
+  await sourceEnvironment?.init();
+  const { default: unworklet } = sourceEnvironment
+    ? await sourceEnvironment.runner.import<typeof import("@unworklet/unplugin")>(
+        "@unworklet/unplugin",
+      )
+    : ((await import(pluginUrl.href)) as typeof import("@unworklet/unplugin"));
   return {
     define: {
       __DEMO_BUILD_LABEL__: JSON.stringify("Development · version unavailable"),
@@ -38,6 +56,14 @@ export default defineConfig(async ({ command }) => {
       // `unknown` keeps the element types uniform — it's a valid plugin regardless.
       vue() as unknown as Plugin,
       unworklet(),
+      ...(sourceEnvironment
+        ? [
+            {
+              name: "demo-source-plugin-loader",
+              closeBundle: () => sourceEnvironment.close(),
+            },
+          ]
+        : []),
       ...(prepared ? [demoBuildPlugin(root, prepared)] : []),
       // `@vitejs/devtools` hosts the Vite DevTools overlay the unworklet panel docks
       // into — without it the panel never appears. Dev-only (`vp dev`): it's pointless
