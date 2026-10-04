@@ -110,7 +110,7 @@ Audio compare:
 
 - `expectAudioMatches(actual, expected: RenderOfflineResult | Float32Array[], opts?: { tolerance?: number })` — default tolerance `0` (bit-exact). `Float32Array[]` form requires single-port actual; multi-port: pass full `RenderOfflineResult` (compares port set + sampleRate). (`:136`)
 - `expectAudioMatchesGolden(actual, wavPath: string, opts?: { tolerance?: number })` — compares vs a WAV file; sampleRate must match; single-port only. (`:319`)
-- `await expectAudioMatchesSnapshot(actual: RenderOfflineResult | Float32Array | Float32Array[], opts?: SnapshotOptions): Promise<void>` — vitest-style auto WAV snapshot; first run writes, later runs bit-exact; `vitest -u` overwrites; `--ci` fails if missing. (`:589`)
+- `await expectAudioMatchesSnapshot(actual: RenderOfflineResult | Float32Array | Float32Array[], opts?: SnapshotOptions): Promise<void>` — vitest-style auto WAV snapshot; first run writes, later runs compare within `opts.tolerance` (default `0` = bit-exact); `vitest -u` overwrites; `--ci` fails if missing. (`:589`)
 - `await expectAudioMatchesSnapshotWithState(actual, opts: SnapshotOptions, state): Promise<void>` — state-explicit worker, concurrent-safe (the chain form uses this). (`:463`)
 
 Level / stability:
