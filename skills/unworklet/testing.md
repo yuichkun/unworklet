@@ -76,6 +76,10 @@ function renderOffline<C>(
 - `events?: { name: string; payload: unknown; atSample: number }[]` — inbound events / MIDI; `atSample` is ABSOLUTE.
 - `profile?: string`, `restore?: Uint8Array` (initial-state injection + migration).
 
+Duration rounds up to whole 128-sample quanta. Durations expressed as an exact
+quantum sample count divided by the sample rate retain that count despite floating-point
+roundoff; a genuinely partial quantum still rounds up.
+
 `RenderOfflineResult`:
 
 - `outputs: Record<string, Float32Array[]>` — per `audioOutput({name})` port.

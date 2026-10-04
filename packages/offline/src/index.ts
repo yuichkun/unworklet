@@ -241,9 +241,14 @@ export async function renderOffline<C>(
     sysex: meta.layout.regions.sysexContent.slots[d.name],
   }));
 
-  const totalSamples =
-    Math.ceil((config.duration * config.sampleRate) / SAMPLES_PER_BLOCK) * SAMPLES_PER_BLOCK;
-  const blocks = totalSamples / SAMPLES_PER_BLOCK;
+  const requestedBlocks = (config.duration * config.sampleRate) / SAMPLES_PER_BLOCK;
+  const nearestBlock = Math.round(requestedBlocks);
+  // Undo division/multiplication roundoff when duration represents an exact quantum.
+  const blocks =
+    Math.abs(requestedBlocks - nearestBlock) <= Number.EPSILON * requestedBlocks
+      ? nearestBlock
+      : Math.ceil(requestedBlocks);
+  const totalSamples = blocks * SAMPLES_PER_BLOCK;
 
   const outputs: Record<string, Float32Array[]> = {};
   for (const decl of instance.declarations) {
