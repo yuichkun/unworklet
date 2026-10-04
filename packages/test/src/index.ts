@@ -22,6 +22,7 @@ import type { MidiEvent } from "@unworklet/core";
 import { decodeWav, encodeWav } from "@unworklet/offline";
 import type { OfflineEmittedEvent, OfflineEvent, RenderOfflineResult } from "@unworklet/offline";
 import { expect } from "vitest";
+import wavefile from "wavefile";
 
 /**
  * What the audio matchers accept: a real `renderOffline` result, or a
@@ -326,7 +327,19 @@ export function expectAudioMatchesGolden(
   opts?: AudioMatchOptions,
 ): void {
   const bytes = readFileSync(wavPath);
-  const decoded = decodeWav(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  const wav = new wavefile.WaveFile(bytes);
+  const floatingPoint = wav.bitDepth === "32f" || wav.bitDepth === "64";
+  if (!floatingPoint && !["8", "16", "24", "32"].includes(wav.bitDepth)) {
+    throw new Error(`expectAudioMatchesGolden: unsupported WAV bit depth '${wav.bitDepth}'`);
+  }
+  const decoded = decodeWav(bytes);
+  if (!floatingPoint) {
+    const scale = 2 ** (Number(wav.bitDepth) - 1);
+    const offset = wav.bitDepth === "8" ? 128 : 0;
+    for (const channel of decoded.channels) {
+      for (let i = 0; i < channel.length; i++) channel[i] = (channel[i]! - offset) / scale;
+    }
+  }
   if (decoded.sampleRate !== actual.sampleRate) {
     throw new Error(
       `expectAudioMatchesGolden: sampleRate mismatch — actual=${actual.sampleRate}, wav '${wavPath}'=${decoded.sampleRate} (even when the PCM matches, a different rate shifts pitch and timing)`,
@@ -388,12 +401,10 @@ const shortHash = (s: string): string => {
  * `expect.getState()` (sequential use only — concurrent use risks cross-test
  * interference).
  *
- * `_unworkletCounters` is the expando field for the counter Map used by the
- * auto-inference path. The chain form attaches a fresh Map to `this` (the
- * per-test-invocation MatcherState) and carries it, so it resets naturally per
- * invocation and there is no counter drift across vitest retries / watch reruns.
- * The plain form leaves this field unset and falls back to the module-global Map
- * (the sequential path).
+ * `_unworkletCounters` carries the chain form's shared counter Map. Its entry
+ * for the current test is reset by a beforeEach hook, including retries and
+ * repeats. The plain form leaves this field unset and uses a sequential-only
+ * module-global Map.
  */
 export type SnapshotResolutionState = {
   testPath?: string;
@@ -435,12 +446,8 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
   const base = basename(state.testPath, extname(state.testPath));
   const safeName = sanitizeForFilename(state.currentTestName);
   const key = `${state.testPath}::${state.currentTestName}`;
-  // Counter source: the chain form brings its own `state._unworkletCounters`
-  // (a per-test-invocation Map bound to MatcherState), so it resets naturally on
-  // retry / watch and never drifts. The plain form leaves it unset and falls back
-  // to the module-global Map plus a boundary heuristic (reset only when moving to
-  // a different test); repeated invocations within the same test drift, so
-  // docs §2.1 recommends an explicit snapshotName or the chain form.
+  // The chain form resets its test entry in beforeEach. The plain form uses
+  // a test-name boundary heuristic and needs explicit names for retries.
   const counterMap = state._unworkletCounters ?? snapshotCounters;
   if (counterMap === snapshotCounters && snapshotTestBoundary.lastKey !== key) {
     snapshotCounters.delete(key);
@@ -876,11 +883,11 @@ export function expectGainAtFreq(
   // the otherwise-underestimated amplitude.
   let mag = 0;
   const startK = Math.max(0, bin - 1);
-  const endK = Math.min(n / 2 - 1, bin + 1);
+  const endK = bin === 0 ? 0 : Math.min(n / 2 - 1, bin + 1);
   for (let k = startK; k <= endK; k++) {
     const reK = real[k]!;
     const imK = imag[k]!;
-    const m = (2 * Math.sqrt(reK * reK + imK * imK)) / ch.length;
+    const m = ((k === 0 ? 1 : 2) * Math.sqrt(reK * reK + imK * imK)) / ch.length;
     if (m > mag) mag = m;
   }
   const db = mag > 0 ? 20 * Math.log10(mag) : Number.NEGATIVE_INFINITY;
@@ -1119,10 +1126,10 @@ export function expectMidiBalance(
   let strayCount = 0;
   for (const e of actual) {
     const m = e.payload as MidiEvent;
-    if (m.type === "noteOn") {
+    if (m.type === "noteOn" && m.velocity !== 0) {
       const k = `${m.channel}/${m.note}`;
       running.set(k, (running.get(k) ?? 0) + 1);
-    } else if (m.type === "noteOff") {
+    } else if (m.type === "noteOff" || m.type === "noteOn") {
       const k = `${m.channel}/${m.note}`;
       const cur = running.get(k) ?? 0;
       if (cur <= 0) {

@@ -23,7 +23,7 @@
  * plain function to a chain-test failure.
  */
 
-import { expect } from "vitest";
+import { beforeEach, expect } from "vitest";
 
 import type {
   AudioMatchOptions,
@@ -162,6 +162,17 @@ const wrap =
     }
   };
 
+const chainSnapshotCounters = new Map<string, number>();
+
+beforeEach(({ task }) => {
+  const names = [task.name];
+  for (let suite = task.suite; suite && suite !== task.file; suite = suite.suite) {
+    if (suite.name) names.unshift(suite.name);
+  }
+  const testName = task.fullTestName ?? names.join(" > ");
+  chainSnapshotCounters.delete(`${task.file.filepath}::${testName}`);
+});
+
 /**
  * The chain matcher specific to `toMatchAudioSnapshot`. Inside vitest's
  * `expect.extend(...)`, `this` carries a per-test bound `MatcherState` (whose
@@ -182,18 +193,9 @@ async function toMatchAudioSnapshotChain(
   opts?: SnapshotOptions,
 ): Promise<MatcherResult> {
   try {
-    // Attach a counter Map onto `this` (the per-test-invocation `MatcherState`)
-    // and carry it. A fresh Map per chain-form call (per test invocation) means
-    // no counter drift across retries or watch reruns (the R6-1 fix). On the
-    // plain-form path this field is absent from the state, so it falls back to a
-    // module-global Map (the same sequential-only limitation as standard vitest).
-    const thisHost = this as { _unworkletCounters?: Map<string, number> };
-    if (!thisHost._unworkletCounters) {
-      thisHost._unworkletCounters = new Map();
-    }
     const state: SnapshotResolutionState = {
       ...(this as SnapshotResolutionState),
-      _unworkletCounters: thisHost._unworkletCounters,
+      _unworkletCounters: chainSnapshotCounters,
     };
     await expectAudioMatchesSnapshotWithState(
       received as RenderResultLike | Float32Array | Float32Array[],

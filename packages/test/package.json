@@ -57,7 +57,8 @@
     "prepublishOnly": "vp run build"
   },
   "dependencies": {
-    "@unworklet/offline": "workspace:^"
+    "@unworklet/offline": "workspace:^",
+    "wavefile": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
