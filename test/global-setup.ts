@@ -23,5 +23,6 @@ const VP = path.join(REPO, "node_modules/.bin/vp");
 export function setup(): void {
   execFileSync(VP, ["pack"], { cwd: path.join(REPO, "packages/core"), stdio: "ignore" });
   execFileSync(VP, ["run", "build"], { cwd: path.join(REPO, "packages/lang"), stdio: "ignore" });
+  execFileSync(VP, ["pack"], { cwd: path.join(REPO, "packages/offline"), stdio: "ignore" });
   process.env.UWK_DISTS_BUILT = "1";
 }

@@ -1,5 +1,5 @@
 /**
- * Build the shipped `dist/` of this package and of `@unworklet/core` ONCE, before
+ * Build the shipped `dist/` of lang, core, and offline ONCE, before
  * any test file runs.
  *
  * Several suites here assert against the published artefacts rather than the

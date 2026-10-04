@@ -32,6 +32,13 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   dependencies with `isolate: false`. Tests with multiple unnamed assertions
   need a separate reference for each assertion; review those references rather
   than overwriting a shared golden.
+- Browser `compileSource` preserves the compiler's `bakedSampleRate` metadata.
+  `createNode` rejects contexts whose rate differs from the compiled 48000 Hz
+  before loading the worklet module. Live-coding consumers must request
+  `new AudioContext({ sampleRate: 48000 })` instead of relying on the device's
+  default rate; browser compilation has no sample-rate option.
+- The lang CLI and helper-free sugar compilation resolve package-relative paths
+  on Node 20.0.0, preserving the declared Node >=20 support.
 
 ## 0.4.1 — 2026-10-04
 
