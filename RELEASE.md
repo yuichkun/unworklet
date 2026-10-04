@@ -91,7 +91,11 @@ through the Release and Soak workflows:
   `release-soak-report-<run>-<attempt>` artifact is the evidence for the checked runtime/source. Package prepublish hooks rebuild
   the published tarballs;
 - the Soak workflow runs 120 seconds per transport on pull requests that change
-  runtime paths. This is early warning, not release evidence;
+  runtime paths. If the cumulative PR diff changes `.github/workflows/release.yml`,
+  `.github/workflows/soak.yml` or `scripts/release-soak/verify-release.mjs`, it instead
+  runs 1800 seconds per transport concurrently and verifies the full report against
+  the exact PR head SHA. This validates the release gate; ordinary runtime PRs
+  retain the short early-warning run. Neither replaces release evidence;
 - from the Actions tab (**Soak** → **Run workflow**), for 5–3600 seconds per transport
   (default 1800 seconds), when a change reworks the transport
   and deserves a long run.
