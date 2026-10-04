@@ -13,6 +13,8 @@ test("a MIDI-only processor can be created and delivers messages without declare
     const received: MidiEvent[] = [];
     node.midi.output!.onEvent("noteOn", (e) => received.push(e));
     node.midi.input!.send({ type: "noteOn", channel: 0, note: 60, velocity: 100 });
+    // Deliver queued postMessage MIDI before offline rendering can finish.
+    await node.snapshot();
     const rendered = await ctx.startRendering();
     await expect
       .poll(() => received)
