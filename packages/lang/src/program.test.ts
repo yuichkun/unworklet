@@ -8,7 +8,7 @@
 import { expect, test } from "vite-plus/test";
 import ts from "typescript";
 
-import { buildProgram } from "./program.ts";
+import { buildProgram, fileUrlDirectory } from "./program.ts";
 
 const SAMPLE = `
 const SAMPLE_RATE = 48000;
@@ -61,4 +61,12 @@ test('a bare state reference reads as State<"f32">', () => {
 
 test('the forSample counter reads as Node<"i32">', () => {
   expect(typeOfDecl("lc", SAMPLE)).toBe('Node<"i32">');
+});
+
+test.each([
+  ["file:///home/user/a%20b%23c/dist/index.mjs", "/home/user/a b#c/dist"],
+  ["file:///C:/Users/a%20b/dist/index.mjs", "C:/Users/a b/dist"],
+  ["file://server/share/a%20b/dist/index.mjs", "//server/share/a b/dist"],
+])("resolves the module directory from %s without Node builtins", (url, directory) => {
+  expect(fileUrlDirectory(url)).toBe(directory);
 });

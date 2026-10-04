@@ -1,0 +1,26 @@
+name: Lang runtime compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  node20:
+    name: Packed lang on Node 20.0.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.0.0"
+      - name: Record consumer runtime
+        run: echo "UWK_TEST_NODE=$(command -v node)" >> "$GITHUB_ENV"
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Test packed CLI and sugar rendering on the minimum Node runtime
+        working-directory: packages/lang
+        run: vp test run src/packed-runtime.test.ts

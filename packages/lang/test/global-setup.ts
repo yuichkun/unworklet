@@ -27,4 +27,5 @@ export function setup(): void {
   if (process.env.UWK_DISTS_BUILT === "1") return;
   execFileSync(VP, ["pack"], { cwd: path.join(REPO, "packages/core"), stdio: "ignore" });
   execFileSync(VP, ["run", "build"], { cwd: LANG, stdio: "ignore" });
+  execFileSync(VP, ["pack"], { cwd: path.join(REPO, "packages/offline"), stdio: "ignore" });
 }
