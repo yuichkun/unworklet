@@ -22,6 +22,7 @@ import { createNode, extractWorkletMeta } from "@unworklet/core";
 import { compileSource } from "@unworklet/lang/browser";
 
 import { examples } from "./examples.ts";
+import { useUnworkletDemo } from "./composables/useUnworkletDemo.ts";
 
 // Warm up the module-level cost (binaryen.js, the TypeScript transpiler) once,
 // outside the per-test timeout, so a test failure points at the compile output,
@@ -148,5 +149,35 @@ process(() => { forSample(i => { ${write} }); });`);
     addModule.mockRestore();
     URL.revokeObjectURL(proc.worklet.moduleUrl!);
     URL.revokeObjectURL(proc.worklet.wasmUrl!);
+  }
+});
+
+test("the live-coding demo requests the baked rate on a 44.1 kHz device", async () => {
+  const NativeAudioContext = globalThis.AudioContext;
+  const contexts: AudioContext[] = [];
+  const addModule = vi.fn().mockRejectedValue(new Error("module loading reached"));
+  vi.stubGlobal(
+    "AudioContext",
+    class extends NativeAudioContext {
+      constructor(options?: AudioContextOptions) {
+        super(options ?? { sampleRate: 44100 });
+        contexts.push(this);
+        vi.spyOn(this.audioWorklet, "addModule").mockImplementation(addModule);
+      }
+      override resume(): Promise<void> {
+        return Promise.resolve();
+      }
+    },
+  );
+  try {
+    const demo = useUnworkletDemo();
+    await demo.prepare(examples.find((example) => example.slug === "distortion")!);
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]!.sampleRate).toBe(48000);
+    expect(addModule).toHaveBeenCalledTimes(1);
+    expect(demo.error.value).toBe("Error: module loading reached");
+  } finally {
+    vi.unstubAllGlobals();
+    await Promise.all(contexts.map((context) => context.close()));
   }
 });
