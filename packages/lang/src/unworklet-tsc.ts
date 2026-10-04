@@ -19,6 +19,7 @@
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { WorkletNamespace } from "@unworklet/core";
 import { runTsc } from "@volar/typescript/lib/quickstart/runTsc.js";
@@ -243,7 +244,7 @@ await populateWorkletsWitness(projectConfig);
 const tscPath = createRequire(import.meta.url).resolve("typescript/lib/tsc");
 // The shipped ambient (`audioInput` / `state` / `mul` / … as globals) sits next to
 // this bin in `dist/`. A `.uwk.ts` writes no imports, so the lowered sugar needs it.
-const ambient = path.join(import.meta.dirname, "ambient.d.ts");
+const ambient = fileURLToPath(new URL("./ambient.d.ts", import.meta.url));
 
 /** `options` here is the very object `runTsc` builds the program from, so the
  * callback is the place to augment its root files — but `rootNames` is typed

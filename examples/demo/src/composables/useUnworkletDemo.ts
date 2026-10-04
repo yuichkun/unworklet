@@ -43,7 +43,7 @@ export function useUnworkletDemo() {
   let current: Example | null = null;
 
   const ensureCtx = async (): Promise<AudioContext> => {
-    ctx ??= new AudioContext();
+    ctx ??= new AudioContext({ sampleRate: 48000 });
     if (ctx.state === "suspended") await ctx.resume();
     return ctx;
   };

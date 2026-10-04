@@ -15,11 +15,14 @@
  * without an audio device — is that the browser emits a correct, self-contained
  * module + valid WASM with no bundler step.
  */
-import { beforeAll, expect, test } from "vite-plus/test";
+import { beforeAll, expect, test, vi } from "vite-plus/test";
+
+import { createNode, extractWorkletMeta } from "@unworklet/core";
 
 import { compileSource } from "@unworklet/lang/browser";
 
 import { examples } from "./examples.ts";
+import { useUnworkletDemo } from "./composables/useUnworkletDemo.ts";
 
 // Warm up the module-level cost (binaryen.js, the TypeScript transpiler) once,
 // outside the per-test timeout, so a test failure points at the compile output,
@@ -113,4 +116,68 @@ test("each compile produces a distinct processor name (no addModule name collisi
   const a = await compileSource(DISTORTION);
   const b = await compileSource(DISTORTION);
   expect(a.worklet.processorName).not.toEqual(b.worklet.processorName);
+});
+
+test.each([
+  "out.ch(0)[i] = ctx.sampleRate / 100000;",
+  "out.ch(0).at(i).write(div(ctx.sampleRate, 100000));",
+])("runtime compilation rejects a mismatched context before loading: %s", async (write) => {
+  const proc = await compileSource(`const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => { ${write} }); });`);
+  const context = new OfflineAudioContext(1, 128, 44100);
+  const addModule = vi
+    .spyOn(context.audioWorklet, "addModule")
+    .mockRejectedValue(new Error("unexpected module load"));
+  try {
+    await expect(createNode(context, proc)).rejects.toThrow(/compiled for 48000 Hz.*44100 Hz/);
+    expect(addModule).not.toHaveBeenCalled();
+    expect(proc.worklet.bakedSampleRate).toBe(48000);
+    const wasm = await fetchBytes(proc.worklet.wasmUrl!);
+    const module = await WebAssembly.compile(wasm.buffer as ArrayBuffer);
+    const instance = await WebAssembly.instantiate(module);
+    (instance.exports.process as () => void)();
+    const meta = extractWorkletMeta(
+      (proc as unknown as { graph: Parameters<typeof extractWorkletMeta>[0] }).graph,
+    );
+    const samples = new Float32Array(
+      (instance.exports.memory as WebAssembly.Memory).buffer,
+      meta.layout.regions.ioScratch.outputs.main!,
+      128,
+    );
+    expect(Array.from(samples)).toEqual(Array(128).fill(Math.fround(48000 / 100000)));
+  } finally {
+    addModule.mockRestore();
+    URL.revokeObjectURL(proc.worklet.moduleUrl!);
+    URL.revokeObjectURL(proc.worklet.wasmUrl!);
+  }
+});
+
+test("the live-coding demo requests the baked rate on a 44.1 kHz device", async () => {
+  const NativeAudioContext = globalThis.AudioContext;
+  const contexts: AudioContext[] = [];
+  const addModule = vi.fn().mockRejectedValue(new Error("module loading reached"));
+  vi.stubGlobal(
+    "AudioContext",
+    class extends NativeAudioContext {
+      constructor(options?: AudioContextOptions) {
+        super(options ?? { sampleRate: 44100 });
+        contexts.push(this);
+        vi.spyOn(this.audioWorklet, "addModule").mockImplementation(addModule);
+      }
+      override resume(): Promise<void> {
+        return Promise.resolve();
+      }
+    },
+  );
+  try {
+    const demo = useUnworkletDemo();
+    await demo.prepare(examples.find((example) => example.slug === "distortion")!);
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]!.sampleRate).toBe(48000);
+    expect(addModule).toHaveBeenCalledTimes(1);
+    expect(demo.error.value).toBe("Error: module loading reached");
+  } finally {
+    vi.unstubAllGlobals();
+    await Promise.all(contexts.map((context) => context.close()));
+  }
 });

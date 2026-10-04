@@ -1,5 +1,5 @@
 /**
- * Build the shipped `dist/` of this package and of `@unworklet/core` ONCE, before
+ * Build the shipped `dist/` of lang, core, and offline ONCE, before
  * any test file runs.
  *
  * Several suites here assert against the published artefacts rather than the
@@ -27,4 +27,5 @@ export function setup(): void {
   if (process.env.UWK_DISTS_BUILT === "1") return;
   execFileSync(VP, ["pack"], { cwd: path.join(REPO, "packages/core"), stdio: "ignore" });
   execFileSync(VP, ["run", "build"], { cwd: LANG, stdio: "ignore" });
+  execFileSync(VP, ["pack"], { cwd: path.join(REPO, "packages/offline"), stdio: "ignore" });
 }
