@@ -79,7 +79,7 @@ function renderOffline<C>(
 `RenderOfflineResult`:
 
 - `outputs: Record<string, Float32Array[]>` — per `audioOutput({name})` port.
-- `events: { name: string; payload: unknown; atSample: number }[]` — emitted (worklet→main + `midiOutput`). `atSample` is BLOCK-LOCAL (0..127), NOT absolute.
+- `events: { name: string; payload: unknown; atSample: number }[]` — emitted (worklet→main + `midiOutput`). `atSample` is BLOCK-LOCAL (0..127), NOT absolute. Outbound event and MIDI drains preserve order and terminate across signed 32-bit ring-counter wrap.
 - `state: Uint8Array` — end-of-render snapshot blob (persistent slots).
 - `sampleRate: number` — carried through from config.
 - `diagnostics.scrubbedSamples: number` — output samples the compiled processor's

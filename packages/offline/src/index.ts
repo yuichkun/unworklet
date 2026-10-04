@@ -517,7 +517,7 @@ export async function renderOffline<C>(
           }
         }
         emittedEvents.push({ name: ring.name, payload, atSample });
-        tail += 1;
+        tail = (tail + 1) | 0;
       }
       // After draining, commit tail = head (= the WASM ring starts empty at the
       // next quantum, preventing repeated drop-oldest). overflowCount is left
@@ -557,7 +557,7 @@ export async function renderOffline<C>(
         }
         // Block-local atSample (matches online + worklet→main events, B7 / Q4-c-ii).
         emittedEvents.push({ name: port.name, payload, atSample: slotAtSample });
-        tail += 1;
+        tail = (tail + 1) | 0;
       }
       headerView[1] = head;
     }
