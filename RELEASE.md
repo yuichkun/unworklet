@@ -33,8 +33,13 @@ Merging runs the Release workflow (`.github/workflows/release.yml`) on the commi
 the merge creates on `main`. `scripts/release-check.ts` checks that this commit
 has exactly the files of the pull request's last commit, the one you listened
 to, that the five versions match the branch name, and that no higher version is
-already tagged. The workflow also confirms that npm lets it publish all five
-packages. Only when every check passes does it:
+already tagged. The workflow builds the release and runs the full 1800-second
+soak on both transports concurrently, on this exact checkout. It verifies the
+report against the release SHA and unchanged tracked source, and rejects failed,
+interrupted, incomplete or short runs before any tag or publication. Reports
+upload on success and failure; hard cancellation can prevent upload. The workflow
+then confirms that npm lets it publish all five packages. Only when every check
+passes does it:
 
 - tags the commit `vX.Y.Z`;
 - publishes the five packages to npm through trusted publishing;
@@ -78,15 +83,22 @@ The soak keeps the real audio-thread runtime running in headless Chromium on
 both transports (SharedArrayBuffer and postMessage), switching the tab
 between hidden and visible, and requires every event and MIDI message to
 arrive without loss, duplication, reordering or tearing. It runs in CI
-(`.github/workflows/soak.yml`), not on anyone's machine:
+through the Release and Soak workflows:
 
-- automatically, for 120 seconds per transport, on every pull request that
-  changes the runtime (the paths listed in that workflow);
+- the Release workflow runs 1800 seconds per transport concurrently after the
+  listened-head identity check and build, before tagging, npm publication, GitHub
+  Release creation or the production push. Its attempt-specific
+  `release-soak-report-<run>-<attempt>` artifact is the evidence for the checked runtime/source. Package prepublish hooks rebuild
+  the published tarballs;
+- the Soak workflow runs 120 seconds per transport on pull requests that change
+  runtime paths. This is early warning, not release evidence;
 - from the Actions tab (**Soak** → **Run workflow**), for 5–3600 seconds per transport
   (default 1800 seconds), when a change reworks the transport
   and deserves a long run.
 
-Its report is uploaded as the run's `soak-report` artifact.
+Manual Soak runs upload `soak-report` artifacts for diagnosis. They do not replace
+the Release workflow's mandatory run. No local long soak or manual result
+transcription is required.
 
 Firefox and Safari are not run anywhere. A release carries that gap knowingly,
 and it is worth closing ahead of 1.0.
