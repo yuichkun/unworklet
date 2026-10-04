@@ -500,7 +500,7 @@ function emitMaxMin(
 function emitAbs(mod: BinaryenModule, type: ScalarType, emitX: () => number): number {
   if (type === "i32") {
     return mod.select(
-      mod.i32.lt_s(emitX(), mod.i32.const(0)),
+      mod.i32.lt_u(emitX(), mod.i32.const(0)),
       emitNeg(mod, type, emitX()),
       emitX(),
     );
