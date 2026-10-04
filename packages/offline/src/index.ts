@@ -241,13 +241,12 @@ export async function renderOffline<C>(
     sysex: meta.layout.regions.sysexContent.slots[d.name],
   }));
 
-  const requestedBlocks = (config.duration * config.sampleRate) / SAMPLES_PER_BLOCK;
-  const nearestBlock = Math.round(requestedBlocks);
-  // Undo division/multiplication roundoff when duration represents an exact quantum.
+  const completeBlocks = Math.floor((config.duration * config.sampleRate) / SAMPLES_PER_BLOCK);
+  // Compare seconds to the canonical sample-count/rate boundary without an epsilon.
   const blocks =
-    Math.abs(requestedBlocks - nearestBlock) <= Number.EPSILON * requestedBlocks
-      ? nearestBlock
-      : Math.ceil(requestedBlocks);
+    config.duration > (completeBlocks * SAMPLES_PER_BLOCK) / config.sampleRate
+      ? completeBlocks + 1
+      : completeBlocks;
   const totalSamples = blocks * SAMPLES_PER_BLOCK;
 
   const outputs: Record<string, Float32Array[]> = {};

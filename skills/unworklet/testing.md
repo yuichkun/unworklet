@@ -69,7 +69,7 @@ function renderOffline<C>(
 `RenderOfflineConfig`:
 
 - `sampleRate: number`
-- `duration: number` — seconds; rounded UP to a 128-sample block. totalSamples = `ceil(duration*sampleRate/128)*128` (`SAMPLES_PER_BLOCK=128`, `packages/core/src/dsl/constants.ts:11`).
+- `duration: number` — seconds; rounded UP to a 128-sample block (`SAMPLES_PER_BLOCK=128`, `packages/core/src/dsl/constants.ts:11`).
 - `inputs?: Record<string, Float32Array[]>` — key = `audioInput({name})` port; value = per-channel arrays.
 - `params?: Record<string, number[]>` — key = `param.named(...)`. `[]` / omitted = declared default; length 1 = constant; length > 1 = per-sample automation.
 - `messages?: { name: string; payload: unknown; atQuantum?: number }[]` — main→worklet (block index, default 0).
@@ -78,7 +78,9 @@ function renderOffline<C>(
 
 Duration rounds up to whole 128-sample quanta. Durations expressed as an exact
 quantum sample count divided by the sample rate retain that count despite floating-point
-roundoff; a genuinely partial quantum still rounds up.
+roundoff. Rounding compares the original duration with that sample-count/rate
+boundary, without an epsilon: even the next representable duration above a boundary
+rounds up to another quantum.
 
 `RenderOfflineResult`:
 
