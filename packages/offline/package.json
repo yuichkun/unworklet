@@ -1,6 +1,6 @@
 {
   "name": "@unworklet/offline",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Pure-JS offline renderer for `@unworklet/core` processors (Node / Bun / Deno).",
   "keywords": [
     "audio",
