@@ -841,6 +841,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   // reference needed (mirrors Nuxt's `.nuxt/` codegen + Prisma's generate).
   const workletWitness = new Map<string, WorkletNamespace>();
   let witnessWarned = false;
+  let witnessClosing = false;
   const emitWorkletsWitness = async (): Promise<void> => {
     // Only write into an existing project root. A non-existent root means a
     // synthetic config (e.g. a unit test passing a placeholder path), and the
@@ -877,6 +878,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   };
   let witnessWrite = Promise.resolve();
   const writeWorkletsWitness = (): Promise<void> => {
+    if (witnessClosing) return witnessWrite;
     witnessWrite = witnessWrite.then(emitWorkletsWitness);
     return witnessWrite;
   };
@@ -892,6 +894,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   // Vite's module graph instead of Node's static ESM cache.
   let viteDevServer: ViteDevServerLike | null = null;
   let activeSources = new Set<string>();
+  let witnessRefresh = Promise.resolve();
   let refreshDevWitness: ((file?: string) => Promise<void>) | undefined;
   // Dev cache of (sourcePath, revisionHash) → compile snapshot. Every
   // snapshot holds **all** the per-revision artifacts a single createNode
@@ -953,6 +956,13 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       }
       await writeWorkletsWitness();
     },
+    async closeBundle() {
+      if (isServe) {
+        witnessClosing = true;
+        await witnessRefresh;
+      }
+      await witnessWrite;
+    },
     config(userConfig, env) {
       // Dev-only gate for the core registry / page bridge: a single statically-
       // replaced boolean — `true` in serve, `false` in build — so production
@@ -987,6 +997,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
     configResolved(config) {
       isServe = config.command === "serve";
       projectRoot = config.root;
+      witnessClosing = false;
       // Seed `.unworklet/` SYNCHRONOUSLY here so the consumer's `extends` target
       // exists before Vite/Rolldown reads the tsconfig at build start (an async
       // write loses that race — the first build would fail with "Tsconfig not
@@ -1040,10 +1051,11 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
     },
     configureServer(server) {
       viteDevServer = server as unknown as ViteDevServerLike;
-      let pending = Promise.resolve();
+      witnessRefresh = Promise.resolve();
       refreshDevWitness = (file) => {
-        pending = pending.then(async () => {
-          if (!projectRoot || !existsSync(projectRoot)) return;
+        if (witnessClosing) return witnessRefresh;
+        witnessRefresh = witnessRefresh.then(async () => {
+          if (witnessClosing || !projectRoot || !existsSync(projectRoot)) return;
           if (file) {
             for (const mod of server.moduleGraph.getModulesByFile(file) ?? []) {
               server.moduleGraph.invalidateModule(mod);
@@ -1095,7 +1107,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
           }
           await writeWorkletsWitness();
         });
-        return pending;
+        return witnessRefresh;
       };
       // DevTools panel iframe COEP (serve-only). The `@vitejs/devtools` host serves
       // the panel SPA as a static iframe at `/__unworklet/`, and its static
