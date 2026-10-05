@@ -256,7 +256,7 @@ const importFresh = async (sourcePath: string): Promise<Record<string, unknown>>
     logLevel: "silent",
     server: { middlewareMode: true, hmr: false, watch: null, ws: false },
     optimizeDeps: { noDiscovery: true },
-    ssr: { external: ["@unworklet/core", "@unworklet/lang"] },
+    ssr: { external: true },
   });
   const sourceModule = await server.ssrLoadModule(sourcePath).catch(async (err: unknown) => {
     // A cleanup failure must not replace the source diagnostic.

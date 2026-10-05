@@ -13,7 +13,7 @@ test("repeated Vite builds use current native ESM helpers across the source grap
   writeFileSync(
     runner,
     `import { strict as assert } from "node:assert";
-import { mkdir, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { build } from "vite-plus";
 import { audioOutput, compile, defineProcessor, forSample } from "@unworklet/core";
@@ -26,8 +26,14 @@ const dependency = path.join(root, "node_modules/reload-external");
 await mkdir(dependency, { recursive: true });
 await writeFile(path.join(dependency, "package.json"), JSON.stringify({ type: "module", exports: "./index.mjs" }));
 await writeFile(path.join(dependency, "index.mjs"), "export const identity = {};\\n");
+const linked = path.join(root, "linked-dependency");
+await mkdir(linked);
+await writeFile(path.join(linked, "package.json"), JSON.stringify({ type: "module", exports: "./index.mjs" }));
+await writeFile(path.join(linked, "index.mjs"), "export const identity = {};\\n");
+await symlink(linked, path.join(root, "node_modules/reload-linked"), "junction");
 globalThis.expectedFramework = defineProcessor;
 globalThis.expectedDependency = (await import("reload-external")).identity;
+globalThis.expectedLinked = (await import("reload-linked")).identity;
 const entry = path.join(app, "tone.processor.mjs");
 const helper = path.join(app, "constants.mjs");
 const outside = path.join(root, "outside.mjs");
@@ -36,9 +42,11 @@ await writeFile(helper, 'import { OFFSET } from "../outside.mjs"; export const L
 await writeFile(entry, \`import { audioOutput, defineProcessor, forSample } from "@unworklet/core";
 import { strict as assert } from "node:assert";
 import { identity } from "reload-external";
+import { identity as linkedIdentity } from "reload-linked";
 import { LEVEL } from "./constants.mjs";
 assert.equal(defineProcessor, globalThis.expectedFramework);
 assert.equal(identity, globalThis.expectedDependency);
+assert.equal(linkedIdentity, globalThis.expectedLinked);
 export const tone = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   return { process: () => forSample(i => out.ch(0).at(i).write(LEVEL)) };
@@ -67,7 +75,7 @@ async function buildWasm(plugin = unworklet()) {
       write: false,
       minify: false,
       lib: { entry: path.join(app, "main.mjs"), formats: ["es"] },
-      rollupOptions: { external: [helper, "@unworklet/core", "node:assert", "reload-external"] },
+      rollupOptions: { external: [helper, "@unworklet/core", "node:assert", "reload-external", "reload-linked"] },
     },
   });
   const outputs = (Array.isArray(result) ? result : [result]).flatMap(r => r.output);
