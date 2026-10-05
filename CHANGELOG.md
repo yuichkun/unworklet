@@ -78,6 +78,15 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 - Vite HMR refreshes the raw processor namespace along with its compiled wrapper,
   keeping parameters, migrations, and DSP revisions consistent.
 
+### Demo playback
+
+- Play and Stop gate effect output, including processors that generate audio
+  without a main input. Stopped effects stay silent through recompilation and
+  crossfades; MIDI instruments remain playable directly from their keys.
+- Cancelled playback and obsolete compile results cannot restart a stopped or
+  destroyed demo. Recompiling a playing generator into an input effect starts
+  its selected input source.
+
 ## 0.4.1 — 2026-10-04
 
 Audio snapshot comparisons honor the configured tolerance, and the demo identifies
