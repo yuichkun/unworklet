@@ -22,12 +22,22 @@ function setup(overflow = "auto", priority = "important") {
       importance = nextPriority;
     }),
   };
+  const viewport = {
+    scrollX: 24,
+    scrollY: 360,
+    scrollTo: vi.fn((options: ScrollToOptions) => {
+      viewport.scrollX = options.left!;
+      viewport.scrollY = options.top!;
+    }),
+  };
   const dialog = {
     open: true,
-    ownerDocument: { body: { style } },
+    ownerDocument: { body: { style }, defaultView: viewport },
     close: vi.fn(() => {
       dialog.open = false;
       modal = false;
+      viewport.scrollX = 0;
+      viewport.scrollY = 0;
     }),
     show: vi.fn(() => {
       dialog.open = true;
@@ -44,7 +54,15 @@ function setup(overflow = "auto", priority = "important") {
   const state = scope.run(() =>
     useExpandedEditor(ref(dialog as unknown as HTMLDialogElement), focus),
   )!;
-  return { ...state, dialog, focus, scope, overflow: () => value, priority: () => importance };
+  return {
+    ...state,
+    dialog,
+    focus,
+    scope,
+    viewport,
+    overflow: () => value,
+    priority: () => importance,
+  };
 }
 
 test("promotes the existing nonmodal dialog without an invalid open-state transition", async () => {
@@ -115,6 +133,8 @@ test("rapid toggles leave one expanded session and still restore the page's orig
   await view.restore();
   expect(view.overflow()).toBe("scroll");
   expect(view.priority()).toBe("important");
+  expect(view.viewport.scrollX).toBe(24);
+  expect(view.viewport.scrollY).toBe(360);
 });
 
 test("focus containment leaves editor-consumed and modified keys alone", async () => {
@@ -132,4 +152,28 @@ test("focus containment leaves editor-consumed and modified keys alone", async (
     view.containFocus({ ...event, preventDefault } as unknown as KeyboardEvent);
     expect(preventDefault).not.toHaveBeenCalled();
   }
+});
+
+test("restoring recovers page coordinates clamped by modal promotion after editor focus", async () => {
+  const view = setup();
+  await view.toggle();
+  expect(view.viewport.scrollY).toBe(0);
+  await view.restore();
+  expect(view.viewport.scrollTo).toHaveBeenCalledExactlyOnceWith({
+    left: 24,
+    top: 360,
+    behavior: "instant",
+  });
+  expect(view.viewport.scrollX).toBe(24);
+  expect(view.viewport.scrollY).toBe(360);
+  expect(view.viewport.scrollTo.mock.invocationCallOrder[0]).toBeGreaterThan(
+    view.focus.mock.invocationCallOrder.at(-1)!,
+  );
+});
+
+test("navigation does not restore coordinates from the previous page", async () => {
+  const view = setup();
+  await view.toggle();
+  view.scope.stop();
+  expect(view.viewport.scrollTo).not.toHaveBeenCalled();
 });

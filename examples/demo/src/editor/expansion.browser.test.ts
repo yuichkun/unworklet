@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
-import { createApp, nextTick } from "vue";
+import { createApp, h, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
 import App from "../App.vue";
@@ -66,7 +66,7 @@ async function mount() {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: "/", component: { template: "<p>Examples</p>" } },
+      { path: "/", component: { render: () => h("p", "Examples") } },
       { path: "/e/:slug", component: ExampleView, props: true },
     ],
   });
@@ -218,6 +218,7 @@ test("navigation while expanded releases modal and scroll state and remounts nor
   await expand().click();
   await router.push("/");
   await nextTick();
+  await expect.element(page.getByText("Examples", { exact: true })).toBeVisible();
   expect(document.querySelector("dialog:modal")).toBeNull();
   expect(document.body.style.overflow).not.toBe("hidden");
   expect(monaco.editor.getModels()).not.toContain(model);
@@ -244,3 +245,23 @@ test("expanded workspace contains keyboard focus at both control boundaries", as
   await userEvent.keyboard("{Tab}");
   expect(document.activeElement).toBe(first);
 });
+
+test.each(["button", "Escape"])(
+  "restoring a scrolled narrow page with %s preserves the page position",
+  async (method) => {
+    const { editor } = await mount();
+    await page.viewport(390, 500);
+    window.scrollTo({ top: 180, behavior: "instant" });
+    const before = window.scrollY;
+    expect(before).toBe(180);
+    for (let i = 0; i < 2; i++) {
+      await expand().click();
+      await expect.element(restore()).toBeVisible();
+      if (method === "button") await restore().click();
+      else await userEvent.keyboard("{Escape}");
+      await expect.element(expand()).toBeVisible();
+      await expect.poll(() => window.scrollY).toBe(before);
+      expect(editor.hasTextFocus()).toBe(true);
+    }
+  },
+);

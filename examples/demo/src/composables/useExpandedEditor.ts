@@ -9,8 +9,9 @@ export function useExpandedEditor(
   let disposed = false;
   let overflow = "";
   let priority = "";
+  let scrollPosition: { left: number; top: number } | undefined;
 
-  function restoreScroll(): void {
+  function restoreOverflow(): void {
     dialog.value!.ownerDocument.body.style.setProperty("overflow", overflow, priority);
   }
 
@@ -19,15 +20,24 @@ export function useExpandedEditor(
     expanded.value = false;
     dialog.value!.close();
     dialog.value!.show();
-    restoreScroll();
+    restoreOverflow();
     await nextTick();
-    if (!disposed) focusEditor();
+    if (!disposed && !expanded.value) {
+      focusEditor();
+      dialog.value!.ownerDocument.defaultView!.scrollTo({
+        ...scrollPosition!,
+        behavior: "instant",
+      });
+      scrollPosition = undefined;
+    }
   }
 
   async function toggle(): Promise<void> {
     if (expanded.value) return restore();
     const element = dialog.value!;
     const style = element.ownerDocument.body.style;
+    const viewport = element.ownerDocument.defaultView!;
+    scrollPosition ??= { left: viewport.scrollX, top: viewport.scrollY };
     overflow = style.getPropertyValue("overflow");
     priority = style.getPropertyPriority("overflow");
     // An open nonmodal dialog must close before entering the top layer.
@@ -36,7 +46,7 @@ export function useExpandedEditor(
     expanded.value = true;
     style.setProperty("overflow", "hidden");
     await nextTick();
-    if (!disposed) focusEditor();
+    if (!disposed && expanded.value) focusEditor();
   }
 
   function containFocus(event: KeyboardEvent): void {
@@ -75,7 +85,7 @@ export function useExpandedEditor(
   onScopeDispose(() => {
     disposed = true;
     if (expanded.value) {
-      restoreScroll();
+      restoreOverflow();
       dialog.value!.close();
       expanded.value = false;
     }
