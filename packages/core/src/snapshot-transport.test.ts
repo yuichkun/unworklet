@@ -359,3 +359,40 @@ test("restore computes `missing` against the blob's profile, not the union", asy
   expect(done["applied"]).toEqual(["a"]);
   expect(done["missing"]).toEqual([]);
 });
+
+for (const type of ["i32", "f64"] as const) {
+  test(`restore skips incompatible f32 state and buffer types targeting ${type}`, async () => {
+    const proc = defineProcessor(() => {
+      state.named("scalar")[type](7);
+      state.buffer[type]({ size: type === "i32" ? 2 : 1 }).expose({
+        name: "samples",
+        snapshot: "persistent",
+      });
+      return { process: () => {} };
+    });
+    const { wasm } = await compile(proc);
+    const self = makeMockSelf();
+    proc.worklet.initialize(self, { processorOptions: { wasm } });
+    fireToWorklet(self, {
+      kind: "restore",
+      requestId: 1,
+      slots: [
+        { name: "scalar", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
+        {
+          name: "samples",
+          kind: "buffer",
+          type: "f32",
+          data: new Uint8Array(new Float32Array([1, 2]).buffer),
+        },
+      ],
+    });
+    expect(lastOfKind(self, "restore-done")).toMatchObject({
+      applied: [],
+      skipped: ["scalar", "samples"],
+    });
+    fireToWorklet(self, { kind: "snapshot-request", requestId: 2 });
+    const slots = lastOfKind(self, "snapshot-response")!.slots as SnapshotSlot[];
+    expect(slots.find((s) => s.name === "scalar")!.data).toEqual(encodeScalar(type, 7));
+    expect(slots.find((s) => s.name === "samples")!.data).toEqual(new Uint8Array(8));
+  });
+}

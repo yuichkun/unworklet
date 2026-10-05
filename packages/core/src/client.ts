@@ -39,7 +39,7 @@ import {
 import { ringLeads, ringSlotIndex } from "./ringIndex.ts";
 import { bindSabIngress, createSabIngressWriter, type SabIngressWriter } from "./sabIngress.ts";
 import { captureOutRing, createOutRingSnapshot } from "./outRingSnapshot.ts";
-import { decodeScalar, type SnapshotSlot } from "./snapshot.ts";
+import { decodeScalar, encodeScalar, type SnapshotSlot } from "./snapshot.ts";
 import { decodeSnapshot, encodeSnapshot, inspectSnapshot, runMigrations } from "./snapshotBlob.ts";
 import type { RestoreResult } from "./types.ts";
 import {
@@ -1686,6 +1686,20 @@ export async function createNode<C>(
     rejectAllPending("the audio thread reported a failure (processorerror)");
   };
   node.addEventListener("processorerror", onProcessorErrorSettle);
+  const captureParamSettings = (): ReadonlyMap<string, number> | undefined =>
+    context.state === "suspended"
+      ? new Map(Object.entries(params).map(([name, param]) => [name, param.value]))
+      : undefined;
+  const currentSnapshotSlots = (
+    slots: SnapshotSlot[],
+    settings: ReadonlyMap<string, number> | undefined,
+  ): SnapshotSlot[] => {
+    if (settings === undefined) return slots;
+    return slots.map((slot) => {
+      const value = slot.kind === "param" ? settings.get(slot.name) : undefined;
+      return value === undefined ? slot : { ...slot, data: encodeScalar("f32", value) };
+    });
+  };
   const onSnapshotMessage = (event: MessageEvent): void => {
     const data = event.data as
       | {
@@ -1734,11 +1748,17 @@ export async function createNode<C>(
     }
     const requestId = snapshotRequestSeq++;
     const profile = options?.profile;
+    const settings = captureParamSettings();
     return new Promise<Uint8Array>((resolve, reject) => {
       pendingSnapshots.set(requestId, {
         resolve: (slots) =>
           resolve(
-            encodeSnapshot(processor.schemaHash, profile ?? null, slots, processor.id ?? null),
+            encodeSnapshot(
+              processor.schemaHash,
+              profile ?? null,
+              currentSnapshotSlots(slots, settings),
+              processor.id ?? null,
+            ),
           ),
         reject,
       });
@@ -1963,8 +1983,13 @@ export async function createNode<C>(
         return Promise.reject(new Error("unworklet: devDump() called on a disposed node"));
       }
       const requestId = snapshotRequestSeq++;
+      const settings = captureParamSettings();
       return new Promise<DevDump>((resolve, reject) => {
-        pendingDevDumps.set(requestId, { resolve, reject });
+        pendingDevDumps.set(requestId, {
+          resolve: (dump) =>
+            resolve({ ...dump, slots: currentSnapshotSlots(dump.slots, settings) }),
+          reject,
+        });
         node.port.postMessage({ kind: "dev-dump-request", requestId });
       });
     };

@@ -809,6 +809,15 @@ node.midi["in"]!.send({ type: "noteOn", channel: 3, note: 60, velocity: 100 });
 const off = node.onError((e) => errors.push(e));
 ```
 
+Snapshot and devtools parameter captures use the current `AudioParam.value` while
+its context is suspended, including before the first render. The context mode and
+suspended settings are captured when the request is issued, so a pending resume or
+suspend does not change the parameter source. Requests issued while running capture
+the last rendered parameter sample. State and buffer restores require the
+saved element type and byte length to match the destination declaration; incompatible
+slots are skipped. This also applies to offline restore. Use a migration to convert
+values when changing a slot's type.
+
 ### `inspect(blob)`
 
 Pure, non-realtime blob decode — needs no `AudioContext` or live node.

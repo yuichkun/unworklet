@@ -1239,10 +1239,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             // A corrupt / mis-migrated blob can hand a payload that does not match
             // the declared slot width. Writing it raw would overrun the slot and
             // corrupt adjacent state, so the declaration is the single authority:
-            // a size mismatch is rejected (= skipped, fail-loud), never written.
+            // a type or size mismatch is skipped, never written.
             const decl = meta.states.find((s) => s.name === slot.name);
             const expected = decl === undefined ? undefined : SNAPSHOT_ELEMENT_BYTES[decl.type];
-            if (expected === undefined || slot.data.length !== expected) {
+            if (
+              expected === undefined ||
+              slot.type !== decl!.type ||
+              slot.data.length !== expected
+            ) {
               skipped.push(slot.name);
               continue;
             }
@@ -1261,7 +1265,11 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             const decl = meta.buffers.find((b) => b.name === slot.name);
             const expected =
               decl === undefined ? undefined : decl.size * SNAPSHOT_ELEMENT_BYTES[decl.type]!;
-            if (expected === undefined || slot.data.length !== expected) {
+            if (
+              expected === undefined ||
+              slot.type !== decl!.type ||
+              slot.data.length !== expected
+            ) {
               skipped.push(slot.name);
               continue;
             }
