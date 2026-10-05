@@ -129,9 +129,20 @@ function lift(value: Operand, t: ScalarType): AstNode {
 // vec-producing node, a vec node is generated instead of taking the scalar path
 // (preventing the "type-checks but doesn't run" case). A number is broadcast to
 // all 4 lanes via splat.
-const VEC_KINDS = new Set(["vecConst", "vecSplat", "vecAdd", "vecSub", "vecMul", "vecDiv"]);
-const isF32x4Operand = (op: Operand): boolean =>
-  isWrappedNode(op) && VEC_KINDS.has(unwrapAst(op).kind);
+const VEC_KINDS = new Set([
+  "vecConst",
+  "vecSplat",
+  "vecAdd",
+  "vecSub",
+  "vecMul",
+  "vecDiv",
+  "bufferLoadVec",
+]);
+const isF32x4Operand = (op: Operand): boolean => {
+  if (!isWrappedNode(op)) return false;
+  const ast = unwrapAst(op);
+  return VEC_KINDS.has(ast.kind) || (ast.kind === "tempRef" && ast.type === "f32x4");
+};
 const liftVec = (op: Operand): AstNode =>
   isWrappedNode(op)
     ? unwrapAst(op)

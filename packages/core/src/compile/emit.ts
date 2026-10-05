@@ -224,9 +224,11 @@ function stateInitSegments(
   return segments;
 }
 
-/** Map a scalar type to its binaryen value type (`bool` is held as i32). */
-function binaryenTypeOf(type: ScalarType, binaryen: BinaryenAPI): number {
+/** Map a value type to its binaryen type (`bool` is held as i32). */
+function binaryenTypeOf(type: ScalarType | "f32x4", binaryen: BinaryenAPI): number {
   switch (type) {
+    case "f32x4":
+      return binaryen.v128;
     case "f32":
       return binaryen.f32;
     case "f64":
@@ -247,7 +249,7 @@ function binaryenTypeOf(type: ScalarType, binaryen: BinaryenAPI): number {
  * the statement-bearing kinds is exhaustive.
  */
 function collectTempLocals(graph: CapturedGraph, binaryen: BinaryenAPI): number[] {
-  const byId = new Map<number, ScalarType>();
+  const byId = new Map<number, ScalarType | "f32x4">();
   const walk = (stmts: readonly AstNode[]): void => {
     for (const s of stmts) {
       if (s.kind === "tempAssign") {
@@ -1091,6 +1093,11 @@ function emitVec(
   const scalar = (n: AstNode): number => emitExpression(n, layout, mod, binaryen);
   const vec = (n: AstNode): number => emitVec(n, layout, mod, binaryen);
   switch (node.kind) {
+    case "tempRef":
+      if (node.type !== "f32x4") {
+        throw new Error(`unworklet: expected f32x4 node in vec position, got '${node.kind}'`);
+      }
+      return mod.local.get(node.tempId, binaryen.v128);
     case "vecSplat":
       return mod.f32x4.splat(scalar(node.value));
     case "vecConst": {
@@ -1613,6 +1620,9 @@ function emitExpressionInScope(
     case "tempRef":
       // Read the per-read temp local (= issue #8). The matching `tempAssign`
       // ran earlier in statement order, so the local is already set.
+      if (node.type === "f32x4") {
+        throw new Error(`f32x4 node '${node.kind}' cannot appear in scalar position`);
+      }
       return mod.local.get(node.tempId, binaryenTypeOf(node.type, binaryen));
     case "midiFieldRead":
       return emitMidiFieldRead(node, mod, binaryen);
@@ -1876,7 +1886,12 @@ function emitStatementInScope(
       return emitMessageOnReceive(node, layout, mod, binaryen);
     case "tempAssign":
       // Evaluate a mutable read once into its per-read local (= issue #8).
-      return mod.local.set(node.tempId, emitExpression(node.value, layout, mod, binaryen));
+      return mod.local.set(
+        node.tempId,
+        node.valueType === "f32x4"
+          ? emitVec(node.value, layout, mod, binaryen)
+          : emitExpression(node.value, layout, mod, binaryen),
+      );
     case "midiEmitIf":
       return emitMidiEmitIf(node, layout, mod, binaryen);
     case "midiSysexCopy":

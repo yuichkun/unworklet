@@ -248,3 +248,31 @@ test.each([
   });
   await expect(compile(processor)).rejects.toThrow(/f32x4 node.*cannot appear in scalar position/);
 });
+
+test("a loaded vector cannot be converted to a scalar without reducing its lanes", () => {
+  expect(() =>
+    defineProcessor(() => {
+      const buf = state.buffer.f32({ size: 4 });
+      return {
+        process: () => {
+          // @ts-expect-error JavaScript callers must also reduce a vector explicitly.
+          f32(buf.loadVec(0));
+        },
+      };
+    }),
+  ).toThrow(/f32x4 node.*cannot appear in scalar position/);
+});
+
+test("a captured scalar read cannot be used as a vector", async () => {
+  const processor = defineProcessor(() => {
+    const value = state.f32(1);
+    const out = audioOutput({ channels: 1, name: "main" });
+    return {
+      process: () => {
+        // @ts-expect-error JavaScript callers must splat a scalar before vector reduction.
+        out.ch(0).at(0).write(sumLanes(value.read()));
+      },
+    };
+  });
+  await expect(compile(processor)).rejects.toThrow(/expected f32x4 node in vec position/);
+});

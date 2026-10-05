@@ -76,6 +76,9 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 - Vite HMR refreshes the raw processor namespace along with its compiled wrapper,
   keeping parameters, migrations, and DSP revisions consistent.
 
+- SIMD buffer loads preserve their read-time lanes across later writes and support
+  method-form vector arithmetic with numbers or other loaded vectors (#73, #74).
+
 ## 0.4.1 — 2026-10-04
 
 Audio snapshot comparisons honor the configured tolerance, and the demo identifies

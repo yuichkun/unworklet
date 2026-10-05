@@ -84,7 +84,7 @@ export function newCaptureContext(): CaptureContext {
 
 /**
  * Capture a mutable memory read (`stateLoad` / `bufferRead` /
- * `bufferReadInterpolated`) into a temp WASM local at its lexical point and
+ * `bufferReadInterpolated` / `bufferLoadVec`) into a temp WASM local at its lexical point and
  * return a `tempRef` `Node<T>` that reads it (= `03-compiler.md` §2.7, issue
  * #8). The `tempAssign` statement is recorded at the current statement position
  * (= before any enclosing statement, since the read is evaluated inner-to-outer
@@ -92,7 +92,10 @@ export function newCaptureContext(): CaptureContext {
  * the returned `Node` evaluates to. Pure arithmetic over the returned `tempRef`
  * stays referentially transparent under emit's lazy re-walk.
  */
-export function captureTemp<T extends ScalarType>(read: AstNode, type: ScalarType): Node<T> {
+export function captureTemp<T extends ScalarType | "f32x4">(
+  read: AstNode,
+  type: ScalarType | "f32x4",
+): Node<T> {
   const ctx = getCurrentCapture();
   const tempId = ctx.tempCount++;
   addStatement({ kind: "tempAssign", tempId, valueType: type, value: read });

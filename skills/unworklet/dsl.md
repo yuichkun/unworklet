@@ -323,6 +323,11 @@ state.buffer.f32({ size: number }): Buffer<"f32">
   so a smaller buffer has no in-bounds offset to saturate to — the declaration
   rejects the call at capture (`simd-buffer-too-small`) rather than emit a
   16-byte access that crosses into the next region.
+- `.loadVec(offset)` captures all four lanes at the read's lexical point. Later
+  scalar or vector writes cannot change that value. The returned `Node<"f32x4">`
+  supports `.add`, `.sub`, `.mul`, and `.div` with another vector or a number
+  broadcast to every lane. Use `.lane(0)` … `.lane(3)` or `sumLanes(value)` from
+  `@unworklet/core/simd` to reduce it to a scalar.
 - Float buffer stores flush subnormals to `0` (|v| < 1e-30), the same policy as
   scalar state stores — a decaying feedback tail (delay line / comb / reverb)
   cannot park in the denormal range and spike the audio-thread CPU. Applies to
