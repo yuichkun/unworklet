@@ -21,6 +21,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@vitejs/plugin-vue": "^6.0.0",
+    "happy-dom": "catalog:",
     "typescript": "catalog:",
     "vite-plus": "catalog:",
     "vue-tsc": "^2.1.0"

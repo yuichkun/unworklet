@@ -341,3 +341,25 @@ test("toLoggableMidiEvent: does not invent bytes for an absent or opaque sysex p
   expect(toLoggableMidiEvent(absent)).toBe(absent);
   expect(toLoggableMidiEvent(opaque)).toBe(opaque);
 });
+
+test.each([512, 2])(
+  "splitSlots: i64 buffers retain exact decimal values through JSON (limit %i)",
+  (limit) => {
+    const values = [
+      9007199254740993n,
+      -9223372036854775808n,
+      9223372036854775807n,
+      -9007199254740993n,
+    ];
+    const bytes = new Uint8Array(values.length * 8);
+    const view = new DataView(bytes.buffer);
+    values.forEach((value, i) => view.setBigInt64(i * 8, value, true));
+    const result = splitSlots([{ name: "ticks", kind: "buffer", type: "i64", data: bytes }], limit);
+    const buffer = JSON.parse(JSON.stringify(result)).buffers[0];
+    const sampled = limit === 2 ? [values[0]!, values[2]!] : values;
+    expect(buffer.exactData).toEqual(sampled.map(String));
+    expect(buffer.data).toEqual(sampled.map(Number));
+    expect(buffer.length).toBe(4);
+    expect(buffer.downsampled).toBe(limit === 2);
+  },
+);

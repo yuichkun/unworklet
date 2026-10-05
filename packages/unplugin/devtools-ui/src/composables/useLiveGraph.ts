@@ -9,7 +9,7 @@
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
 import { getPanelRpc } from "../lib/rpc";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 export type LiveGraphNode = {
   id: string;
@@ -73,14 +73,23 @@ export function useLiveGraph() {
     }
   };
 
+  let active = true;
+  let unsubscribe: (() => void) | undefined;
+  onBeforeUnmount(() => {
+    active = false;
+    unsubscribe?.();
+  });
+
   onMounted(() => {
     // Token-trusted devtools connection shared across views (see `getPanelRpc`).
     const connect = async (): Promise<void> => {
       const rpc = await getPanelRpc();
+      if (!active) return;
       const shared = await rpc.sharedState.get("unworklet:graph");
+      if (!active) return;
       // sharedState hands back a deep-readonly view; we only read it, so widen.
       apply(shared.value() as LiveGraph | undefined);
-      shared.on("updated", (g) => apply(g as LiveGraph));
+      unsubscribe = shared.on("updated", (g) => apply(g as LiveGraph));
     };
     void connect().catch(() => {
       // Dev-only panel; if the backend is unreachable there is nothing to show.

@@ -67,7 +67,7 @@ const pitchBend = ref(0); // -8192 .. +8191; bend wheel springs back to 0 on rel
 const program = ref(0);
 const pressure = ref(0);
 
-const pressedKeys = ref<Set<number>>(new Set());
+const pressedKeys = ref(new Map<number, { port: string; channel: number }>());
 
 const sendEvent = (event: MidiEventInput): void => {
   if (!targetPortKey.value) return;
@@ -79,15 +79,21 @@ const sendEvent = (event: MidiEventInput): void => {
 // ──────────────────────────────────────────────────────────────────
 
 const triggerNoteOn = (midiNote: number, vel: number): void => {
-  if (pressedKeys.value.has(midiNote)) return;
-  pressedKeys.value.add(midiNote);
+  if (!targetPortKey.value || pressedKeys.value.has(midiNote)) return;
+  pressedKeys.value.set(midiNote, { port: targetPortKey.value, channel: channel.value });
   sendEvent({ type: "noteOn", channel: channel.value, note: midiNote, velocity: vel });
 };
 
 const triggerNoteOff = (midiNote: number): void => {
-  if (!pressedKeys.value.has(midiNote)) return;
+  const origin = pressedKeys.value.get(midiNote);
+  if (!origin) return;
   pressedKeys.value.delete(midiNote);
-  sendEvent({ type: "noteOff", channel: channel.value, note: midiNote, velocity: 0 });
+  injectMidi(origin.port, {
+    type: "noteOff",
+    channel: origin.channel,
+    note: midiNote,
+    velocity: 0,
+  });
 };
 
 const onKeyDown = (midiNote: number): void => triggerNoteOn(midiNote, velocity.value);
@@ -142,15 +148,15 @@ const sendProgramChange = (): void => {
 // noteOff because of overflow, or a PC key released while window unfocused).
 // ──────────────────────────────────────────────────────────────────
 
-const panic = (): void => {
-  if (!targetPortKey.value) return;
-  // Snapshot the notes before sending — the loop body doesn't mutate the set
-  // (the clear happens after), so iterating it directly is safe.
-  for (const note of pressedKeys.value) {
-    sendEvent({ type: "noteOff", channel: channel.value, note, velocity: 0 });
-  }
-  pressedKeys.value.clear();
+const releaseNotes = (): void => {
+  for (const note of pressedKeys.value.keys()) triggerNoteOff(note);
   physicalKeyToMidi.clear();
+};
+
+watch([targetPortKey, channel], releaseNotes, { flush: "sync" });
+
+const panic = (): void => {
+  releaseNotes();
   for (let ch = 0; ch < 16; ch++) {
     sendEvent({ type: "cc", channel: ch, controller: 123, value: 0 });
   }
@@ -249,6 +255,7 @@ onMounted(() => {
   window.addEventListener("keyup", onWindowKeyUp);
 });
 onBeforeUnmount(() => {
+  releaseNotes();
   window.removeEventListener("keydown", onWindowKeyDown);
   window.removeEventListener("keyup", onWindowKeyUp);
 });

@@ -10,7 +10,7 @@
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
 import { getPanelRpc } from "../lib/rpc";
-import { computed, onMounted, shallowRef } from "vue";
+import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
 
 export type LiveSlotType = "f32" | "f64" | "i32" | "i64" | "bool" | "u8";
 export type LiveScalar = {
@@ -24,6 +24,7 @@ export type LiveBuffer = {
   type: LiveSlotType;
   length: number;
   data: number[];
+  exactData?: string[];
   downsampled: boolean;
 };
 export type LiveNodeState = {
@@ -100,13 +101,22 @@ export function useLiveState() {
     for (const key of histories.keys()) if (!present.has(key)) histories.delete(key);
   };
 
+  let active = true;
+  let unsubscribe: (() => void) | undefined;
+  onBeforeUnmount(() => {
+    active = false;
+    unsubscribe?.();
+  });
+
   onMounted(() => {
     // Token-trusted devtools connection shared across views (see `getPanelRpc`).
     const connect = async (): Promise<void> => {
       const rpc = await getPanelRpc();
+      if (!active) return;
       const shared = await rpc.sharedState.get("unworklet:state");
+      if (!active) return;
       apply(shared.value() as LiveState | undefined);
-      shared.on("updated", (s) => apply(s as LiveState));
+      unsubscribe = shared.on("updated", (s) => apply(s as LiveState));
     };
     void connect().catch(() => {
       // Dev-only panel; nothing to show if the backend is unreachable.

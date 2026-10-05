@@ -76,6 +76,15 @@ Run the dev server → open the Vite DevTools overlay → pick the **unworklet**
 `/` redirects to `/audio-graph`. (`README.md` L271-274;
 `packages/unplugin/devtools-ui/src/router.ts`)
 
+Live state renders signed buffers around a zero baseline. For `i64` buffers,
+List preserves exact decimal integers; Bar chart and Waveform are labeled
+approximate because their numeric projections can round values beyond 2^53.
+Large buffers remain stride-downsampled, including their exact List elements.
+
+MIDI keys are released on their original target port and channel when routing
+changes or the MIDI view closes. Panic releases held keys and sends All Notes
+Off on every channel of the selected input.
+
 ## The 0.4 pin
 
 `@unworklet/unplugin` declares only `@vitejs/devtools-kit` as a peer — pinned
