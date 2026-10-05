@@ -46,6 +46,9 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Fixed
 
+- Vite configuration waits for initial worklet type generation while keeping
+  generated configuration files available synchronously.
+
 - Processors without declared audio ports can be created for MIDI and control
   processing. Their native node has one silent output; public port maps stay empty.
 - Disposing a node stops its DSP after the queued shutdown reaches the worklet,

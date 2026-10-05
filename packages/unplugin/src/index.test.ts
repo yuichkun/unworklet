@@ -83,7 +83,7 @@ const callLoadWithMockContext = async (
 type ConfigResolvedFn = (
   this: unknown,
   config: { command: string; root: string; base: string },
-) => void;
+) => Promise<void>;
 
 const callLoadInServeMode = async (
   id: string,
@@ -94,7 +94,7 @@ const callLoadInServeMode = async (
   if (typeof configHook !== "function") {
     throw new Error("configResolved hook is not a function");
   }
-  (configHook as unknown as ConfigResolvedFn).call(null, {
+  await (configHook as unknown as ConfigResolvedFn).call(null, {
     command: "serve",
     root: serveConfig.root,
     base: serveConfig.base ?? "/",
@@ -657,7 +657,7 @@ test("dev mode: emits no rolldown chunk / asset (= no emitFile calls)", async ()
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/abs", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/abs", base: "/" });
   const loadHook = plugin.load as unknown as LoadFn | undefined;
   if (!loadHook) throw new Error("load missing");
   const ctx = makeMockEmitContext();
@@ -767,13 +767,13 @@ const makeResponseStub = (): ResponseStub => {
   };
 };
 
-const setupServeMiddleware = (
+const setupServeMiddleware = async (
   serveConfig: { root: string; base?: string } = { root: "/" },
-): { plugin: ReturnType<typeof unworklet>; middleware: MiddlewareFn } => {
+): Promise<{ plugin: ReturnType<typeof unworklet>; middleware: MiddlewareFn }> => {
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, {
+  await configHook.call(null, {
     command: "serve",
     root: serveConfig.root,
     base: serveConfig.base ?? "/",
@@ -796,7 +796,7 @@ const primeAllowlist = async (
 };
 
 test("dev middleware passes to next() for any path that did NOT come through resolveId", async () => {
-  const { middleware } = setupServeMiddleware();
+  const { middleware } = await setupServeMiddleware();
   // Encode an arbitrary local path the plugin has never seen via resolveId.
   const evilEncoded = Buffer.from("/etc/passwd", "utf8").toString("base64url");
   let nextCalled = 0;
@@ -811,7 +811,7 @@ test("dev middleware passes to next() for any path that did NOT come through res
 });
 
 test("dev middleware passes to next() when the URL part is neither 'wasm' nor 'worklet.js'", async () => {
-  const { plugin, middleware } = setupServeMiddleware();
+  const { plugin, middleware } = await setupServeMiddleware();
   // Even with an allowlisted path, a bogus part must not be served.
   await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
   const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
@@ -826,7 +826,7 @@ test("dev middleware passes to next() when the URL part is neither 'wasm' nor 'w
 });
 
 test("dev middleware serves WASM bytes for an allowlisted source at the hash-pinned URL", async () => {
-  const { plugin, middleware } = setupServeMiddleware({
+  const { plugin, middleware } = await setupServeMiddleware({
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
   });
   await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
@@ -876,7 +876,7 @@ const callLoadInServeModeWithMockGraph = async (
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn | undefined;
   if (!configureServerHook) throw new Error("configureServer missing");
   // Tiny module-graph stub: the root processor imports each transitive dep
@@ -933,7 +933,7 @@ test("dev HMR: editing a subgraph .uwk.ts invalidates the processors that import
   const proc = "/abs/project/src/synth.uwk.ts";
   const subgraph = "/abs/project/src/onepole.uwk.ts";
   const plugin = unworklet();
-  (plugin.configResolved as unknown as ConfigResolvedFn).call(null, {
+  await (plugin.configResolved as unknown as ConfigResolvedFn).call(null, {
     command: "serve",
     root: "/abs/project",
     base: "/",
@@ -983,7 +983,7 @@ test("dev mode WORKLET_ENTRY load rejects sourcePaths the plugin never accepted 
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/abs", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/abs", base: "/" });
   const loadHook = plugin.load as unknown as LoadFn | undefined;
   if (!loadHook) throw new Error("load missing");
   // Skip `?worklet` resolveId — the path is NOT allowlisted.
@@ -1000,7 +1000,7 @@ test("dev mode WORKLET_ENTRY load returns null for an allowlisted sourcePath wit
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
   if (!resolveHook) throw new Error("resolveId missing");
   // Allowlist the fixture path through resolveId.
@@ -1020,7 +1020,7 @@ test("dev mode WORKLET_ENTRY load with a fresh snapshot emits the matching templ
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
   if (!resolveHook) throw new Error("resolveId missing");
   resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
@@ -1070,7 +1070,7 @@ test("dev mode transitive watch keys off `getModulesByFile`, not `getModuleById`
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn | undefined;
   if (!configureServerHook) throw new Error("configureServer missing");
   const server = {
@@ -1122,7 +1122,7 @@ const callLoadInServeModeWithCustomGraph = async (
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn | undefined;
   if (!configureServerHook) throw new Error("configureServer missing");
   const { rootNode } = build(FIXTURE_GAIN_PATH);
@@ -1270,7 +1270,7 @@ test("configResolved appends `/` when `base` is an absolute path without trailin
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/sub" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/sub" });
   const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
   if (!resolveHook) throw new Error("resolveId missing");
   resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
@@ -1290,7 +1290,7 @@ test("configResolved appends `/` when `base` is an absolute path without trailin
 test("dev middleware passes to next() when `req.url` is undefined", async () => {
   // L526: an upstream connect handler can leave req.url unset (= raw
   // socket handshake) — the middleware must defer rather than crash.
-  const { middleware } = setupServeMiddleware();
+  const { middleware } = await setupServeMiddleware();
   let nextCalled = 0;
   const res = makeResponseStub();
   middleware({ url: undefined }, res, () => {
@@ -1307,7 +1307,7 @@ test("dev middleware ignores the query string when matching against the dev URL 
   // query before the `startsWith(devUrlBase)` check so a query-suffixed
   // path under a non-`__unworklet` route correctly falls through to
   // next() rather than spuriously matching.
-  const { middleware } = setupServeMiddleware();
+  const { middleware } = await setupServeMiddleware();
   let nextCalled = 0;
   const res = makeResponseStub();
   middleware({ url: "/some-other-route?t=123" }, res, () => {
@@ -1321,7 +1321,7 @@ test("dev middleware ignores the query string when matching against the dev URL 
 test("dev middleware passes to next() for a URL that does not start with the dev prefix", async () => {
   // L529: any request outside the `/__unworklet/` namespace must be left
   // alone (= other vite plugins / app routes handle it).
-  const { middleware } = setupServeMiddleware();
+  const { middleware } = await setupServeMiddleware();
   let nextCalled = 0;
   const res = makeResponseStub();
   middleware({ url: "/totally/unrelated.js" }, res, () => {
@@ -1336,7 +1336,7 @@ test("dev middleware passes to next() when the URL has the wrong number of segme
   // L533 (segments.length !== 3): existing test exercises the
   // `<encoded>/<part>` two-segment form via `secret-config`. Add a
   // single-segment form to cover the lower bound just as defensively.
-  const { middleware } = setupServeMiddleware();
+  const { middleware } = await setupServeMiddleware();
   let nextCalled = 0;
   const res = makeResponseStub();
   middleware({ url: "/__unworklet/onlyonesegment" }, res, () => {
@@ -1351,7 +1351,7 @@ test("dev middleware passes to next() when the final segment is not `wasm`", asy
   // L535: `<encoded>/<hash>/<not-wasm>` shape — even with a valid hash
   // and an allowlisted source, anything but `wasm` is not this
   // middleware's concern (= future asset kinds may share the prefix).
-  const { plugin, middleware } = setupServeMiddleware();
+  const { plugin, middleware } = await setupServeMiddleware();
   await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
   const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
   let nextCalled = 0;
@@ -1368,7 +1368,7 @@ test("dev middleware passes to next() when the hash segment is not 8 hex chars",
   // L536: a stale URL pointing at a non-hex hash (= e.g. truncated
   // copy-paste) must defer rather than serve `404`-equivalent middleware
   // body, so other middlewares get a chance.
-  const { plugin, middleware } = setupServeMiddleware();
+  const { plugin, middleware } = await setupServeMiddleware();
   await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
   const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
   let nextCalled = 0;
@@ -1386,7 +1386,7 @@ test("dev middleware passes to next() when the encoded sourcePath decodes to an 
   // segment (= `Buffer.from("", "base64url").toString("utf8") === ""`)
   // and `!""` is truthy, so the middleware must defer rather than
   // accidentally evaluate the empty string as a source path.
-  const { middleware } = setupServeMiddleware();
+  const { middleware } = await setupServeMiddleware();
   let nextCalled = 0;
   const res = makeResponseStub();
   // Empty encoded segment + valid 8-hex hash + `wasm` part = 3 segments
@@ -1405,7 +1405,7 @@ test("dev middleware passes to next() when the URL shape is valid but the source
   // through (= the security gate). Unlike the existing `evilEncoded`
   // case (which exits earlier on segment count), this URL passes every
   // shape check up to the allowlist test.
-  const { middleware } = setupServeMiddleware();
+  const { middleware } = await setupServeMiddleware();
   // `/etc/passwd` base64url-encoded — the plugin has not seen it via
   // resolveId, so `allowedSources.has(...)` returns false.
   const evilEncoded = Buffer.from("/etc/passwd", "utf8").toString("base64url");
@@ -1425,7 +1425,7 @@ test("dev middleware fresh-compiles on snapshot miss and replies 410 when the re
   // middleware recompiles from current disk content, but rather than
   // silently serving the new bytes (= would skew with the still-stale
   // moduleUrl meta on the client), it emits a 410 Gone.
-  const { plugin, middleware } = setupServeMiddleware({
+  const { plugin, middleware } = await setupServeMiddleware({
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
   });
   await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
@@ -1451,7 +1451,7 @@ test("dev middleware fresh-compiles on snapshot miss and serves the bytes when t
   // ring was cleared (= reproduced here by skipping the `?worklet`
   // load path so no snapshot is recorded up front). The middleware
   // must recompile, record the fresh snapshot, and serve the bytes.
-  const { plugin, middleware } = setupServeMiddleware({
+  const { plugin, middleware } = await setupServeMiddleware({
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
   });
   await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
@@ -1482,7 +1482,7 @@ test("dev middleware responds 500 when the source module fails to evaluate", asy
   // it must surface a 500 instead of silently leaking the rejection.
   // Trigger via a fixture that has no defineProcessor exports —
   // pickCompiledProcessor throws synchronously inside the async IIFE.
-  const { plugin, middleware } = setupServeMiddleware({
+  const { plugin, middleware } = await setupServeMiddleware({
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
   });
   await primeAllowlist(plugin, FIXTURE_NO_PROCESSOR_PATH);
@@ -1516,7 +1516,7 @@ test("dev mode WORKLET_ENTRY load returns null when the `?v=` query is missing e
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
   if (!resolveHook) throw new Error("resolveId missing");
   // Allowlist the fixture so the security gate does NOT short-circuit.
@@ -1536,7 +1536,7 @@ test("dev mode WORKLET_ENTRY load returns null when the `?v=` value is malformed
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
   if (!resolveHook) throw new Error("resolveId missing");
   resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
@@ -1562,7 +1562,7 @@ test("dev mode reuses the same snapshot ring across two loads of the same source
   const plugin = unworklet();
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn | undefined;
   if (!configHook) throw new Error("configResolved missing");
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const resolveHook = plugin.resolveId as unknown as ResolveIdFn | undefined;
   if (!resolveHook) throw new Error("resolveId missing");
   resolveHook.call(null, `${FIXTURE_GAIN_PATH}?worklet`, undefined, { isEntry: false });
@@ -1793,7 +1793,7 @@ test("devtools.setup registers a single dock entry at the `/__unworklet/` static
   expect(ctx.views.__hostStaticCalls[0]!.urlBase).toBe("/__unworklet/");
 });
 
-test("the panel iframe is served the page's COEP so a cross-origin-isolated app can embed it", () => {
+test("the panel iframe is served the page's COEP so a cross-origin-isolated app can embed it", async () => {
   // The `@vitejs/devtools` host serves the panel SPA as a static iframe at
   // `/__unworklet/` and sets only content headers — never COEP. When cross-origin
   // isolation is on (the default, so `SharedArrayBuffer` works), the app page
@@ -1809,8 +1809,8 @@ test("the panel iframe is served the page's COEP so a cross-origin-isolated app 
       base: string;
       server?: { headers?: Record<string, string> };
     },
-  ) => void;
-  configHook.call(null, {
+  ) => Promise<void>;
+  await configHook.call(null, {
     command: "serve",
     root: "/",
     base: "/",
@@ -1854,13 +1854,13 @@ test("the panel iframe is served the page's COEP so a cross-origin-isolated app 
   expect(appCoep).toHaveLength(0);
 });
 
-test("no panel-COEP middleware is registered when the page has no COEP", () => {
+test("no panel-COEP middleware is registered when the page has no COEP", async () => {
   // With isolation disabled and no app COEP, the page is not cross-origin
   // isolated, so the panel iframe embeds without a COEP header — the plugin must
   // not register the mirroring middleware (only the WASM serve one remains).
   const plugin = unworklet({ crossOriginIsolation: false });
   const configHook = plugin.configResolved as unknown as ConfigResolvedFn;
-  configHook.call(null, { command: "serve", root: "/", base: "/" });
+  await configHook.call(null, { command: "serve", root: "/", base: "/" });
   const configureServerHook = plugin.configureServer as unknown as ConfigureServerFn;
   const server = makeServerStub();
   configureServerHook.call(null, server);
