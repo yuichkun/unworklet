@@ -38,14 +38,18 @@ export function useUnworkletDemo() {
   let ctx: AudioContext | null = null;
   let node: UnworkletNode<unknown> | null = null;
   let master: GainNode | null = null;
+  let output: GainNode | null = null;
   let source: AudioBufferSourceNode | OscillatorNode | null = null;
   let fileBuffer: AudioBuffer | null = null;
   let current: Example | null = null;
+  let generation = 0;
+  let playRequest = 0;
+  const retiring = new Set<() => void>();
 
   const ensureCtx = async (): Promise<AudioContext> => {
-    ctx ??= new AudioContext({ sampleRate: 48000 });
-    if (ctx.state === "suspended") await ctx.resume();
-    return ctx;
+    const c = (ctx ??= new AudioContext({ sampleRate: 48000 }));
+    if (c.state === "suspended") await c.resume();
+    return c;
   };
 
   const makeNoise = (c: AudioContext): AudioBufferSourceNode => {
@@ -90,32 +94,44 @@ export function useUnworkletDemo() {
     });
   };
 
-  // Compile + instantiate the example and wire it to the speakers, WITHOUT
-  // starting any input source — silent until the user plays. Populates the param
-  // sliders so the controls are live before the first note.
+  // Effects remain muted until Play, including processors that generate sound
+  // without an input. Instruments use their own MIDI note gates.
   async function prepare(ex: Example): Promise<void> {
-    const c = await ensureCtx();
-    await teardown();
+    const revision = ++generation;
+    teardown();
     current = ex;
     busy.value = true;
     ready.value = false;
     error.value = null;
     status.value = "compiling…";
     try {
-      node = await createNode(c, await compileSource(ex.source));
+      const c = await ensureCtx();
+      if (revision !== generation) return;
+      const compiled = await compileSource(ex.source);
+      if (revision !== generation) return;
+      const prepared = await createNode(c, compiled);
+      if (revision !== generation) {
+        prepared.dispose();
+        return;
+      }
+      node = prepared;
+      output = c.createGain();
+      output.gain.value = ex.kind === "instrument" ? 1 : 0;
+      output.connect(c.destination);
       master = c.createGain();
       master.gain.value = MASTER;
       node.outputs["main"]!.connect(master);
-      master.connect(c.destination);
+      master.connect(output);
       watchErrors(node);
       syncParams(node, false);
       ready.value = true;
       status.value = "ready";
     } catch (e) {
+      if (revision !== generation) return;
       error.value = String(e);
       status.value = "compile failed";
     } finally {
-      busy.value = false;
+      if (revision === generation) busy.value = false;
     }
   }
 
@@ -135,8 +151,17 @@ export function useUnworkletDemo() {
   // A "generator" effect (no `audioInput` named "main") skips the source — the
   // processor synthesises its own signal (e.g. noise, oscillator) into the output.
   async function play(): Promise<void> {
-    if (!node) return;
-    const c = await ensureCtx();
+    if (!node || !output) return;
+    const request = ++playRequest;
+    const revision = generation;
+    let c: AudioContext;
+    try {
+      c = await ensureCtx();
+    } catch (e) {
+      if (request !== playRequest || revision !== generation) return;
+      throw e;
+    }
+    if (request !== playRequest || revision !== generation || !node || !output) return;
     if (current?.kind === "effect") {
       stopSource();
       const mainIn = node.inputs["main"];
@@ -146,10 +171,13 @@ export function useUnworkletDemo() {
         source.start();
       }
     }
+    output.gain.value = 1;
     playing.value = true;
   }
 
   function stop(): void {
+    playRequest++;
+    if (output) output.gain.value = 0;
     stopSource();
     playing.value = false;
   }
@@ -182,22 +210,40 @@ export function useUnworkletDemo() {
   }
 
   async function recompile(newSource: string): Promise<void> {
-    if (!ctx || !node || !master || busy.value) return;
+    if (!ctx || !node || !master || !output || busy.value) return;
+    const revision = generation;
+    const c = ctx;
+    const previous = node;
     busy.value = true;
     status.value = "recompiling…";
     error.value = null;
     try {
-      const r = await replaceProcessor(node, await compileSource(newSource));
-      const newMaster = ctx.createGain();
-      r.node.outputs["main"]!.connect(newMaster);
-      newMaster.connect(ctx.destination);
-      if (current?.kind === "effect" && source) {
-        source.disconnect();
-        const nextInput = r.node.inputs["main"];
-        if (nextInput) source.connect(nextInput);
-        else stopSource(); // new processor is a generator (no main input); kill the source
+      const compiled = await compileSource(newSource);
+      if (revision !== generation) return;
+      const r = await replaceProcessor(previous, compiled);
+      if (revision !== generation) {
+        r.node.dispose();
+        return;
       }
-      const t = ctx.currentTime;
+      const newMaster = c.createGain();
+      newMaster.gain.value = 0;
+      r.node.outputs["main"]!.connect(newMaster);
+      // Both sides of the crossfade share the transport gate, so Stop also
+      // silences a retiring generator while its fade-out is still scheduled.
+      newMaster.connect(output);
+      if (current?.kind === "effect") {
+        const nextInput = r.node.inputs["main"];
+        if (source) {
+          source.disconnect();
+          if (nextInput) source.connect(nextInput);
+          else stopSource();
+        } else if (playing.value && nextInput) {
+          source = makeSource(c);
+          source.connect(nextInput);
+          source.start();
+        }
+      }
+      const t = c.currentTime;
       master.gain.setValueAtTime(master.gain.value, t);
       master.gain.linearRampToValueAtTime(0, t + FADE);
       newMaster.gain.setValueAtTime(0, t);
@@ -208,19 +254,21 @@ export function useUnworkletDemo() {
       master = newMaster;
       watchErrors(node);
       syncParams(node, true);
-      window.setTimeout(
-        () => {
-          oldMaster.disconnect();
-          oldNode.dispose();
-        },
-        FADE * 1000 + 80,
-      );
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        oldMaster.disconnect();
+        oldNode.dispose();
+        retiring.delete(cleanup);
+      };
+      const timer = window.setTimeout(cleanup, FADE * 1000 + 80);
+      retiring.add(cleanup);
       status.value = `recompiled${r.applied.length ? ` (carried ${r.applied.join(", ")})` : ""}`;
     } catch (e) {
+      if (revision !== generation) return;
       error.value = String(e);
       status.value = "recompile failed";
     } finally {
-      busy.value = false;
+      if (revision === generation) busy.value = false;
     }
   }
 
@@ -230,18 +278,25 @@ export function useUnworkletDemo() {
     if (playing.value && current?.kind === "effect") void play();
   }
 
-  async function teardown(): Promise<void> {
+  function teardown(): void {
     stop();
+    ready.value = false;
+    for (const cleanup of retiring) cleanup();
     node?.dispose();
     node = null;
     master?.disconnect();
     master = null;
+    output?.disconnect();
+    output = null;
   }
 
   async function destroy(): Promise<void> {
-    await teardown();
-    await ctx?.close();
+    generation++;
+    teardown();
+    busy.value = false;
+    const c = ctx;
     ctx = null;
+    await c?.close();
   }
 
   return {
