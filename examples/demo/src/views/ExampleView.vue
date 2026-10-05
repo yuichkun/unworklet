@@ -4,6 +4,7 @@ import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue"
 import MonacoEditor from "../components/MonacoEditor.vue";
 import PlaygroundHelp from "../components/PlaygroundHelp.vue";
 import type { EditorDiagnostic } from "../editor/protocol.ts";
+import { useExpandedEditor } from "../composables/useExpandedEditor.ts";
 import { useUnworkletDemo } from "../composables/useUnworkletDemo.ts";
 import type { SourceType } from "../composables/useUnworkletDemo.ts";
 import { exampleBySlug } from "../examples.ts";
@@ -16,6 +17,13 @@ const editor = ref<{
   reveal(diagnostic: EditorDiagnostic): void;
   document(): { uri: string; version: number; source: string } | undefined;
 }>();
+const workbench = ref<HTMLDialogElement>();
+const {
+  expanded,
+  toggle: toggleExpanded,
+  restore: restoreEditor,
+  containFocus,
+} = useExpandedEditor(workbench, () => editor.value?.focus());
 const help = ref<"api" | "sugar" | null>(null);
 const liveDiagnostics = ref<EditorDiagnostic[]>([]);
 const assistanceStatus = ref("Loading editor assistance…");
@@ -120,7 +128,7 @@ function fmtVal(v: number): string {
 function onGlobalKey(e: KeyboardEvent): void {
   if (help.value || e.code !== "Space" || ex?.kind !== "effect" || !ready.value) return;
   const t = e.target as HTMLElement | null;
-  if (t?.closest("input, textarea, select, .monaco-host")) return;
+  if (t?.closest("button, a[href], input, textarea, select, .monaco-host")) return;
   e.preventDefault();
   if (playing.value) stop();
   else void play();
@@ -147,13 +155,34 @@ onBeforeUnmount(() => {
     <!-- eslint-disable-next-line vue/no-v-html -->
     <p class="ex-blurb" v-html="ex.blurb.replace(/`([^`]+)`/g, '<code>$1</code>')"></p>
 
-    <div class="workbench">
+    <dialog
+      id="playground-workbench"
+      ref="workbench"
+      open
+      class="workbench"
+      :class="{ expanded }"
+      :role="expanded ? 'dialog' : 'region'"
+      :aria-modal="expanded ? 'true' : undefined"
+      :aria-label="expanded ? 'Expanded playground' : 'Playground'"
+      @cancel.prevent="restoreEditor"
+      @keydown="containFocus"
+    >
       <div class="editor-wrap">
         <div class="editor-bar">
           <span class="file">{{ ex.slug }}.uwk.ts</span>
           <div class="editor-help-actions">
             <button @click="help = 'api'">API reference</button>
             <button @click="help = 'sugar'">Sugar help</button>
+            <button
+              type="button"
+              :aria-expanded="expanded"
+              aria-controls="playground-workbench"
+              :aria-label="expanded ? 'Restore editor' : 'Expand editor'"
+              @click="toggleExpanded"
+            >
+              {{ expanded ? "Restore editor" : "Expand editor" }}
+              <span v-if="expanded" aria-hidden="true">Esc</span>
+            </button>
           </div>
           <span class="label" style="text-transform: none">
             <kbd>⌘</kbd> <kbd>⏎</kbd>&nbsp; recompile
@@ -277,13 +306,79 @@ onBeforeUnmount(() => {
           <p v-else>No current source location is available.</p>
         </div>
       </div>
-    </div>
+    </dialog>
   </template>
   <PlaygroundHelp v-if="help" :initial-tab="help" @close="closeHelp" />
   <p v-if="!ex">Example not found. <RouterLink to="/">Back to examples</RouterLink></p>
 </template>
 
 <style scoped>
+.workbench {
+  position: static;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+}
+.workbench.expanded {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-height: none;
+  padding: 0.75rem;
+  background: var(--bg);
+  grid-template-columns: minmax(0, 1fr) 280px;
+  align-items: stretch;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+.workbench.expanded::backdrop {
+  background: var(--bg);
+}
+.expanded .editor-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.expanded :deep(.monaco-host) {
+  flex: 1;
+  height: 0;
+  min-height: 0;
+}
+.expanded .source-diagnostics {
+  flex-shrink: 0;
+  max-height: min(25%, 220px);
+}
+.expanded .panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 2px;
+}
+.editor-bar {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.editor-help-actions {
+  flex-wrap: wrap;
+}
+.editor-help-actions button span {
+  color: var(--muted);
+}
+@media (max-width: 860px) {
+  .workbench.expanded {
+    padding: 0.5rem;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 24%);
+    gap: 0.5rem;
+  }
+}
+
 .editor-help-actions {
   display: flex;
   gap: 6px;
