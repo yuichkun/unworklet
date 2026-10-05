@@ -589,11 +589,14 @@ function makeBufferHandle<T extends BufferElementType>(decl: BufferDecl): Buffer
     // the emit side. Load/store 4 lanes as a v128.
     loadVec: (offset: Node<"i32"> | number) => {
       requireVecWindow("loadVec");
-      return wrapAst<"f32x4">({
-        kind: "bufferLoadVec",
-        name: decl.name,
-        offset: liftIndex(offset, "loadVec", SIMD_LANE_COUNT),
-      });
+      return captureTemp<"f32x4">(
+        {
+          kind: "bufferLoadVec",
+          name: decl.name,
+          offset: liftIndex(offset, "loadVec", SIMD_LANE_COUNT),
+        },
+        "f32x4",
+      );
     },
     storeVec: (offset: Node<"i32"> | number, value: Node<"f32x4">) => {
       requireVecWindow("storeVec");

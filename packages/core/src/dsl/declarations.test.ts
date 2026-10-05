@@ -8,6 +8,10 @@
 
 import { expect, test } from "vite-plus/test";
 
+import { render } from "../__tests__/behavior/render.ts";
+import { mulVec, splat, sumLanes, vec4 } from "../simd.ts";
+import { SAMPLES_PER_BLOCK } from "./constants.ts";
+
 import { newCaptureContext, runCapture, unwrapAst, wrapAst } from "../compile/capture.ts";
 import { audioInput, audioOutput, event, noiseSource, param, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
@@ -1890,4 +1894,74 @@ test("forwarding alone does not seal a field to bool — sealing comes from usag
   const outboundField = proc.worklet.eventRings[0]!.fields!.find((f) => f.name === "enabled");
   expect(inboundField!.wireType).toBe("f32");
   expect(outboundField!.wireType).toBe("f32");
+});
+
+test("SIMD: a loaded vector keeps its read-time lanes across later buffer writes", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 4, name: "main" });
+    const buf = state.buffer.f32({ size: 4 });
+    return {
+      process: () => {
+        forSample((i) => {
+          buf.storeVec(0, splat(2));
+          const previous = buf.loadVec(0);
+          buf.storeVec(0, splat(9));
+          out.ch(0).at(i).write(sumLanes(previous));
+          out.ch(1).at(i).write(previous.lane(3));
+          out
+            .ch(2)
+            .at(i)
+            .write(sumLanes(mulVec(previous, splat(3))));
+          out
+            .ch(3)
+            .at(i)
+            .write(sumLanes(buf.loadVec(0)));
+        });
+      },
+    };
+  });
+  const { outputs } = await render(proc, { blocks: 2 });
+  for (const [channel, expected] of [8, 2, 24, 36].entries()) {
+    expect(Array.from(outputs.main![channel]!)).toEqual(
+      Array(2 * SAMPLES_PER_BLOCK).fill(expected),
+    );
+  }
+});
+
+test("SIMD: block and dynamic-offset sample reads retain independent vector values", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 4, name: "main" });
+    const buf = state.buffer.f32({ size: 8 });
+    const counter = state.i32(0);
+    return {
+      process: () => {
+        buf.storeVec(0, vec4(1, 2, 3, 4));
+        const blockStart = buf.loadVec(0);
+        forSample((i) => {
+          const sample = counter.read();
+          buf.storeVec(0, splat(f32(sample)));
+          buf.storeVec(4, splat(f32(sample.add(10))));
+          const previous = buf.loadVec(sample.mod(2).mul(4));
+          const derived = previous.mul(2).add(blockStart).sub(1).div(2);
+          buf.write(0, -1);
+          buf.storeVec(4, splat(-2));
+          counter.write(sample.add(1));
+          out.ch(0).at(i).write(sumLanes(previous));
+          out.ch(1).at(i).write(sumLanes(derived));
+          out.ch(2).at(i).write(sumLanes(blockStart));
+          out.ch(3).at(i).write(f32(sample));
+        });
+      },
+    };
+  });
+  const { outputs } = await render(proc, { blocks: 2 });
+  for (let sample = 0; sample < 2 * SAMPLES_PER_BLOCK; sample++) {
+    const value = sample + (sample % 2) * 10;
+    expect(outputs.main!.map((channel) => channel[sample])).toEqual([
+      4 * value,
+      4 * value + 3,
+      10,
+      sample,
+    ]);
+  }
 });
