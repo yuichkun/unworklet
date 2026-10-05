@@ -11,6 +11,13 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Breaking
 
+- **Message and MIDI handlers enforce loop bounds at compilation.** Handler
+  `forSample.byN` strides must be one of `1, 2, 4, 8, 16, 32, 64, 128`, and
+  `everyNSamples` divisors must be positive integers. Invalid handler loops fail
+  with `illegal-stride` or `illegal-everyn-divisor` instead of reaching the audio
+  thread. Replace invalid strides with an allowed value and zero, negative,
+  fractional, or non-finite divisors with a positive integer. Valid handlers need
+  no migration.
 - **MIDI balance follows velocity-zero Note On termination semantics.**
   `expectMidiBalance` / `toHaveBalancedMidi` treat `noteOn` with velocity `0`
   as a note termination. A zero-velocity Note On followed by Note Off contains

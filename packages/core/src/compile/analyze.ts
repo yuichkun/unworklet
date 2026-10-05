@@ -232,6 +232,8 @@ function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntr
         });
       }
       walkForLoopErrors(node.body, diagnostics);
+    } else if (node.kind === "messageOnReceive" || node.kind === "midiOnEvent") {
+      walkForLoopErrors(node.body, diagnostics);
     }
   }
 }
