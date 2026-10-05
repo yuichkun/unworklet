@@ -182,13 +182,11 @@ test("the live-coding demo requests the baked rate on a 44.1 kHz device", async 
   }
 });
 
-test("runtime compile preserves exposure options and typed feedback with authored temporary names", async () => {
+test("runtime compile preserves typed feedback with authored temporary names", async () => {
   const proc = await compileSource(`
-const exposure = { name: "meter", snapshot: "transient", publish: { rateFps: 30 } };
-const level = state.f32(0.5).expose(exposure);
 const sg = defineSubgraph(() => ({
   run: (trigger: Node<'bool'>): Node<'f32'> => {
-    const __r = trigger ? level : $prev * 0.95;
+    const __r = trigger ? 1 : $prev * 0.95;
     return __r;
   },
 }));
@@ -196,31 +194,9 @@ const s = instantiate(sg);
 const out = audioOutput({ channels: 1, name: "main" });
 process(() => { forSample(i => { out.ch(0)[i] = s.run(i == 0); }); });`);
   try {
-    expect(proc.worklet.publishSlots).toEqual([
-      expect.objectContaining({ name: "meter", type: "f32" }),
-    ]);
     const wasm = await fetchBytes(proc.worklet.wasmUrl!);
     expect(WebAssembly.validate(new Uint8Array(wasm))).toBe(true);
     expectSelfContainedModule(await fetchText(proc.worklet.moduleUrl!));
-  } finally {
-    URL.revokeObjectURL(proc.worklet.moduleUrl!);
-    URL.revokeObjectURL(proc.worklet.wasmUrl!);
-  }
-});
-
-test("runtime compile derives a name for helper-returned exposure options", async () => {
-  const proc = await compileSource(`
-const exposure = () => ({ snapshot: "transient", publish: { rateFps: 30 } });
-const level = state.f32(0.5).expose(exposure());
-const out = audioOutput({ channels: 1, name: "main" });
-process(() => { forSample(i => { out.ch(0)[i] = level; }); });`);
-  try {
-    expect(proc.worklet.publishSlots).toEqual([
-      expect.objectContaining({ name: "level", type: "f32" }),
-    ]);
-    expect(WebAssembly.validate(new Uint8Array(await fetchBytes(proc.worklet.wasmUrl!)))).toBe(
-      true,
-    );
   } finally {
     URL.revokeObjectURL(proc.worklet.moduleUrl!);
     URL.revokeObjectURL(proc.worklet.wasmUrl!);

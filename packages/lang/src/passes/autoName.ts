@@ -13,9 +13,8 @@
  * Name-optional state / buffer derive ONLY through an explicit marker — a
  * `.expose({...})` without a name, or a no-arg `.named()` — so a plain
  * `state.f32(0)` stays anonymous. An explicit `name` / `.named("x")` / a
- * `.expose({ name })` is left untouched. A non-object exposure argument is
- * evaluated once and passed through, with its name or the binding assigned first.
- * Non-object arguments to port and event declarations are left untouched.
+ * `.expose({ name })` is left untouched, and a non-object options argument (an
+ * identifier or spread we cannot read) is left untouched too.
  */
 
 import ts from "typescript";
@@ -38,15 +37,11 @@ export function rootCallee(expr: ts.Expression): string | undefined {
 }
 
 /** Whether the chain already contains a call to a method named `method`. */
-function hasMethodCall(expr: ts.Expression, method: string, requireArgument = false): boolean {
+function hasMethodCall(expr: ts.Expression, method: string): boolean {
   let e: ts.Expression = expr;
   for (;;) {
     if (ts.isCallExpression(e)) {
-      if (
-        ts.isPropertyAccessExpression(e.expression) &&
-        e.expression.name.text === method &&
-        (!requireArgument || e.arguments.length > 0)
-      ) {
+      if (ts.isPropertyAccessExpression(e.expression) && e.expression.name.text === method) {
         return true;
       }
       e = e.expression;
@@ -98,42 +93,6 @@ function withNameInOptions(call: ts.CallExpression, name: string): ts.CallExpres
   ]);
 }
 
-function withExposureName(call: ts.CallExpression, name: string): ts.Expression | undefined {
-  const callee = call.expression as ts.PropertyAccessExpression;
-  if (hasMethodCall(callee.expression, "named", true)) return undefined;
-  const target = f.createUniqueName("__target");
-  const args = call.arguments.map(() => f.createUniqueName("__exposure"));
-  const named = f.createCallExpression(
-    f.createPropertyAccessExpression(target, "named"),
-    undefined,
-    [
-      f.createBinaryExpression(
-        f.createPropertyAccessExpression(args[0]!, "name"),
-        ts.SyntaxKind.QuestionQuestionToken,
-        f.createStringLiteral(name),
-      ),
-    ],
-  );
-  const expose = f.updateCallExpression(
-    call,
-    f.updatePropertyAccessExpression(callee, named, callee.name),
-    call.typeArguments,
-    args,
-  );
-  const apply = f.createArrowFunction(
-    undefined,
-    undefined,
-    [target, ...args].map((arg) => f.createParameterDeclaration(undefined, undefined, arg)),
-    undefined,
-    f.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-    expose,
-  );
-  return f.createCallExpression(f.createParenthesizedExpression(apply), undefined, [
-    callee.expression,
-    ...call.arguments,
-  ]);
-}
-
 /** Compute the auto-named initializer, or undefined if nothing to do. */
 function autoNamedInit(init: ts.Expression, name: string): ts.Expression | undefined {
   const root = rootCallee(init);
@@ -143,7 +102,6 @@ function autoNamedInit(init: ts.Expression, name: string): ts.Expression | undef
   // `.expose({...})` (param / state / buffer) — the name lives in the expose
   // options; derive it from the binding when absent, never clobber an explicit one.
   if (outer !== undefined && outerMethod === "expose") {
-    if (!argIsInjectable(outer)) return withExposureName(outer, name);
     return optionsHaveName(outer) ? undefined : withNameInOptions(outer, name);
   }
   // A no-arg `.named()` marker on a name-optional state / buffer — fill the name.
