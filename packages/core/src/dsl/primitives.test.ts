@@ -7,6 +7,12 @@
 import { expect, test } from "vite-plus/test";
 
 import { unwrapAst, wrapAst } from "../compile/capture.ts";
+import { render } from "../__tests__/behavior/render.ts";
+import { defineProcessor } from "../processor.ts";
+import { vec4 } from "../simd.ts";
+import { SAMPLES_PER_BLOCK } from "./constants.ts";
+import { audioOutput, state } from "./declarations.ts";
+import { forSample } from "./loop.ts";
 
 import * as P from "./primitives.ts";
 import { abs, max, mul } from "./primitives.ts";
@@ -858,3 +864,43 @@ test("`Node<T>.tanh()` method form produces the same AST as the free function", 
   const a = wrapAst<"f32">({ kind: "literal", type: "f32", value: 1 });
   expect(unwrapAst(a.tanh())).toEqual(unwrapAst(P.tanh(a)));
 });
+
+test.each([
+  { method: "add", number: [4, 6, 10, 18], vector: [3, 6, 12, 24] },
+  { method: "sub", number: [0, 2, 6, 14], vector: [1, 2, 4, 8] },
+  { method: "mul", number: [4, 8, 16, 32], vector: [2, 8, 32, 128] },
+  { method: "div", number: [1, 2, 4, 8], vector: [2, 2, 2, 2] },
+] as const)(
+  "SIMD: loaded vectors support .$method with numbers and loaded vectors",
+  async (row) => {
+    const proc = defineProcessor(() => {
+      const out = audioOutput({ channels: 8, name: "main" });
+      const buf = state.buffer.f32({ size: 8 });
+      return {
+        process: () => {
+          forSample((i) => {
+            buf.storeVec(0, vec4(2, 4, 8, 16));
+            buf.storeVec(4, vec4(1, 2, 4, 8));
+            const lhs = buf.loadVec(0);
+            const rhs = buf.loadVec(4);
+            const numberResult = lhs[row.method](2);
+            const vectorResult = lhs[row.method](rhs);
+            for (const lane of [0, 1, 2, 3] as const) {
+              out.ch(lane).at(i).write(numberResult.lane(lane));
+              out
+                .ch(lane + 4)
+                .at(i)
+                .write(vectorResult.lane(lane));
+            }
+          });
+        },
+      };
+    });
+    const { outputs } = await render(proc, { blocks: 2 });
+    for (const [channel, expected] of [...row.number, ...row.vector].entries()) {
+      expect(Array.from(outputs.main![channel]!)).toEqual(
+        Array(2 * SAMPLES_PER_BLOCK).fill(expected),
+      );
+    }
+  },
+);
