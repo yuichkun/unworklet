@@ -117,3 +117,25 @@ test("ordinary integer buffers keep their numeric list rendering", async () => {
   await nextTick();
   expect(root.querySelector(".list-dump")!.textContent).toBe("[1, 2, 3]");
 });
+
+test.each([1e308, Number.MIN_VALUE])(
+  "finite f64 bars keep signed magnitudes visible at scale %s",
+  async (magnitude) => {
+    mount([-magnitude, 0, magnitude], { type: "f64" });
+    const select = root.querySelector<HTMLSelectElement>(".repr-select")!;
+    select.value = "bar";
+    select.dispatchEvent(new Event("change"));
+    await nextTick();
+    frame(1);
+    expect(fills).toHaveLength(3);
+    for (const bar of fills) {
+      expect(Number.isFinite(bar.y)).toBe(true);
+      expect(Number.isFinite(bar.h)).toBe(true);
+      expect(bar.y).toBeGreaterThanOrEqual(0);
+      expect(bar.y + bar.h).toBeLessThanOrEqual(60);
+    }
+    expect(fills[0]!.h).toBeCloseTo(28);
+    expect(fills[2]!.h).toBeCloseTo(28);
+    expect(fills[0]!.y).toBeCloseTo(fills[2]!.y + fills[2]!.h);
+  },
+);

@@ -140,6 +140,9 @@ const drawBars = (canvas: HTMLCanvasElement, data: number[]): void => {
     if (v < min) min = v;
     if (v > max) max = v;
   }
+  const scale = Math.max(Math.abs(min), Math.abs(max)) || 1;
+  min /= scale;
+  max /= scale;
   const span = max - min || 1;
   const zeroY = 2 + (max / span) * (h - 4);
   ctx.strokeStyle = "rgba(255, 250, 240, 0.18)";
@@ -151,7 +154,7 @@ const drawBars = (canvas: HTMLCanvasElement, data: number[]): void => {
   const barW = Math.max(1, cellW - 2);
   for (let i = 0; i < data.length; i++) {
     const v = data[i]!;
-    const valueY = 2 + ((max - v) / span) * (h - 4);
+    const valueY = 2 + ((max - v / scale) / span) * (h - 4);
     ctx.fillStyle = v >= 0 ? "#fffaf0" : "#ffb4ab";
     ctx.fillRect(
       i * cellW + 1,
