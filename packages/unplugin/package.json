@@ -67,6 +67,7 @@
   },
   "dependencies": {
     "@unworklet/lang": "workspace:^",
+    "typescript": "catalog:",
     "unplugin": "catalog:"
   },
   "devDependencies": {
@@ -75,7 +76,6 @@
     "@vitejs/devtools-kit": "catalog:",
     "bumpp": "^11.1.0",
     "playwright": "catalog:",
-    "typescript": "catalog:",
     "vite": "catalog:"
   },
   "peerDependencies": {

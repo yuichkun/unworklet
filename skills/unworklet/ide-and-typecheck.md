@@ -52,7 +52,7 @@ The typed node surface is `params` / `state` / `events` / `midi` / `inputs` / `o
   packages/unplugin/package.json L38-40]
 - **`.unworklet/worklets.d.ts`** — one `declare module "*/<basename>?worklet"` per processor,
   carrying its concrete `params`/`state`/`events`/`midi`/`inputs`/`outputs`. This is what makes
-  `node.params.drive` resolve to the real param. Written by the Vite plugin as it compiles, and
+  `node.params.drive` resolve to the real param. Written by the Vite plugin at dev startup and as it compiles, and
   by `unworklet-tsc` for `.uwk.ts` processors before it runs tsc.
   [cite: packages/lang/src/worklet-dts.ts L18-163; packages/unplugin/src/index.ts L816;
   packages/lang/src/unworklet-tsc.ts L87-116]
@@ -65,8 +65,12 @@ Seeded **synchronously** the moment Vite config resolves, so the `extends` targe
 the build reads tsconfig (an async write loses the race → "Tsconfig not found"):
 
 - **`.unworklet/tsconfig.json`** — fixed content (below); never changes as you add processors.
-- **`.unworklet/worklets.d.ts`** — (re)written as each `?worklet` import compiles; only regrows
-  with new processors; written only on content change (no dev-watch loop).
+- **`.unworklet/worklets.d.ts`** — generated at dev startup from `?worklet` imports in the
+  tsconfig's sources and referenced projects, or JavaScript/TypeScript source files under the
+  root when there is no tsconfig. No browser request is needed. Processor/helper edits and
+  added/removed imports refresh it; invalid or deleted processors lose stale declarations.
+  Builds generate types from their loaded processors. Written only on content change
+  (no dev-watch loop).
   [cite: `seedUnworkletDir` lives in `packages/lang/src/seed-unworklet-dir.ts:53-65`
   (called from `packages/unplugin/src/index.ts:903`); `writeWorkletsWitness` is at
   `packages/unplugin/src/index.ts:786-817`. Gitignore `.unworklet/`.]

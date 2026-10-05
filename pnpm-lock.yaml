@@ -297,6 +297,9 @@ importers:
       '@unworklet/lang':
         specifier: workspace:^
         version: link:../lang
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
       unplugin:
         specifier: 'catalog:'
         version: 3.0.0
@@ -319,9 +322,6 @@ importers:
       playwright:
         specifier: 'catalog:'
         version: 1.60.0
-      typescript:
-        specifier: 'catalog:'
-        version: 5.9.3
 
   packages/unplugin/devtools-ui:
     dependencies:

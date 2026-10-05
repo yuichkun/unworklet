@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createServer, type HmrContext, type Plugin } from "vite-plus";
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
 import unworklet from "./index.ts";
@@ -68,7 +69,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("configResolved completes only after the initial witness I/O finishes", async () => {
+test("build configResolved completes only after the initial witness I/O finishes", async () => {
   vi.resetModules();
   const release = deferred();
   const entered = deferred();
@@ -93,7 +94,7 @@ test("configResolved completes only after the initial witness I/O finishes", asy
   mkdirSync(path.join(root, ".unworklet"));
   writeFileSync(path.join(root, ".unworklet", "worklets.d.ts"), "stale witness");
   const completion = (plugin.configResolved as unknown as ConfigResolvedFn)({
-    command: "serve",
+    command: "build",
     root,
     base: "/",
   });
@@ -115,6 +116,92 @@ test("configResolved completes only after the initial witness I/O finishes", asy
     release.resolve();
     await finished.promise;
     await observed;
+  }
+});
+
+test("server.close drains an in-flight witness write and cancels queued refreshes", async () => {
+  vi.resetModules();
+  const entered = deferred();
+  const release = deferred();
+  const closeHookEntered = deferred();
+  let blockWrites = false;
+  let blockedWrites = 0;
+  vi.doMock("node:fs/promises", async () => {
+    const fs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    return {
+      ...fs,
+      writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+        const file = args[0];
+        if (blockWrites && typeof file === "string" && file.endsWith("worklets.d.ts")) {
+          blockedWrites++;
+          entered.resolve();
+          await release.promise;
+        }
+        return fs.writeFile(...args);
+      },
+    };
+  });
+  const { default: factory } = await import("./index.ts");
+  const source = path.join(root, "gain.processor.ts");
+  writeFileSync(source, `export { stereoGain } from ${JSON.stringify(FIXTURE)};`);
+  writeFileSync(path.join(root, "main.ts"), 'import gain from "./gain.processor.ts?worklet";');
+  const plugin = factory();
+  const server = await createServer({
+    root,
+    configFile: false,
+    logLevel: "silent",
+    plugins: [
+      plugin as Plugin,
+      {
+        name: "observe-close",
+        closeBundle() {
+          closeHookEntered.resolve();
+        },
+      },
+    ],
+    server: {
+      middlewareMode: true,
+      watch: null,
+      ws: false,
+      hmr: false,
+      fs: { allow: [root, path.resolve(import.meta.dirname, "../../..")] },
+    },
+    optimizeDeps: { noDiscovery: true },
+    ssr: { external: ["@unworklet/core"] },
+  });
+  const witness = path.join(root, ".unworklet/worklets.d.ts");
+  expect(readFileSync(witness, "utf8")).toContain("gain.processor.ts?worklet");
+  const update = (): Promise<unknown> =>
+    (plugin.handleHotUpdate as unknown as (ctx: HmrContext) => Promise<unknown>)({
+      file: source,
+      server,
+      modules: [],
+      timestamp: Date.now(),
+      read: async () => readFileSync(source, "utf8"),
+    });
+  blockWrites = true;
+  writeFileSync(witness, "stale");
+  const first = update();
+  await entered.promise;
+  const queued = update();
+  let closed = false;
+  const closing = server.close().then(() => {
+    closed = true;
+  });
+  try {
+    await closeHookEntered.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release.resolve();
+    await Promise.all([first, queued, closing]);
+    expect(blockedWrites).toBe(1);
+    writeFileSync(witness, "closed sentinel");
+    await update();
+    expect(readFileSync(witness, "utf8")).toBe("closed sentinel");
+  } finally {
+    release.resolve();
+    await Promise.all([first, closing]);
+    await server.close();
   }
 });
 
