@@ -222,7 +222,7 @@ browser, so a `.uwk.ts` source **string** becomes a playable processor at runtim
 import { createNode, replaceProcessor } from "@unworklet/core";
 import { compileSource } from "@unworklet/lang/browser";
 
-const ctx = new AudioContext();
+const ctx = new AudioContext({ sampleRate: 48000 });
 let node = await createNode(ctx, await compileSource(editor.value));
 node.outputs.main.connect(ctx.destination);
 
@@ -233,7 +233,11 @@ runButton.onclick = async () => {
 };
 ```
 
-`compileSource(source)` returns a `CompiledProcessor` ready for `createNode`;
+`compileSource(source)` bakes 48000 Hz coefficients and returns a `CompiledProcessor`
+ready for `createNode`. Request `new AudioContext({ sampleRate: 48000 })`; a
+different context rate is rejected before loading the worklet module. Browser
+compilation does not accept a sample-rate option.
+
 `lowerToProcessor(source)` stops at the processor (no worklet module) for an
 in-browser headless render. (For Node, import `lowerToProcessor` from the root
 `@unworklet/lang` — the same call, resolved off disk, pulling in no compiler.)

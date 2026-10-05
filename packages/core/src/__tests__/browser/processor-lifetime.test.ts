@@ -22,13 +22,17 @@ test("dispose stops DSP execution after the queued shutdown is delivered", async
     const suspended = ctx.suspend((128 * 8) / 48000);
     const rendered = ctx.startRendering();
     await suspended;
-    const count = Atomics.load(published!, 0);
-    expect(count).toBeGreaterThan(0);
+    const count = published === undefined ? undefined : Atomics.load(published, 0);
+    if (count !== undefined) expect(count).toBeGreaterThan(0);
     node.dispose();
+    // Keep the native output connected so graph teardown cannot hide running DSP.
+    node.node.connect(ctx.destination);
     await new Promise((resolve) => setTimeout(resolve, 20));
     await ctx.resume();
-    await rendered;
-    expect(Atomics.load(published!, 0)).toBe(count);
+    const output = (await rendered).getChannelData(0);
+    expect(Array.from(output.subarray(0, 128 * 8)).every((sample) => sample > 0)).toBe(true);
+    expect(Array.from(output.subarray(128 * 8))).toEqual(Array(128 * 24).fill(0));
+    if (published !== undefined) expect(Atomics.load(published, 0)).toBe(count);
   } finally {
     vi.unstubAllGlobals();
   }

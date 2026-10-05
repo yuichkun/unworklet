@@ -22,6 +22,7 @@ import type { MidiEvent } from "@unworklet/core";
 import { decodeWav, encodeWav } from "@unworklet/offline";
 import type { OfflineEmittedEvent, OfflineEvent, RenderOfflineResult } from "@unworklet/offline";
 import { expect } from "vitest";
+import wavefile from "wavefile";
 
 /**
  * What the audio matchers accept: a real `renderOffline` result, or a
@@ -326,7 +327,19 @@ export function expectAudioMatchesGolden(
   opts?: AudioMatchOptions,
 ): void {
   const bytes = readFileSync(wavPath);
-  const decoded = decodeWav(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  const wav = new wavefile.WaveFile(bytes);
+  const floatingPoint = wav.bitDepth === "32f" || wav.bitDepth === "64";
+  if (!floatingPoint && !["8", "16", "24", "32"].includes(wav.bitDepth)) {
+    throw new Error(`expectAudioMatchesGolden: unsupported WAV bit depth '${wav.bitDepth}'`);
+  }
+  const decoded = decodeWav(bytes);
+  if (!floatingPoint) {
+    const scale = 2 ** (Number(wav.bitDepth) - 1);
+    const offset = wav.bitDepth === "8" ? 128 : 0;
+    for (const channel of decoded.channels) {
+      for (let i = 0; i < channel.length; i++) channel[i] = (channel[i]! - offset) / scale;
+    }
+  }
   if (decoded.sampleRate !== actual.sampleRate) {
     throw new Error(
       `expectAudioMatchesGolden: sampleRate mismatch — actual=${actual.sampleRate}, wav '${wavPath}'=${decoded.sampleRate} (even when the PCM matches, a different rate shifts pitch and timing)`,
@@ -388,12 +401,8 @@ const shortHash = (s: string): string => {
  * `expect.getState()` (sequential use only — concurrent use risks cross-test
  * interference).
  *
- * `_unworkletCounters` is the expando field for the counter Map used by the
- * auto-inference path. The chain form attaches a fresh Map to `this` (the
- * per-test-invocation MatcherState) and carries it, so it resets naturally per
- * invocation and there is no counter drift across vitest retries / watch reruns.
- * The plain form leaves this field unset and falls back to the module-global Map
- * (the sequential path).
+ * `_unworkletCounters` carries the chain form's per-test-attempt counter Map.
+ * The plain form leaves this field unset and uses a sequential-only global Map.
  */
 export type SnapshotResolutionState = {
   testPath?: string;
@@ -435,12 +444,8 @@ const resolveSnapshotPath = (state: SnapshotResolutionState, opts: SnapshotOptio
   const base = basename(state.testPath, extname(state.testPath));
   const safeName = sanitizeForFilename(state.currentTestName);
   const key = `${state.testPath}::${state.currentTestName}`;
-  // Counter source: the chain form brings its own `state._unworkletCounters`
-  // (a per-test-invocation Map bound to MatcherState), so it resets naturally on
-  // retry / watch and never drifts. The plain form leaves it unset and falls back
-  // to the module-global Map plus a boundary heuristic (reset only when moving to
-  // a different test); repeated invocations within the same test drift, so
-  // docs §2.1 recommends an explicit snapshotName or the chain form.
+  // The chain form supplies per-attempt counters. The plain form uses
+  // a test-name boundary heuristic and needs explicit names for retries.
   const counterMap = state._unworkletCounters ?? snapshotCounters;
   if (counterMap === snapshotCounters && snapshotTestBoundary.lastKey !== key) {
     snapshotCounters.delete(key);
@@ -876,11 +881,11 @@ export function expectGainAtFreq(
   // the otherwise-underestimated amplitude.
   let mag = 0;
   const startK = Math.max(0, bin - 1);
-  const endK = Math.min(n / 2 - 1, bin + 1);
+  const endK = bin === 0 ? 0 : Math.min(n / 2 - 1, bin + 1);
   for (let k = startK; k <= endK; k++) {
     const reK = real[k]!;
     const imK = imag[k]!;
-    const m = (2 * Math.sqrt(reK * reK + imK * imK)) / ch.length;
+    const m = ((k === 0 ? 1 : 2) * Math.sqrt(reK * reK + imK * imK)) / ch.length;
     if (m > mag) mag = m;
   }
   const db = mag > 0 ? 20 * Math.log10(mag) : Number.NEGATIVE_INFINITY;
@@ -1094,16 +1099,12 @@ export function expectMidiOut(
 }
 
 /**
- * noteOn / noteOff pairs are balanced, with up to `opts.hangingNotes` (default
- * `0`) hanging notes allowed (a noteOn with no following noteOff). A stray
- * noteOff (a noteOff with no in-flight noteOn for its (channel, note) at the
- * time it appears — a lifecycle inversion, or two or more noteOffs for one
- * noteOn) always fails: a stray is always a bug in the MIDI lifecycle, so there
- * is no tolerance option. Walks the events in time order, tracking a running
- * counter per (channel, note); when a noteOff arrives with cur ≤ 0, it is
- * immediately counted as stray, detecting "noteOff → noteOn (net 0)" and
- * "noteOn 1 → noteOff 2" in an order-sensitive way (closing false passes that a
- * final-sum path would miss).
+ * Positive-velocity noteOn events open notes; noteOff and velocity-zero noteOn
+ * events terminate them. Up to `opts.hangingNotes` (default `0`) open notes
+ * are allowed. A termination with no in-flight note for its (channel, note)
+ * always fails, regardless of the hanging-note allowance. Events are checked
+ * in their supplied order, so an early or duplicate termination cannot be
+ * canceled out by a later noteOn.
  *
  * Chain form: `expect(result).toHaveBalancedMidi(portName, opts?)` (`@unworklet/test/extend`).
  */
@@ -1119,15 +1120,15 @@ export function expectMidiBalance(
   let strayCount = 0;
   for (const e of actual) {
     const m = e.payload as MidiEvent;
-    if (m.type === "noteOn") {
+    if (m.type === "noteOn" && m.velocity !== 0) {
       const k = `${m.channel}/${m.note}`;
       running.set(k, (running.get(k) ?? 0) + 1);
-    } else if (m.type === "noteOff") {
+    } else if (m.type === "noteOff" || m.type === "noteOn") {
       const k = `${m.channel}/${m.note}`;
       const cur = running.get(k) ?? 0;
       if (cur <= 0) {
         strayCount += 1;
-        strayList.push(`${k} @ atSample ${e.atSample}`);
+        strayList.push(`${m.type} velocity=${m.velocity} ${k} @ atSample ${e.atSample}`);
       } else {
         running.set(k, cur - 1);
       }
@@ -1144,12 +1145,12 @@ export function expectMidiBalance(
   const failures: string[] = [];
   if (hangingCount > allowed) {
     failures.push(
-      `${hangingCount} hanging noteOn (= no matching noteOff) > allowed ${allowed} [${hangingList.join(", ")}]`,
+      `${hangingCount} hanging noteOn (= no matching note termination) > allowed ${allowed} [${hangingList.join(", ")}]`,
     );
   }
   if (strayCount > 0) {
     failures.push(
-      `${strayCount} stray noteOff (= no in-flight noteOn at event time) [${strayList.join(", ")}]`,
+      `${strayCount} stray note termination (= no in-flight noteOn at event time) [${strayList.join(", ")}]`,
     );
   }
   if (failures.length > 0) {

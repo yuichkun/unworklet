@@ -24,6 +24,7 @@
  */
 
 import { expect } from "vitest";
+import { getCurrentTest } from "vitest/suite";
 
 import type {
   AudioMatchOptions,
@@ -162,6 +163,17 @@ const wrap =
     }
   };
 
+type TestTask = NonNullable<ReturnType<typeof getCurrentTest>>;
+const chainSnapshotCounters = new WeakMap<
+  TestTask,
+  {
+    result: TestTask["result"];
+    retry: number | undefined;
+    repeat: number | undefined;
+    counters: Map<string, number>;
+  }
+>();
+
 /**
  * The chain matcher specific to `toMatchAudioSnapshot`. Inside vitest's
  * `expect.extend(...)`, `this` carries a per-test bound `MatcherState` (whose
@@ -182,18 +194,27 @@ async function toMatchAudioSnapshotChain(
   opts?: SnapshotOptions,
 ): Promise<MatcherResult> {
   try {
-    // Attach a counter Map onto `this` (the per-test-invocation `MatcherState`)
-    // and carry it. A fresh Map per chain-form call (per test invocation) means
-    // no counter drift across retries or watch reruns (the R6-1 fix). On the
-    // plain-form path this field is absent from the state, so it falls back to a
-    // module-global Map (the same sequential-only limitation as standard vitest).
-    const thisHost = this as { _unworkletCounters?: Map<string, number> };
-    if (!thisHost._unworkletCounters) {
-      thisHost._unworkletCounters = new Map();
+    const host = this as SnapshotResolutionState & { task?: TestTask };
+    const task = host.task ?? getCurrentTest();
+    const result = task?.result;
+    let invocation = task && chainSnapshotCounters.get(task);
+    if (
+      !invocation ||
+      invocation.result !== result ||
+      invocation.retry !== result?.retryCount ||
+      invocation.repeat !== result?.repeatCount
+    ) {
+      invocation = {
+        result,
+        retry: result?.retryCount,
+        repeat: result?.repeatCount,
+        counters: new Map(),
+      };
+      if (task) chainSnapshotCounters.set(task, invocation);
     }
     const state: SnapshotResolutionState = {
-      ...(this as SnapshotResolutionState),
-      _unworkletCounters: thisHost._unworkletCounters,
+      ...host,
+      _unworkletCounters: invocation.counters,
     };
     await expectAudioMatchesSnapshotWithState(
       received as RenderResultLike | Float32Array | Float32Array[],

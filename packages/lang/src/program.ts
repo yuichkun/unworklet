@@ -33,25 +33,27 @@ const dirnameOf = (filePath: string): string => {
   return cut === 0 ? filePath.slice(0, 1) : filePath.slice(0, cut);
 };
 
-// The directory the in-memory virtuals are placed under, which disk-backed module
-// resolution (Node) walks up from to find `@unworklet/core`. `import.meta.dirname`
-// is a plain string under Node ESM and `undefined` in the browser — a property
-// read, NOT a `node:url` / `node:path` import. Those do not fail the build: Vite
-// swaps them for a stub that throws on the first property read, so the breakage
-// lands wherever the module happens to be used. `browser-entry-purity.test.ts`
-// holds the whole reachable graph to this rule.
-// The editor TS-plugin is bundled to CJS, where `import.meta` is
-// empty but esbuild supplies `__dirname` (the bundle's dir, which sits in
-// `node_modules/@unworklet/lang/dist`, so core resolves from the same install) —
-// `typeof __dirname` is the one safe way to reach it without a ReferenceError in
-// ESM. In the browser a snapshot is always supplied, so these paths are never
-// resolved against disk; they are just stable keys matching the captured snapshot.
-/* v8 ignore next 3 — environment detection: under the Node ESM test runner
-   `import.meta.dirname` is always set, so the CJS-bundle (`__dirname`, used by the
-   editor TS plugin) and browser (`/__uwk__`) fallbacks are unreachable here. */
+export function fileUrlDirectory(moduleUrl: string): string {
+  const url = new URL(moduleUrl);
+  const pathname = decodeURIComponent(url.pathname);
+  const filePath = url.hostname
+    ? `//${url.hostname}${pathname}`
+    : pathname.replace(/^\/([A-Za-z]:\/)/, "$1");
+  return dirnameOf(filePath);
+}
+
+// Browser replay uses snapshot paths; disk-backed ESM must resolve from this
+// package even on Node versions without import.meta.dirname. URL decoding keeps
+// installations under paths containing spaces or URL metacharacters usable.
+// The CJS editor bundle supplies __dirname and does not have import.meta.url.
+/* v8 ignore next 8 — runtime-specific paths exercised by packed consumers */
+const moduleUrl = import.meta.url;
 const SELF_DIR =
-  (import.meta as { dirname?: string }).dirname ??
-  (typeof __dirname === "string" ? __dirname : "/__uwk__");
+  typeof __dirname === "string"
+    ? __dirname
+    : moduleUrl?.startsWith("file:")
+      ? fileUrlDirectory(moduleUrl)
+      : "/__uwk__";
 
 /**
  * Exported so anything that needs to reason about what this program READS

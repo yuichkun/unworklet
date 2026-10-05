@@ -7,6 +7,57 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
+## Unreleased — requires 0.5.0
+
+### Breaking
+
+- **MIDI balance follows velocity-zero Note On termination semantics.**
+  `expectMidiBalance` / `toHaveBalancedMidi` treat `noteOn` with velocity `0`
+  as a note termination. A zero-velocity Note On followed by Note Off contains
+  two terminations and fails, including when `hangingNotes` permits open notes.
+  Update fixtures to use a positive-velocity Note On to start a note, and emit
+  exactly one termination per outstanding note.
+- **Golden audio comparisons normalize integer PCM.** PCM8/16/24/32 references
+  are compared with normalized audio samples; callers supplying raw integer
+  amplitudes must normalize their actual samples. Compressed WAV references
+  must be converted to integer PCM or floating-point WAV.
+- **DC gain uses the undoubled FFT amplitude.** A constant amplitude of `1`
+  measures `0 dB`, and amplitude `0.5` measures approximately `-6.02 dB`.
+  Remove any `+6.02 dB` compensation from DC expectations.
+- **Snapshot restore requires matching state and buffer element types.** Worklet
+  and offline restore skip a saved slot when its type differs from the destination,
+  even if the byte length matches. For example, an `f32` state is not reinterpreted
+  as `i32`, and an `f32` buffer is not copied into an equally sized `f64` buffer.
+  The destination retains its initialized value; live restore reports the name in
+  `skipped`. This change must ship on the pre-1.0 minor axis, not in a 0.4.x patch.
+  When changing a declaration's type, add a migration from the old schema hash to
+  the new one that decodes the old type, converts its values, and writes the slot
+  with the destination type. For scalar `f32` to `i32`, use
+  `helpers.parseSlot(blob, "value", "f32")`, choose the required rounding, and call
+  `helpers.writeSlot("value", "i32", convertedValue)`. Unchanged slot types require
+  no migration.
+
+### Fixed
+
+- Processors without declared audio ports can be created for MIDI and control
+  processing. Their native node has one silent output; public port maps stay empty.
+- Disposing a node stops its DSP after the queued shutdown reaches the worklet,
+  including after a processing failure, and releases its active processor lifetime.
+- Automatic chain audio snapshots use distinct filenames within a test and
+  restart numbering for retries, repeats, and reruns, including cached setup
+  dependencies with `isolate: false`. Tests with multiple unnamed assertions
+  need a separate reference for each assertion; review those references rather
+  than overwriting a shared golden.
+- Browser `compileSource` preserves the compiler's `bakedSampleRate` metadata.
+  `createNode` rejects contexts whose rate differs from the compiled 48000 Hz
+  before loading the worklet module. Live-coding consumers must request
+  `new AudioContext({ sampleRate: 48000 })` instead of relying on the device's
+  default rate; browser compilation has no sample-rate option.
+- The lang CLI and helper-free sugar compilation resolve package-relative paths
+  on Node 20.0.0, preserving the declared Node >=20 support.
+- Parameter snapshots and devtools captures preserve current `AudioParam.value`
+  settings while the context is suspended, including before the first render.
+
 ## 0.4.1 — 2026-10-04
 
 Audio snapshot comparisons honor the configured tolerance, and the demo identifies

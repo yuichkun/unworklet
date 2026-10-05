@@ -1447,3 +1447,45 @@ test("`midi.cc`: channel omitted defaults to 0 (= null-fallback branch)", () => 
     value: 100,
   });
 });
+
+test.each([128, 100, 1])("DC amplitude is unity at length %i", (length) => {
+  expectGainAtFreq(monoResult(new Float32Array(length).fill(1)), 0, 0, 0.001);
+  expectGainAtFreq(monoResult(new Float32Array(length).fill(-0.5)), 0, -6.020599913, 0.001);
+  expect(() =>
+    expectGainAtFreq(monoResult(new Float32Array(length).fill(1)), 0, 6.0206, 0.001),
+  ).toThrow(/gain/);
+});
+
+test("first positive FFT bin keeps its one-sided amplitude", () => {
+  const samples = Float32Array.from({ length: 128 }, (_, i) => Math.cos((2 * Math.PI * i) / 128));
+  expectGainAtFreq(monoResult(samples), 48000 / 128, 0, 0.001);
+});
+
+test.each([
+  { velocities: [100, 0], types: ["noteOn", "noteOn"], stray: false },
+  { velocities: [0, 0], types: ["noteOn", "noteOff"], stray: true },
+  { velocities: [0, 100], types: ["noteOn", "noteOn"], stray: true },
+  { velocities: [100, 100, 0, 0], types: ["noteOn", "noteOn", "noteOn", "noteOff"], stray: false },
+])("zero-velocity MIDI termination $types $velocities", ({ velocities, types, stray }) => {
+  const result: RenderResultLike = {
+    ...monoResult(new Float32Array()),
+    events: types.map((type, i) => ({
+      name: "midi",
+      atSample: i,
+      payload: { type, channel: 0, note: 60, velocity: velocities[i] },
+    })),
+  };
+  if (stray)
+    expect(() => expectMidiBalance(result, "midi", { hangingNotes: 100 })).toThrow(/stray/);
+  else expectMidiBalance(result, "midi");
+});
+
+test.each(["noteOn", "noteOff"])("stray %s reports the actual termination event", (type) => {
+  const result: RenderResultLike = {
+    ...monoResult(new Float32Array()),
+    events: [{ name: "midi", atSample: 7, payload: { type, channel: 2, note: 60, velocity: 0 } }],
+  };
+  expect(() => expectMidiBalance(result, "midi")).toThrow(
+    `1 stray note termination (= no in-flight noteOn at event time) [${type} velocity=0 2/60 @ atSample 7]`,
+  );
+});

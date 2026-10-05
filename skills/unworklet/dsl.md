@@ -814,6 +814,15 @@ node.midi["in"]!.send({ type: "noteOn", channel: 3, note: 60, velocity: 100 });
 const off = node.onError((e) => errors.push(e));
 ```
 
+Snapshot and devtools parameter captures use the current `AudioParam.value` while
+its context is suspended, including before the first render. The context mode and
+suspended settings are captured when the request is issued, so a pending resume or
+suspend does not change the parameter source. Requests issued while running capture
+the last rendered parameter sample. State and buffer restores require the
+saved element type and byte length to match the destination declaration; incompatible
+slots are skipped. This also applies to offline restore. Use a migration to convert
+values when changing a slot's type.
+
 ### `inspect(blob)`
 
 Pure, non-realtime blob decode — needs no `AudioContext` or live node.
@@ -890,7 +899,10 @@ with core `Node` method chains _inside_ a `.uwk.ts` is fine and common (§2).
 - **Type-check** `.uwk.ts` sugar with the `@unworklet/lang/typescript-plugin`
   TS-server plugin (editor) or the `unworklet-tsc --noEmit` CLI (CI). — see `ide-and-typecheck.md`.
 - **Browser live-coding:** `compileSource(src)` (full lower→compile→worklet) /
-  `lowerToProcessor(src)` from `@unworklet/lang/browser`. **Programmatic:**
+  `lowerToProcessor(src)` from `@unworklet/lang/browser`. `compileSource` bakes
+  48000 Hz: use `new AudioContext({ sampleRate: 48000 })`. `createNode` rejects
+  other context rates before module loading; browser compilation has no rate option.
+  **Programmatic:**
   `lower(uwkSource, { exportName })` → virtual `.ts` string. — `packages/lang/src/index.ts:7,19`
 - **Test:** render with `@unworklet/offline` (`renderOffline`) + assert with
   `@unworklet/test` matchers. — see `testing.md`.

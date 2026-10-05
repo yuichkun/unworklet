@@ -15,7 +15,7 @@
  * reported on the wrong line (pinned by the `unworklet-tsc.test.ts` regression).
  */
 
-import type { LanguagePlugin } from "@volar/language-core";
+import type { LanguagePlugin } from "@volar/language-core/lib/types.js";
 import type { TypeScriptServiceScript } from "@volar/typescript";
 
 import type { FsSnapshot } from "../program.ts";

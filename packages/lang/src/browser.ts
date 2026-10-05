@@ -45,7 +45,7 @@ export function lowerToProcessor(source: string): CompiledProcessor<unknown> {
  */
 export async function compileSource(source: string): Promise<CompiledProcessor<unknown>> {
   const processor = lowerToProcessor(source);
-  const { wasm } = await compile(processor);
+  const { wasm, sampleRate } = await compile(processor);
   const meta = extractWorkletMeta(
     (processor as unknown as { graph: Parameters<typeof extractWorkletMeta>[0] }).graph,
   );
@@ -64,6 +64,7 @@ export async function compileSource(source: string): Promise<CompiledProcessor<u
       wasmUrl,
       processorName,
       displayName: processorName,
+      bakedSampleRate: sampleRate,
     },
   } as CompiledProcessor<unknown>;
 }

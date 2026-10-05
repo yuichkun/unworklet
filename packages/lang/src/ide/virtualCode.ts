@@ -28,7 +28,7 @@
  * the identifiers and operators the build does — the two never diverge.
  */
 
-import type { CodeInformation, CodeMapping } from "@volar/language-core";
+import type { CodeInformation, CodeMapping } from "@volar/language-core/lib/types.js";
 import ts from "typescript";
 
 import { argIsInjectable, calledMethod, optionsHaveName, rootCallee } from "../passes/autoName.ts";
