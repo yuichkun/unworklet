@@ -49,3 +49,30 @@ const s = instantiate(sg);`,
     value = Math.fround(value * Math.fround(0.95));
   }
 });
+
+const accumulatorExplicit = mono(
+  `const sg = defineSubgraph(() => {
+  const history = state.f32(0);
+  return { run: (x: Node<"f32">) => {
+    const value = x.add(history.read());
+    history.write(value);
+    return value;
+  }};
+});
+const s = instantiate(sg);`,
+  "s.run(f32(1))",
+);
+
+test.each([
+  `const sg = defineSubgraph(() => ({ run: (x: Node<"f32">) => { const __r = x + $prev; return __r; } }));`,
+  `const sg = defineSubgraph(() => ({ run: (__r: Node<"f32">) => __r + $prev }));`,
+  `const sg = defineSubgraph(() => { const __r = f32(1); return { run: () => __r + $prev }; });`,
+  `const sg = defineSubgraph(() => ({ run: (x: Node<"f32">) => { const __r = x + $prev; if (true) return __r; return x; } }));`,
+  `const sg = defineSubgraph(() => ({ run: (x: Node<"f32">) => { const __r = x; const __r_1 = __r + $prev; return __r_1; } }));`,
+  `const sg = defineSubgraph(() => { const __prev_0 = f32(1); return { run: () => __prev_0 + $prev }; });`,
+])("$prev generated bindings preserve authored identifiers: %s", async (declaration) => {
+  const source = mono(`${declaration}\nconst s = instantiate(sg);`, "s.run(f32(1))");
+  await expectSameLowering(source, accumulatorExplicit);
+  const result = await renderLowered(source, { sampleRate: SR, duration: 128 / SR });
+  expect([...result.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, (_, i) => i + 1));
+});

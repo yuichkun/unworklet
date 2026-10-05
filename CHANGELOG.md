@@ -43,6 +43,8 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   options, including explicit names, snapshot policy, and scalar publish settings.
 - `$prev` feedback derives its scalar from the resolved return type regardless of
   quote style, whitespace, parentheses, type aliases, or intersections.
+- Generated `$prev` feedback slots and return temporaries avoid collisions with
+  authored identifiers.
 
 - Automatic chain audio snapshots use distinct filenames within a test and
   restart numbering for retries, repeats, and reruns, including cached setup

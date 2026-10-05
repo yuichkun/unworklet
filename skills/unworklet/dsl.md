@@ -190,7 +190,7 @@ Inside a `defineSubgraph` method, `$prev` is that method's previous-call return
 value. Lowering injects a hidden `state` slot per method that uses it, rewrites
 `$prev` → `slot.read()`, and stores each return into the slot. The slot follows
 the method's return type, including single-quoted, double-quoted, and aliased
-`Node<T>` annotations.
+`Node<T>` annotations. Generated names do not shadow authored bindings.
 
 ```ts
 const onepole = defineSubgraph((coef: Node<"f32">) => ({

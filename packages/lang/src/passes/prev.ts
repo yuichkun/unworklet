@@ -19,7 +19,6 @@
 import ts from "typescript";
 
 const f = ts.factory;
-const id = (n: string): ts.Identifier => f.createIdentifier(n);
 const method = (obj: ts.Expression, name: string, args: ts.Expression[]): ts.Expression =>
   f.createCallExpression(f.createPropertyAccessExpression(obj, name), undefined, args);
 
@@ -100,9 +99,9 @@ function slotScalar(checker: ts.TypeChecker, m: ts.ArrowFunction): string {
 }
 
 /** `const <slot> = state.<scalar>(0);` */
-function slotDecl(slot: string, scalar: string): ts.Statement {
+function slotDecl(slot: ts.Identifier, scalar: string): ts.Statement {
   const init = f.createCallExpression(
-    f.createPropertyAccessExpression(id("state"), scalar),
+    f.createPropertyAccessExpression(f.createIdentifier("state"), scalar),
     undefined,
     [f.createNumericLiteral(0)],
   );
@@ -116,10 +115,14 @@ function slotDecl(slot: string, scalar: string): ts.Statement {
 }
 
 /** Replace `$prev` identifiers with `<slot>.read()`. */
-function replacePrev(node: ts.Node, slot: string, context: ts.TransformationContext): ts.Node {
+function replacePrev(
+  node: ts.Node,
+  slot: ts.Identifier,
+  context: ts.TransformationContext,
+): ts.Node {
   const v: ts.Visitor = (n) =>
     ts.isIdentifier(n) && n.text === "$prev"
-      ? method(id(slot), "read", [])
+      ? method(slot, "read", [])
       : ts.visitEachChild(n, v, context);
   return ts.visitNode(node, v) as ts.Node;
 }
@@ -241,25 +244,25 @@ export function tryPrev(
       return ts.visitNode(p, visit) as ts.ObjectLiteralElementLike;
     }
     const fn = p.initializer;
-    const slot = `__prev_${counter++}`;
+    const slot = f.createUniqueName(`__prev_${counter++}`, ts.GeneratedIdentifierFlags.Optimistic);
     slots.push(slotDecl(slot, slotScalar(checker, fn)));
 
     // Lower the body's operator / index / bare-state sugar (treating `$prev` as a
     // Node), then replace `$prev` with the slot read.
     const loweredBody = ts.visitNode(fn.body, visit) as ts.ConciseBody;
     const replaced = replacePrev(loweredBody, slot, context) as ts.ConciseBody;
-    const r = id("__r");
+    const r = f.createUniqueName("__r", ts.GeneratedIdentifierFlags.Optimistic);
     // Each returned value is stored into the slot before it is returned:
     //   return e  →  const __r = e; <slot>.write(__r); return __r
     const storeReturn = (e: ts.Expression): ts.Statement[] => [
       f.createVariableStatement(
         undefined,
         f.createVariableDeclarationList(
-          [f.createVariableDeclaration("__r", undefined, undefined, e)],
+          [f.createVariableDeclaration(r, undefined, undefined, e)],
           ts.NodeFlags.Const,
         ),
       ),
-      f.createExpressionStatement(method(id(slot), "write", [r])),
+      f.createExpressionStatement(method(slot, "write", [r])),
       f.createReturnStatement(r),
     ];
     // Wrap EVERY return with the store-then-return, including nested ones: a
