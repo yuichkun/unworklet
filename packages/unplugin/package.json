@@ -74,6 +74,7 @@
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@vitejs/devtools-kit": "catalog:",
     "bumpp": "^11.1.0",
+    "playwright": "catalog:",
     "typescript": "catalog:",
     "vite": "catalog:"
   },

@@ -853,6 +853,8 @@ The Vite build evaluates plain processor modules in an isolated SSR module graph
 Repeating `build()` in one Node process reloads their direct and transitive local
 helpers, including helpers outside the app root. Package dependencies retain their
 native module identity; editing installed packages still requires a process restart.
+Each build shares one processor evaluation and compile result between its WASM,
+client registration name, and worklet metadata. The next build starts a fresh snapshot.
 
 ```ts
 // stereo-gain.processor.ts

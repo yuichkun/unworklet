@@ -65,12 +65,18 @@ async function expected(level) {
   return (await compile(processor)).wasm;
 }
 
-async function buildWasm(plugin = unworklet()) {
+async function buildWasm(plugin = unworklet(), beforeWorklet = () => {}) {
   const result = await build({
     root: app,
     configFile: false,
     logLevel: "silent",
-    plugins: [plugin],
+    plugins: [{
+      name: "edit-helper-between-artifacts",
+      enforce: "pre",
+      async load(id) {
+        if (id.startsWith("\\0unworklet-worklet:")) await beforeWorklet();
+      },
+    }, plugin],
     build: {
       write: false,
       minify: false,
@@ -85,6 +91,7 @@ async function buildWasm(plugin = unworklet()) {
   assert(chunks.includes("constants.mjs"), "the consumer's external helper import must remain external");
   assert(chunks.includes("@unworklet/core"), "the framework package must remain external");
   assert(chunks.includes("reload-external"), "ordinary package imports must remain external");
+  assert.equal(new Set(chunks.match(/tone__[a-f0-9]{8}__[a-f0-9]{8}/g)).size, 1, "client and worklet registration must share one revision");
   return Buffer.from(wasm.source);
 }
 
@@ -111,6 +118,16 @@ await writeFile(outside, "throw new Error('helper failed');\\n");
 await assert.rejects(buildWasm(plugin), /helper failed/);
 await writeFile(outside, "export const OFFSET = 0.75;\\n");
 await utimes(outside, outsideStat.atime, outsideStat.mtime);
+assert.deepEqual(await buildWasm(plugin), Buffer.from(await expected(0.75)));
+await writeFile(entry, (await readFile(entry, "utf8")).replace("write(LEVEL / 2)", "write(LEVEL)"));
+await writeFile(helper, "globalThis.evaluationCount++; export const LEVEL = globalThis.evaluationCount / 4;\\n");
+globalThis.evaluationCount = 0;
+assert.deepEqual(await buildWasm(plugin), Buffer.from(await expected(0.25)));
+assert.equal(globalThis.evaluationCount, 1, "one evaluation must supply every artifact in a build");
+assert.deepEqual(await buildWasm(plugin), Buffer.from(await expected(0.5)));
+assert.equal(globalThis.evaluationCount, 2, "the next build must start a fresh snapshot");
+await writeFile(helper, "export const LEVEL = 0.25;\\n");
+assert.deepEqual(await buildWasm(plugin, () => writeFile(helper, "export const LEVEL = 0.75;\\n")), Buffer.from(await expected(0.25)));
 assert.deepEqual(await buildWasm(plugin), Buffer.from(await expected(0.75)));
 console.log(JSON.stringify(levels));
 `,

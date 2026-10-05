@@ -216,7 +216,7 @@ import { emitWorkletTemplate } from "./worklet-template.ts";
  * - `srcHash8` = sha-8 of the absolute source path, separates two unrelated
  *   files that happen to share an export identifier (= e.g. both export
  *   `stereoGain` from different paths).
- * - `revHash8` = sha-8 of the compiled WASM bytes (= revision identity),
+ * - `revHash8` = sha-8 of the WASM and emitted worklet contract,
  *   so a new revision of the same source registers under a NEW name and
  *   can coexist with in-flight nodes from the previous revision until
  *   the consumer disposes them. This is the only browser-API-compliant
@@ -232,17 +232,13 @@ const PROCESSOR_NAME_HASH_LEN = 8;
 const computeProcessorName = (
   exportName: string,
   absSourcePath: string,
-  wasmBytes: Uint8Array,
+  revisionHash: string,
 ): string => {
   const srcSuffix = createHash("sha256")
     .update(absSourcePath)
     .digest("hex")
     .slice(0, PROCESSOR_NAME_HASH_LEN);
-  const revSuffix = createHash("sha256")
-    .update(wasmBytes)
-    .digest("hex")
-    .slice(0, PROCESSOR_NAME_HASH_LEN);
-  return `${exportName}__${srcSuffix}__${revSuffix}`;
+  return `${exportName}__${srcSuffix}__${revisionHash}`;
 };
 
 // A separate graph owns every relative helper evaluation. External packages keep
@@ -507,7 +503,7 @@ const decodeSourceFromDevUrl = (encoded: string): string =>
   Buffer.from(encoded, "base64url").toString("utf8");
 
 /**
- * 8-hex-char content hash over the compiled WASM bytes. Used in dev to
+ * 8-hex-char content hash over WASM and the emitted worklet contract. Used in dev to
  * pin `moduleUrl` and `wasmUrl` to the same compile revision: both URLs
  * carry this token, so even if the author edits and saves between
  * `audioWorklet.addModule(...)` and `fetch(wasmUrl)` the original URLs
@@ -515,8 +511,16 @@ const decodeSourceFromDevUrl = (encoded: string): string =>
  * vs WASM bytes skew, `07-unplugin.md` §3 dev/build symmetry).
  */
 const REVISION_HASH_LEN = 8;
-const computeRevisionHash = (wasm: Uint8Array): string =>
-  createHash("sha256").update(wasm).digest("hex").slice(0, REVISION_HASH_LEN);
+const computeRevisionHash = (
+  wasm: Uint8Array,
+  meta: ReturnType<typeof extractWorkletMeta>,
+  exportName: string,
+): string =>
+  createHash("sha256")
+    .update(wasm)
+    .update(emitWorkletTemplate({ processorName: exportName, meta }))
+    .digest("hex")
+    .slice(0, REVISION_HASH_LEN);
 
 const detectWorkletQuery = (source: string): { basePath: string } | null => {
   const queryIdx = source.indexOf("?");
@@ -603,6 +607,21 @@ const assetBaseName = (sourcePath: string): string => {
   if (base.endsWith(".processor")) base = base.slice(0, -".processor".length);
   if (base.endsWith(".uwk")) base = base.slice(0, -".uwk".length);
   return base;
+};
+
+const compileBuildProcessor = async (sourcePath: string) => {
+  const sourceModule = await loadProcessorModuleFresh(sourcePath);
+  const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
+  const result = await compile(processor);
+  const meta = extractWorkletMeta(
+    processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+  );
+  const processorName = computeProcessorName(
+    exportName,
+    sourcePath,
+    computeRevisionHash(result.wasm, meta, exportName),
+  );
+  return { sourceModule, result, meta, processorName };
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -892,9 +911,21 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   };
   const findSnapshot = (sourcePath: string, hash: string): CompileSnapshot | undefined =>
     snapshotsBySource.get(sourcePath)?.find((s) => s.hash === hash);
+  const buildProcessors = new Map<string, ReturnType<typeof compileBuildProcessor>>();
+  const loadBuildProcessor = (sourcePath: string): ReturnType<typeof compileBuildProcessor> => {
+    let pending = buildProcessors.get(sourcePath);
+    if (!pending) {
+      pending = compileBuildProcessor(sourcePath);
+      buildProcessors.set(sourcePath, pending);
+    }
+    return pending;
+  };
   return {
     name: "@unworklet/unplugin",
     enforce: "pre",
+    buildStart() {
+      buildProcessors.clear();
+    },
     config(userConfig, env) {
       // Dev-only gate for the core registry / page bridge: a single statically-
       // replaced boolean — `true` in serve, `false` in build — so production
@@ -1052,15 +1083,15 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
             const sourceModule = await ssrLoadSource(viteDevServer!, sourcePath);
             const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
             const result = await compile(processor);
-            const freshHash = computeRevisionHash(result.wasm);
             const freshMeta = extractWorkletMeta(
               processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
             );
+            const freshHash = computeRevisionHash(result.wasm, freshMeta, exportName);
             recordSnapshot(sourcePath, {
               hash: freshHash,
               wasm: result.wasm,
               meta: freshMeta,
-              processorName: computeProcessorName(exportName, sourcePath, result.wasm),
+              processorName: computeProcessorName(exportName, sourcePath, freshHash),
             });
             if (freshHash !== hash) {
               // Revision the client asked for is gone; signal a hard
@@ -1518,18 +1549,11 @@ ensureClient();
           });
         }
 
-        // Build path: rolldown emits the chunk via `this.emitFile`, snapshot
-        // ring not involved. Recompile + recompute the processorName from
-        // the WASM bytes so dev and build produce the same registration name
-        // for a given source / revision pair.
-        const sourceModule = await loadProcessorModuleFresh(sourcePath);
-        const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
-        const buildResult = await compile(processor);
-        const meta = extractWorkletMeta(
-          processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
-        );
+        // The client module and emitted worklet must describe the same evaluation,
+        // even if a helper changes while the bundler is producing the chunks.
+        const { processorName, meta } = await loadBuildProcessor(sourcePath);
         return emitWorkletTemplate({
-          processorName: computeProcessorName(exportName, sourcePath, buildResult.wasm),
+          processorName,
           meta,
         });
       }
@@ -1540,10 +1564,11 @@ ensureClient();
       // it when the file changes (= full-page reload picks up edits without
       // restarting the dev server).
       this.addWatchFile(sourcePath);
-      const sourceModule =
-        isServe && viteDevServer
+      const sourceModule = isServe
+        ? viteDevServer
           ? await ssrLoadSource(viteDevServer, sourcePath)
-          : await loadProcessorModuleFresh(sourcePath);
+          : await loadProcessorModuleFresh(sourcePath)
+        : (await loadBuildProcessor(sourcePath)).sourceModule;
       // Dev mode: fan watch dependencies out across every transitive file
       // reachable from the processor source = a helper edit invalidates this
       // virtual module just like editing the entry would (= 07-unplugin.md
@@ -1581,11 +1606,11 @@ ensureClient();
         // template. Raw middleware output would skip that step and the
         // worklet realm would choke on the bare specifier.
         const result = await compile(processor);
-        const hash = computeRevisionHash(result.wasm);
         const devMeta = extractWorkletMeta(
           processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
         );
-        const devProcessorName = computeProcessorName(exportName, sourcePath, result.wasm);
+        const hash = computeRevisionHash(result.wasm, devMeta, exportName);
+        const devProcessorName = computeProcessorName(exportName, sourcePath, hash);
         // Snapshot the full per-revision bundle = wasm + meta + processorName.
         // The worklet-entry virtual load and the wasm middleware both look
         // their per-request hash up here; both find the same artifacts or
@@ -1612,7 +1637,7 @@ ensureClient();
         // Build mode: emit chunk + asset via rolldown's `emitFile`. URLs are
         // resolved through `import.meta.ROLLUP_FILE_URL_<refId>` placeholders
         // which rolldown rewrites to `new URL(...)` at output time.
-        const result = await compile(processor);
+        const { result, processorName: buildProcessorName } = await loadBuildProcessor(sourcePath);
         const wasmRefId = this.emitFile({
           type: "asset",
           name: `${baseName}.wasm`,
@@ -1625,7 +1650,7 @@ ensureClient();
         });
         moduleUrlExpr = `import.meta.ROLLUP_FILE_URL_${workletRefId}`;
         wasmUrlExpr = `import.meta.ROLLUP_FILE_URL_${wasmRefId}`;
-        processorName = computeProcessorName(exportName, sourcePath, result.wasm);
+        processorName = buildProcessorName;
         bakedSampleRate = result.sampleRate;
 
         if (emitAnalysisArtifacts) {
@@ -1656,7 +1681,7 @@ ensureClient();
       // the bundler URLs (moduleUrl / wasmUrl / processorName). The function
       // entries (initialize / process / parameterDescriptors) are inherited
       // from the original namespace via spread. `processorName` was already
-      // computed with the WASM revision hash folded in (in each of the dev /
+      // computed with the WASM and metadata revision hash (in each of the dev /
       // build branches), so different revisions of the same source never
       // collide on `registerProcessor`.
       return [
@@ -1718,7 +1743,9 @@ ensureClient();
         .map((proc) => ctx.server.moduleGraph.getModuleById(`${VIRTUAL_ID_PREFIX}${proc}`))
         .filter((m): m is NonNullable<typeof m> => m != null);
       for (const m of mods) ctx.server.moduleGraph.invalidateModule(m);
-      return mods.length > 0 ? mods : undefined;
+      // Vite must also timestamp the changed raw modules so the wrapper's imports
+      // bypass the browser ESM cache, including edits to transitive helpers.
+      return mods.length > 0 ? [...new Set([...ctx.modules, ...mods])] : undefined;
     },
     devtools: {
       setup: (ctx) => {
