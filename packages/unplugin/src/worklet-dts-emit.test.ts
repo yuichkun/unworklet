@@ -68,7 +68,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("configResolved completes only after the initial witness I/O finishes", async () => {
+test("build configResolved completes only after the initial witness I/O finishes", async () => {
   vi.resetModules();
   const release = deferred();
   const entered = deferred();
@@ -93,7 +93,7 @@ test("configResolved completes only after the initial witness I/O finishes", asy
   mkdirSync(path.join(root, ".unworklet"));
   writeFileSync(path.join(root, ".unworklet", "worklets.d.ts"), "stale witness");
   const completion = (plugin.configResolved as unknown as ConfigResolvedFn)({
-    command: "serve",
+    command: "build",
     root,
     base: "/",
   });

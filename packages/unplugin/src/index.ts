@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { ANALYSIS_ARTIFACT_MAX_BYTES, partitionAnalysisArtifacts } from "./analysis-artifacts.ts";
 import { withExtensionHint } from "./native-import-hint.ts";
 import { preserveNativeCommonJs } from "./native-commonjs.ts";
+import { discoverWorkletImports } from "./worklet-discovery.ts";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
@@ -840,7 +841,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   // reference needed (mirrors Nuxt's `.nuxt/` codegen + Prisma's generate).
   const workletWitness = new Map<string, WorkletNamespace>();
   let witnessWarned = false;
-  const writeWorkletsWitness = async (): Promise<void> => {
+  const emitWorkletsWitness = async (): Promise<void> => {
     // Only write into an existing project root. A non-existent root means a
     // synthetic config (e.g. a unit test passing a placeholder path), and the
     // recursive mkdir would otherwise materialise that fake tree on disk.
@@ -848,7 +849,9 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
     try {
       const outDir = path.join(projectRoot, ".unworklet");
       await mkdir(outDir, { recursive: true });
-      const entries = [...workletWitness].map(([source, ns]) => ({ source, ns }));
+      const entries = [...workletWitness]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([source, ns]) => ({ source, ns }));
       const next = workletsDts(entries);
       // Write ONLY when the content actually changed. The dev server re-runs every
       // `?worklet` load on each page load, which calls this — rewriting an unchanged
@@ -872,6 +875,11 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       );
     }
   };
+  let witnessWrite = Promise.resolve();
+  const writeWorkletsWitness = (): Promise<void> => {
+    witnessWrite = witnessWrite.then(emitWorkletsWitness);
+    return witnessWrite;
+  };
   // Source paths the plugin has accepted via `?worklet` resolveId. Only these
   // are eligible for dev-mode evaluation + `compile(...)`. Without this gate,
   // the middleware would happily evaluate any absolute path that base64url-
@@ -883,6 +891,9 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   // `load` and the middleware = transitive helper-module edits flow through
   // Vite's module graph instead of Node's static ESM cache.
   let viteDevServer: ViteDevServerLike | null = null;
+  let discoveredSources = new Set<string>();
+  const ownedSources = new Set<string>();
+  let refreshDevWitness: ((file?: string) => Promise<void>) | undefined;
   // Dev cache of (sourcePath, revisionHash) → compile snapshot. Every
   // snapshot holds **all** the per-revision artifacts a single createNode
   // sequence needs (= wasm bytes + extracted meta + processorName) so the
@@ -927,8 +938,21 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   return {
     name: "@unworklet/unplugin",
     enforce: "pre",
-    buildStart() {
-      buildProcessors.clear();
+    buildStart: {
+      order: "post",
+      sequential: true,
+      async handler() {
+        buildProcessors.clear();
+        if (isServe && this.environment.name === "client") await refreshDevWitness?.();
+      },
+    },
+    async buildEnd() {
+      if (isServe) return;
+      const modules = new Set(this.getModuleIds());
+      for (const source of workletWitness.keys()) {
+        if (!modules.has(`${VIRTUAL_ID_PREFIX}${source}`)) workletWitness.delete(source);
+      }
+      await writeWorkletsWitness();
     },
     config(userConfig, env) {
       // Dev-only gate for the core registry / page bridge: a single statically-
@@ -990,7 +1014,10 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       const resolvedHeaders =
         (config as { server?: { headers?: Record<string, string> } }).server?.headers ?? {};
       pageCoep = resolvedHeaders["Cross-Origin-Embedder-Policy"];
-      return writeWorkletsWitness();
+      if (!isServe) {
+        workletWitness.clear();
+        return writeWorkletsWitness();
+      }
     },
     transformIndexHtml() {
       if (!isServe || !devtoolsActive) return;
@@ -1014,6 +1041,40 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
     },
     configureServer(server) {
       viteDevServer = server as unknown as ViteDevServerLike;
+      let pending = Promise.resolve();
+      refreshDevWitness = (file) => {
+        pending = pending.then(async () => {
+          if (!projectRoot || !existsSync(projectRoot)) return;
+          if (file) {
+            for (const mod of server.moduleGraph.getModulesByFile(file) ?? []) {
+              server.moduleGraph.invalidateModule(mod);
+            }
+          }
+          const sources = new Set<string>();
+          for (const { source, importer } of discoverWorkletImports(projectRoot)) {
+            const query = detectWorkletQuery(source);
+            if (query) sources.add(resolveAgainstImporter(query.basePath, importer)!);
+          }
+          for (const source of workletWitness.keys()) {
+            if ((ownedSources.has(source) && !sources.has(source)) || !existsSync(source)) {
+              workletWitness.delete(source);
+            }
+          }
+          discoveredSources = sources;
+          for (const source of sources) {
+            ownedSources.add(source);
+            try {
+              const mod = await ssrLoadSource(viteDevServer!, source);
+              workletWitness.set(source, pickCompiledProcessor(mod, source).processor.worklet);
+            } catch {
+              // An invalid or deleted source must not keep a precise, stale contract.
+              workletWitness.delete(source);
+            }
+          }
+          await writeWorkletsWitness();
+        });
+        return pending;
+      };
       // DevTools panel iframe COEP (serve-only). The `@vitejs/devtools` host serves
       // the panel SPA as a static iframe at `/__unworklet/`, and its static
       // middleware sets only content headers — never COEP. A cross-origin-isolated
@@ -1115,6 +1176,11 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
           res.end(String(err));
         });
       });
+    },
+    async watchChange(file, change) {
+      if (isServe && change.event !== "update" && !file.includes("/.unworklet/")) {
+        await refreshDevWitness?.(file);
+      }
     },
     transform(code, id) {
       // Lower a `.uwk.ts` sugar source to plain core `.ts` before any downstream
@@ -1722,16 +1788,22 @@ ensureClient();
       // processor whose transitive deps include it — so editing a subgraph file
       // recompiles the processors that instantiate it, not just the entry.
       const server = viteDevServer;
-      const affected = allowedSources.has(ctx.file)
+      const sources = new Set([...allowedSources, ...discoveredSources]);
+      const affected = sources.has(ctx.file)
         ? [ctx.file]
         : isServe && server
-          ? [...allowedSources].filter((p) => collectTransitiveDeps(server, p).has(ctx.file))
+          ? [...sources].filter((p) => collectTransitiveDeps(server, p).has(ctx.file))
           : [];
+      if (refreshDevWitness && !ctx.file.includes("/.unworklet/")) {
+        await refreshDevWitness(ctx.file);
+      }
       if (affected.length === 0) return;
       // Re-evaluate each affected processor and re-emit the witness so the editor's
       // file watch refreshes node.params completions even with no browser attached
       // to drive an HMR `load` (best-effort: a parse error mid-edit must not break HMR).
-      for (const proc of affected) {
+      for (const proc of affected.filter(
+        (source) => !refreshDevWitness || !ownedSources.has(source),
+      )) {
         try {
           const mod =
             isServe && server

@@ -33,8 +33,12 @@ Type the `?worklet` import with one line in your `tsconfig.json` — no
 On `vite dev` / `vite build` the plugin writes `.unworklet/` — that `tsconfig.json`
 plus a `worklets.d.ts` of per-processor types — so `node.params.<name>` completes
 and an undeclared name (or a wrong-typed assignment) is a type error, refreshed as
-you edit. Adding processors only regrows `worklets.d.ts`; the tsconfig never
-changes. `extends` doesn't merge `include`, so don't declare your own on this
+you edit. Dev startup discovers `?worklet` imports in the tsconfig's sources and
+referenced projects (or JavaScript/TypeScript files under the root without a
+tsconfig), so precise types are available before a browser connects. Source,
+helper, and import changes refresh these types; removed or invalid processors
+lose their stale declarations. The generated tsconfig never changes as processors
+are added or removed. `extends` doesn't merge `include`, so don't declare your own on this
 tsconfig. Add `.unworklet/` to `.gitignore`; it's a generated artifact (the same
 shape as Nuxt's `.nuxt/` or Prisma's client).
 
