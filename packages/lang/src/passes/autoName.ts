@@ -102,7 +102,9 @@ function autoNamedInit(init: ts.Expression, name: string): ts.Expression | undef
   // `.expose({...})` (param / state / buffer) — the name lives in the expose
   // options; derive it from the binding when absent, never clobber an explicit one.
   if (outer !== undefined && outerMethod === "expose") {
-    return optionsHaveName(outer) ? undefined : withNameInOptions(outer, name);
+    return optionsHaveName(outer) || !argIsInjectable(outer)
+      ? undefined
+      : withNameInOptions(outer, name);
   }
   // A no-arg `.named()` marker on a name-optional state / buffer — fill the name.
   if (outer !== undefined && outerMethod === "named" && outer.arguments.length === 0) {

@@ -39,6 +39,9 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Fixed
 
+- Language lowering preserves `.expose(options)` variable and helper-returned
+  options, including explicit names, snapshot policy, and scalar publish settings.
+
 - Automatic chain audio snapshots use distinct filenames within a test and
   restart numbering for retries, repeats, and reruns, including cached setup
   dependencies with `isolate: false`. Tests with multiple unnamed assertions

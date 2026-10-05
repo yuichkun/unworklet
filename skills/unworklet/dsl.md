@@ -213,7 +213,9 @@ declared name; an explicit name always wins.
 Name-REQUIRED helpers (`param` / `audioInput` / `audioOutput` / `event` /
 `event.midi`) always derive. Name-OPTIONAL `state` / `state.buffer` derive ONLY
 via an explicit marker (`.expose({})` without a name, or a no-arg `.named()`); a
-plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
+plain `state.f32(0)` stays anonymous. Non-literal option arguments, including
+variables and helper calls passed to `.expose(options)`, are preserved unchanged;
+include an explicit name in those options when the declaration needs one.
 
 ### Does NOT lower (confirmed absences — do not emit as DSP)
 
