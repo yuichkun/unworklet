@@ -891,8 +891,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   // `load` and the middleware = transitive helper-module edits flow through
   // Vite's module graph instead of Node's static ESM cache.
   let viteDevServer: ViteDevServerLike | null = null;
-  let discoveredSources = new Set<string>();
-  const ownedSources = new Set<string>();
+  let activeSources = new Set<string>();
   let refreshDevWitness: ((file?: string) => Promise<void>) | undefined;
   // Dev cache of (sourcePath, revisionHash) → compile snapshot. Every
   // snapshot holds **all** the per-revision artifacts a single createNode
@@ -1055,14 +1054,37 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
             const query = detectWorkletQuery(source);
             if (query) sources.add(resolveAgainstImporter(query.basePath, importer)!);
           }
+          const importerUrls = new Set<string>();
+          for (const source of allowedSources) {
+            const mod = server.moduleGraph.getModuleById(`${VIRTUAL_ID_PREFIX}${source}`);
+            for (const importer of mod?.importers ?? []) {
+              if (!importer.file || existsSync(importer.file)) importerUrls.add(importer.url);
+            }
+          }
+          const currentImporters = new Set<string>();
+          for (const url of importerUrls) {
+            try {
+              // Transforming refreshes Vite's import edges without executing application code.
+              if (await server.transformRequest(url)) currentImporters.add(url);
+            } catch {
+              // An importer being edited must not preserve an obsolete edge.
+            }
+          }
+          for (const source of allowedSources) {
+            const mod = server.moduleGraph.getModuleById(`${VIRTUAL_ID_PREFIX}${source}`);
+            if (
+              [...(mod?.importers ?? [])].some((importer) => currentImporters.has(importer.url))
+            ) {
+              sources.add(source);
+            }
+          }
           for (const source of workletWitness.keys()) {
-            if ((ownedSources.has(source) && !sources.has(source)) || !existsSync(source)) {
+            if (!sources.has(source) || !existsSync(source)) {
               workletWitness.delete(source);
             }
           }
-          discoveredSources = sources;
+          activeSources = sources;
           for (const source of sources) {
-            ownedSources.add(source);
             try {
               const mod = await ssrLoadSource(viteDevServer!, source);
               workletWitness.set(source, pickCompiledProcessor(mod, source).processor.worklet);
@@ -1788,7 +1810,7 @@ ensureClient();
       // processor whose transitive deps include it — so editing a subgraph file
       // recompiles the processors that instantiate it, not just the entry.
       const server = viteDevServer;
-      const sources = new Set([...allowedSources, ...discoveredSources]);
+      const sources = new Set([...allowedSources, ...activeSources]);
       const affected = sources.has(ctx.file)
         ? [ctx.file]
         : isServe && server
@@ -1801,9 +1823,7 @@ ensureClient();
       // Re-evaluate each affected processor and re-emit the witness so the editor's
       // file watch refreshes node.params completions even with no browser attached
       // to drive an HMR `load` (best-effort: a parse error mid-edit must not break HMR).
-      for (const proc of affected.filter(
-        (source) => !refreshDevWitness || !ownedSources.has(source),
-      )) {
+      for (const proc of refreshDevWitness ? [] : affected) {
         try {
           const mod =
             isServe && server

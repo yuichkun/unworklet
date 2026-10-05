@@ -166,6 +166,58 @@ test("a runtime-only processor keeps refreshing outside the editor discovery fil
   expect(await witness()).not.toContain('"gain"');
 });
 
+test("a discovered processor keeps refreshing after its import becomes plugin-generated", async () => {
+  await start([
+    {
+      name: "runtime-processor-import",
+      transform(code, id) {
+        if (id === path.join(root, "main.ts") && code.includes("GENERATED_PROCESSOR")) {
+          return 'import tone from "./tone.processor.ts?worklet"; console.log(tone);';
+        }
+      },
+    },
+  ]);
+  await server!.transformRequest("/main.ts");
+  await server!.transformRequest(`\0unworklet:${path.join(root, "tone.processor.ts")}`);
+  expect(await witness()).toContain('"gain"');
+  await writeFile(path.join(root, "main.ts"), "// GENERATED_PROCESSOR");
+  await writeFile(path.join(root, "tone.processor.ts"), processorSource("cutoff"));
+  await expect.poll(witness).toContain('"cutoff"');
+  expect(await witness()).not.toContain('"gain"');
+});
+
+test.each(["remove import", "delete importer"])(
+  "a runtime-only witness is pruned when its importer changes: %s",
+  async (change) => {
+    await writeFile(path.join(root, "tsconfig.json"), JSON.stringify({ files: [] }));
+    let onProcessorUpdate = (): void => {};
+    await start([
+      {
+        name: "observe-witness-refresh",
+        enforce: "post",
+        handleHotUpdate(ctx) {
+          if (ctx.file === path.join(root, "tone.processor.ts")) onProcessorUpdate();
+        },
+      },
+    ]);
+    await server!.transformRequest("/main.ts");
+    await server!.transformRequest(`\0unworklet:${path.join(root, "tone.processor.ts")}`);
+    expect(await witness()).toContain('"gain"');
+    if (change === "remove import") {
+      await writeFile(path.join(root, "main.ts"), "console.log('no processor');");
+    } else {
+      await rm(path.join(root, "main.ts"));
+    }
+    await expect.poll(witness).toBe("");
+    const refreshed = new Promise<void>((resolve) => {
+      onProcessorUpdate = resolve;
+    });
+    await writeFile(path.join(root, "tone.processor.ts"), processorSource("cutoff"));
+    await refreshed;
+    expect(await witness()).toBe("");
+  },
+);
+
 test("startup waits for other plugins to configure their virtual processor helpers", async () => {
   await writeFile(
     path.join(root, "tone.processor.ts"),
