@@ -151,6 +151,7 @@ export default defineConfig({
       "packages/unplugin/devtools-ui/vite.config.ts",
       "packages/core/vite.browser.config.ts",
       "packages/core/vite.browser-postmessage.config.ts",
+      "packages/unplugin/vite.integration.config.ts",
       // Repo-wide release invariants (the lockstep version guard) — checks that
       // span every package at once, so they belong to no single package's suite.
       // They need their own project config because listing `projects` replaces

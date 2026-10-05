@@ -46,6 +46,13 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Fixed
 
+- Vite configuration waits for initial worklet type generation while keeping
+  generated configuration files available synchronously.
+- `$prev` feedback derives its scalar from the resolved return type regardless of
+  quote style, whitespace, parentheses, type aliases, or intersections.
+- Generated `$prev` feedback slots and return temporaries avoid collisions with
+  authored identifiers.
+
 - Processors without declared audio ports can be created for MIDI and control
   processing. Their native node has one silent output; public port maps stay empty.
 - Disposing a node stops its DSP after the queued shutdown reaches the worklet,
@@ -64,6 +71,10 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   on Node 20.0.0, preserving the declared Node >=20 support.
 - Parameter snapshots and devtools captures preserve current `AudioParam.value`
   settings while the context is suspended, including before the first render.
+- Worklet revision URLs and processor registrations include their metadata, so
+  parameter renames with unchanged WASM can coexist in the same AudioContext.
+- Vite HMR refreshes the raw processor namespace along with its compiled wrapper,
+  keeping parameters, migrations, and DSP revisions consistent.
 
 ## 0.4.1 — 2026-10-04
 

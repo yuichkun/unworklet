@@ -237,3 +237,13 @@ const ctx = new AudioContext({ sampleRate: 48000 });
 `packages/core/src/types.ts` L697-706) The full load sequence and the
 `UnworkletNode` surface (`params` / `state` / `events` / `midi` / `inputs` /
 `outputs`) → dsl.md §5.
+
+## Hot reload
+
+A `?worklet` HMR update contains the current processor namespace, including its
+parameters and migrations, together with the matching compiled URLs. Worklet
+revision identity includes WASM and runtime metadata. A metadata-only edit, such
+as a parameter rename, can register alongside the prior revision in the same
+AudioContext. Retained revision URLs keep their original contents; revisions
+outside the bounded server cache can expire. The consumer decides when to create
+or replace nodes and disposes nodes it no longer needs.
