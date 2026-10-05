@@ -1,4 +1,5 @@
 import { expect, test } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { createNode, inspectSnapshot, replaceProcessor } from "../../index.ts";
 import frozenCounter from "./fixtures/restore-frozen-counter.processor.ts?worklet";
 import oldProcessor from "./fixtures/snapshot-old.processor.ts?worklet";
@@ -84,10 +85,19 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
   mute.gain.value = 0;
   node.outputs.main!.connect(mute);
   mute.connect(ctx.destination);
+  const start = document.createElement("button");
+  start.textContent = "Start restore reproduction";
+  document.body.append(start);
   try {
     const saved = await node.snapshot();
     node.params.freeze!.value = 0;
-    await ctx.resume();
+    const resumed = new Promise<void>((resolve, reject) => {
+      start.addEventListener("click", () => void ctx.resume().then(resolve, reject), {
+        once: true,
+      });
+    });
+    await userEvent.click(start);
+    await resumed;
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(inspectSnapshot(await node.snapshot()).slots.count).not.toEqual({
       kind: "state",
@@ -109,6 +119,7 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
   } finally {
     node.dispose();
     mute.disconnect();
+    start.remove();
     await ctx.close();
   }
 });
