@@ -1,3 +1,4 @@
+import { editorAssets } from "./editor-assets.ts";
 import { DevTools } from "@vitejs/devtools";
 import vue from "@vitejs/plugin-vue";
 import { fileURLToPath } from "node:url";
@@ -49,7 +50,9 @@ export default defineConfig(async ({ command }) => {
     },
     base: "./",
     preview: { headers: { ...crossOriginIsolation } },
+    worker: { plugins: () => [editorAssets()] },
     plugins: [
+      editorAssets(),
       // `@vitejs/plugin-vue` is typed `Plugin<VueApi>` while the others are
       // `Plugin<any>`; unioning the two structurally-huge generics when the array is
       // inferred trips TS2321 (excessive comparison depth). Routing `vue()` through

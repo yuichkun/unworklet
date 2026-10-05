@@ -253,7 +253,8 @@ is stubbed for the browser; its in-browser path is what runs.)
 import { lower, LowerError } from "@unworklet/lang";
 
 const tsSource = lower(uwkSource, { exportName: "myProcessor" });
-// LowerError carries a source location for malformed sugar.
+// LowerError carries a stable id and message. Its optional sourceRange contains
+// original-source UTF-16 offsets (start/length) when the failing pass supplies them.
 ```
 
 For a headless render, `lowerToProcessor(source)` lowers straight to a

@@ -36,6 +36,7 @@ test("sound-checks:update preserves every golden when sources are unchanged", as
   mkdirSync(path.join(root, "scripts"));
   cpSync(path.join(import.meta.dirname, "demo-build.ts"), path.join(root, "scripts/demo-build.ts"));
   symlinkSync(path.resolve(demo, "../../packages"), path.join(root, "packages"));
+  symlinkSync(path.join(demo, "editor-assets.ts"), path.join(fixture, "editor-assets.ts"));
   try {
     for (const file of [
       "package.json",

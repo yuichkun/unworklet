@@ -173,6 +173,10 @@ async function loadDemoConfig(command: "build" | "serve") {
   );
   const config = join(root, "examples/demo/vite.config.ts");
   writeFileSync(config, readFileSync(join(repo, "examples/demo/vite.config.ts")));
+  symlinkSync(
+    join(repo, "examples/demo/editor-assets.ts"),
+    join(root, "examples/demo/editor-assets.ts"),
+  );
   writeFileSync(
     join(root, "scripts/demo-build.ts"),
     `
@@ -193,10 +197,16 @@ async function loadDemoConfig(command: "build" | "serve") {
 test("loads the demo config from a clean checkout before plugin dist exists", async () => {
   const loaded = await loadDemoConfig("build");
   expect(loaded?.config.plugins).toContainEqual({ name: "fresh-unplugin" });
+  expect(loaded?.config.plugins).toContainEqual(
+    expect.objectContaining({ name: "uwk-editor-assets" }),
+  );
 });
 
 test("loads the workspace development export without requiring plugin dist", async () => {
   const loaded = await loadDemoConfig("serve");
+  expect(loaded?.config.plugins).toContainEqual(
+    expect.objectContaining({ name: "uwk-editor-assets" }),
+  );
   const source = loaded?.config.plugins?.find(
     (plugin) => plugin && "name" in plugin && plugin.name === "source-unplugin",
   ) as unknown as { configResolved: () => Promise<{ value: number }> };

@@ -11,3 +11,8 @@ declare module "*.css";
 
 // Self-hosted fonts (Geist / JetBrains Mono) — side-effect CSS imports with no types.
 declare module "@fontsource-variable/*";
+
+declare module "virtual:uwk-editor-snapshot" {
+  const snapshot: import("../../../packages/lang/src/program.ts").FsSnapshot;
+  export default snapshot;
+}

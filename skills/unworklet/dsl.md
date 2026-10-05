@@ -163,7 +163,9 @@ expected (subgraph/helper arg) keeps its reference. — `bareState.ts:75,81,89`
 
 An `if` with a `Node<'bool'>` condition lowers; a JS-boolean condition stays a
 build-time `if`. **Only three shapes lower**; any other DSP-conditioned `if`
-throws `uwk-unsupported-if` (rewrite to `select(...)`).
+throws `uwk-unsupported-if` (rewrite to `select(...)`). The error’s optional
+`sourceRange` identifies the condition in the original source using UTF-16
+`start` / `length` offsets; other lowering errors may have no position.
 
 | sugar                                             | lowers to                                 |
 | ------------------------------------------------- | ----------------------------------------- |

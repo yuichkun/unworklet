@@ -525,3 +525,17 @@ const object = { gain };
 process(() => {});`);
   expect(lowered).toContain("const object = { gain }");
 });
+
+test("unsupported DSP if carries an optional range in the original author source", () => {
+  const source = `const s = state.f32(0);\nprocess(() => { forSample(() => { if (s > 0) { s.write(1); s.write(2); } }); });`;
+  try {
+    lower(source);
+    expect.unreachable("unsupported if should fail");
+  } catch (error) {
+    expect(error).toBeInstanceOf(LowerError);
+    const diagnostic = error as LowerError;
+    expect(diagnostic.id).toBe("uwk-unsupported-if");
+    expect(diagnostic.sourceRange).toEqual({ start: source.indexOf("s > 0"), length: 5 });
+  }
+  expect(new LowerError("uwk-empty", "missing process").sourceRange).toBeUndefined();
+});

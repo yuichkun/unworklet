@@ -55,7 +55,7 @@ process(() => {
 const LOWPASS = `// lowpass.uwk.ts — a one-pole lowpass (per channel)
 const input  = audioInput({ channels: 2, name: "main" });
 const out    = audioOutput({ channels: 2, name: "main" });
-const cutoff = param.f32({ default: 0.2, min: 0.01, max: 1 }).named();
+const cutoff = param.f32({ default: 0.2, min: 0.01, max: 1, automationRate: "a-rate" }).named();
 
 // y[n] = k*x[n] + (1-k)*y[n-1]   ($prev = previous output)
 const onepole = defineSubgraph((k: Node<"f32">) => ({
@@ -75,8 +75,8 @@ process(() => {
 const TREMOLO = `// tremolo.uwk.ts — amplitude wobble from an LFO
 const input = audioInput({ channels: 2, name: "main" });
 const out   = audioOutput({ channels: 2, name: "main" });
-const rate  = param.f32({ default: 6, min: 0.1, max: 20 }).named();
-const depth = param.f32({ default: 0.9, min: 0, max: 1 }).named();
+const rate  = param.f32({ default: 6, min: 0.1, max: 20, automationRate: "a-rate" }).named();
+const depth = param.f32({ default: 0.9, min: 0, max: 1, automationRate: "a-rate" }).named();
 const lfo   = state.f32(0).named();
 
 process(() => {
@@ -92,7 +92,7 @@ process(() => {
 const BITCRUSH = `// bitcrush.uwk.ts — quantize the signal to N bits
 const input = audioInput({ channels: 2, name: "main" });
 const out   = audioOutput({ channels: 2, name: "main" });
-const bits  = param.f32({ default: 5, min: 1, max: 16 }).named();
+const bits  = param.f32({ default: 5, min: 1, max: 16, automationRate: "a-rate" }).named();
 
 process(() => {
   forSample((i) => {
@@ -127,9 +127,9 @@ process(() => {
 const EQ3 = `// eq3.uwk.ts — a 3-band tone control (low / mid / high)
 const input = audioInput({ channels: 2, name: "main" });
 const out   = audioOutput({ channels: 2, name: "main" });
-const low   = param.f32({ default: 1, min: 0, max: 2 }).named();
-const mid   = param.f32({ default: 1, min: 0, max: 2 }).named();
-const high  = param.f32({ default: 1, min: 0, max: 2 }).named();
+const low   = param.f32({ default: 1, min: 0, max: 2, automationRate: "a-rate" }).named();
+const mid   = param.f32({ default: 1, min: 0, max: 2, automationRate: "a-rate" }).named();
+const high  = param.f32({ default: 1, min: 0, max: 2, automationRate: "a-rate" }).named();
 
 // one-pole lowpass: k·x + (1-k)·$prev  ($prev = the previous output)
 const lp = defineSubgraph((k: Node<"f32">) => ({
@@ -164,7 +164,7 @@ const dly  = state.buffer.f32({ size: 64 }).named("dly"); // lookahead delay lin
 const head = state.i32(0).named("head");
 const env  = state.f32(0).named("env");
 // a typed event back to the main thread, fired sample-accurately on an overshoot
-const overshoot = event({ to: "main", name: "overshoot" });
+const overshoot = event<{ level: number }>({ to: "main", name: "overshoot" });
 
 process(() => {
   forSample((i) => {
@@ -185,7 +185,7 @@ process(() => {
 const REVERB = `// reverb.uwk.ts — a small feedback reverb (4 comb filters + 1 allpass)
 const input = audioInput({ channels: 1, name: "main" });
 const out   = audioOutput({ channels: 1, name: "main" });
-const mix   = param.f32({ default: 0.5, min: 0, max: 1 }).named();
+const mix   = param.f32({ default: 0.5, min: 0, max: 1, automationRate: "a-rate" }).named();
 
 // four parallel feedback combs, prime-ish delay lengths (Schroeder/Freeverb-style)
 const c0 = state.buffer.f32({ size: 1116 }).named("c0");

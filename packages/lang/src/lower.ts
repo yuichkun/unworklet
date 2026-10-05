@@ -86,7 +86,11 @@ const OPTIONS_MACRO = "options";
 /** A lowering failure carrying a stable id for diagnostics. */
 export class LowerError extends Error {
   readonly id: string;
-  constructor(id: string, message: string) {
+  constructor(
+    id: string,
+    message: string,
+    readonly sourceRange?: { start: number; length: number },
+  ) {
     super(message);
     this.id = id;
     this.name = "LowerError";
