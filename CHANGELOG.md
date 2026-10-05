@@ -39,6 +39,10 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Fixed
 
+- Processors without declared audio ports can be created for MIDI and control
+  processing. Their native node has one silent output; public port maps stay empty.
+- Disposing a node stops its DSP after the queued shutdown reaches the worklet,
+  including after a processing failure, and releases its active processor lifetime.
 - Automatic chain audio snapshots use distinct filenames within a test and
   restart numbering for retries, repeats, and reruns, including cached setup
   dependencies with `isolate: false`. Tests with multiple unnamed assertions

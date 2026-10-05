@@ -1842,3 +1842,25 @@ test("malformed typed-array and scalar message fields do not trap the audio proc
   expect(processor.worklet.process(self, [], outputs, {})).toBe(true);
   expect(outputs[0]![0]![0]).toBe(1.5);
 });
+
+for (const phase of ["before processing", "after processing", "after failure"] as const) {
+  test(`shutdown releases worklet lifetime ${phase}`, async () => {
+    const processor = defineProcessor(() => {
+      const out = audioOutput({ name: "main", channels: 1 });
+      return { process: () => forSample((i) => out.ch(0).at(i).write(1)) };
+    });
+    const { wasm } = await compile(processor);
+    const self = makeMockSelf();
+    processor.worklet.initialize(self, { processorOptions: { wasm } });
+    if (phase !== "before processing") {
+      const output = new Float32Array(phase === "after failure" ? 64 : 128);
+      expect(processor.worklet.process(self, [], [[output]], {})).toBe(true);
+    }
+    firePortMessage(self, { kind: "shutdown" });
+    for (let i = 0; i < 3; i++) {
+      const output = new Float32Array(128).fill(7);
+      expect(processor.worklet.process(self, [], [[output]], {})).toBe(false);
+      expect(Array.from(output)).toEqual(Array(128).fill(0));
+    }
+  });
+}

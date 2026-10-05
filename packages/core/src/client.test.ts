@@ -4706,6 +4706,54 @@ test("SAB event serialization isolates a reentrant getter from its outer payload
   }
 });
 
+test("dispose sends a single shutdown message before closing the port", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const operations: unknown[] = [];
+    h.lastNode!.port.postMessage = (m) => operations.push(m);
+    h.lastNode!.port.close = () => operations.push("close");
+    node.dispose();
+    node.dispose();
+    expect(operations).toEqual([{ kind: "shutdown" }, "close"]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+for (const [inputs, outputs, nativeOutputs, channels] of [
+  [[], [], 1, [1]],
+  [[{ name: "in", channels: 1 }], [], 0, undefined],
+  [[], [{ name: "out", channels: 2 }], 1, [2]],
+] as const) {
+  test(`native audio layout for ${inputs.length} declared inputs and ${outputs.length} outputs`, async () => {
+    const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+    try {
+      const node = await startCreate(
+        () =>
+          createNode(
+            h.context as never,
+            makeMockProcessor({ inputs: [...inputs], outputs: [...outputs] }),
+          ),
+        h.fireReady,
+      );
+      expect(h.constructed[0]!.options).toMatchObject({
+        numberOfInputs: inputs.length,
+        numberOfOutputs: nativeOutputs,
+      });
+      expect(h.constructed[0]!.options.outputChannelCount).toEqual(channels);
+      expect(Object.keys(node.inputs)).toEqual(inputs.map((port) => port.name));
+      expect(Object.keys(node.outputs)).toEqual(outputs.map((port) => port.name));
+      node.dispose();
+    } finally {
+      h.cleanup();
+    }
+  });
+}
+
 for (const contextState of ["suspended", "running"] as const) {
   for (const method of ["snapshot", "devDump"] as const) {
     test(`${method} uses ${contextState === "suspended" ? "current" : "rendered"} params when ${contextState}`, async () => {
