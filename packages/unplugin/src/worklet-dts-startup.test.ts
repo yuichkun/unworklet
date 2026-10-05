@@ -218,6 +218,47 @@ test.each(["remove import", "delete importer"])(
   },
 );
 
+test("a runtime witness remains until its final importer removes the worklet", async () => {
+  await writeFile(path.join(root, "tsconfig.json"), JSON.stringify({ files: [] }));
+  const other = path.join(root, "other.ts");
+  await writeFile(other, 'import tone from "./tone.processor.ts?worklet"; console.log(tone);');
+  const updates = new Map<string, () => void>();
+  const updated = (file: string): Promise<void> =>
+    new Promise((resolve) => {
+      updates.set(file, resolve);
+    });
+  await start([
+    {
+      name: "observe-importer-refresh",
+      enforce: "post",
+      handleHotUpdate(ctx) {
+        updates.get(ctx.file)?.();
+        updates.delete(ctx.file);
+      },
+    },
+  ]);
+  await server!.transformRequest("/main.ts");
+  await server!.transformRequest("/other.ts");
+  const source = path.join(root, "tone.processor.ts");
+  await server!.transformRequest(`\0unworklet:${source}`);
+  expect(await witness()).toContain('"gain"');
+
+  const firstRemoved = updated(path.join(root, "main.ts"));
+  await writeFile(path.join(root, "main.ts"), "console.log('first removed');");
+  await firstRemoved;
+  expect(await witness()).toContain('"gain"');
+
+  const lastRemoved = updated(other);
+  await writeFile(other, "console.log('last removed');");
+  await lastRemoved;
+  expect(await witness()).toBe("");
+
+  const processorEdited = updated(source);
+  await writeFile(source, processorSource("cutoff"));
+  await processorEdited;
+  expect(await witness()).toBe("");
+});
+
 test("startup waits for other plugins to configure their virtual processor helpers", async () => {
   await writeFile(
     path.join(root, "tone.processor.ts"),
