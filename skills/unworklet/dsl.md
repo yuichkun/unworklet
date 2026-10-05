@@ -494,7 +494,10 @@ forSample.byN(stride, (i, everyNSamples) => { … });            // once per `st
   samples (sub-rate work). — `loop.ts:23,76`
 - `stride` must be a power of two that divides the render quantum 128: one of
   `1, 2, 4, 8, 16, 32, 64, 128`. `everyNSamples`'s `n` must be a compile-time
-  positive integer. — `packages/core/src/compile/analyze.ts:196,219`
+  positive integer. These compile-time checks apply to loops in `process`,
+  `event(...).onReceive`, and `event.midi(...).onEvent`, including nested loops.
+  Invalid values fail with `illegal-stride` or `illegal-everyn-divisor` before
+  WASM emission. — `packages/core/src/compile/analyze.ts`
 - `forSample` nests; each level gets its own loop counter.
 
 ```ts
