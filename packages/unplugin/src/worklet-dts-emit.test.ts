@@ -9,12 +9,20 @@
  * and asserts the file the plugin writes to disk.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, beforeEach, expect, test } from "vite-plus/test";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
 
 import unworklet from "./index.ts";
 
@@ -23,7 +31,7 @@ const FIXTURE = fileURLToPath(
 );
 const VIRTUAL_ID_PREFIX = "\0unworklet:";
 
-type ConfigResolvedFn = (config: { command: string; root: string; base: string }) => void;
+type ConfigResolvedFn = (config: { command: string; root: string; base: string }) => Promise<void>;
 type LoadFn = (this: { emitFile: () => string; addWatchFile: () => void }, id: string) => unknown;
 type ResolveIdFn = (
   source: string,
@@ -42,17 +50,81 @@ const mockCtx = (): { emitFile: () => string; addWatchFile: () => void } => ({
   addWatchFile: () => {},
 });
 
+const deferred = (): { promise: Promise<void>; resolve: () => void } => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+};
+
 let root: string;
 beforeEach(() => {
   root = mkdtempSync(path.join(tmpdir(), "uwk-emit-"));
 });
 afterEach(() => {
+  vi.doUnmock("node:fs/promises");
+  vi.resetModules();
   rmSync(root, { recursive: true, force: true });
+});
+
+test("configResolved completes only after the initial witness I/O finishes", async () => {
+  vi.resetModules();
+  const release = deferred();
+  const entered = deferred();
+  const finished = deferred();
+  vi.doMock("node:fs/promises", async () => {
+    const fs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    return {
+      ...fs,
+      writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+        entered.resolve();
+        await release.promise;
+        try {
+          await fs.writeFile(...args);
+        } finally {
+          finished.resolve();
+        }
+      },
+    };
+  });
+  const { default: factory } = await import("./index.ts");
+  const plugin = factory();
+  mkdirSync(path.join(root, ".unworklet"));
+  writeFileSync(path.join(root, ".unworklet", "worklets.d.ts"), "stale witness");
+  const completion = (plugin.configResolved as unknown as ConfigResolvedFn)({
+    command: "serve",
+    root,
+    base: "/",
+  });
+  expect(existsSync(path.join(root, ".unworklet", "tsconfig.json"))).toBe(true);
+  expect(existsSync(path.join(root, ".unworklet", "worklets.d.ts"))).toBe(true);
+  let resolved = false;
+  const observed = Promise.resolve(completion).then(() => {
+    resolved = true;
+  });
+  try {
+    await entered.promise;
+    expect(resolved).toBe(false);
+    release.resolve();
+    await observed;
+    expect(resolved).toBe(true);
+    rmSync(root, { recursive: true });
+    expect(existsSync(root)).toBe(false);
+  } finally {
+    release.resolve();
+    await finished.promise;
+    await observed;
+  }
 });
 
 test("load writes an aggregate witness d.ts under the project root", async () => {
   const plugin = unworklet();
-  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  await (plugin.configResolved as unknown as ConfigResolvedFn)({
+    command: "serve",
+    root,
+    base: "/",
+  });
   await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
 
   const witness = path.join(root, ".unworklet", "worklets.d.ts");
@@ -62,9 +134,13 @@ test("load writes an aggregate witness d.ts under the project root", async () =>
   expect(content).toContain("gain");
 });
 
-test("configResolved SYNCHRONOUSLY seeds .unworklet/ (tsconfig + witness) so the extends resolves before the build reads it", () => {
+test("configResolved SYNCHRONOUSLY seeds .unworklet/ (tsconfig + witness) so the extends resolves before the build reads it", async () => {
   const plugin = unworklet();
-  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  const completion = (plugin.configResolved as unknown as ConfigResolvedFn)({
+    command: "serve",
+    root,
+    base: "/",
+  });
   // No tick: the files must exist the instant configResolved returns. Vite/Rolldown
   // reads the consumer's `{ "extends": "./.unworklet/tsconfig.json" }` at build
   // start, before any async write flushes — an async seed would fail the first
@@ -84,11 +160,16 @@ test("configResolved SYNCHRONOUSLY seeds .unworklet/ (tsconfig + witness) so the
   // including .tsx, the source extension of a React/Solid app.
   expect(cfg.include).toContain("../**/*.ts");
   expect(cfg.include).toContain("../**/*.tsx");
+  await completion;
 });
 
 test("handleHotUpdate re-emits the witness for an edited processor (no browser needed)", async () => {
   const plugin = unworklet();
-  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  await (plugin.configResolved as unknown as ConfigResolvedFn)({
+    command: "serve",
+    root,
+    base: "/",
+  });
   // Register the source the way a `?worklet` import would, so the edit is ours.
   (plugin.resolveId as unknown as ResolveIdFn)(`${FIXTURE}?worklet`, undefined, { isEntry: false });
   const server = { moduleGraph: { getModuleById: () => null, invalidateModule: () => {} } };
@@ -109,7 +190,11 @@ test("re-loading a `?worklet` rewrites neither tsconfig nor an unchanged witness
   // which re-emitted — an infinite reload loop. `load` must touch neither file
   // when nothing changed; the fixed tsconfig is written once by configResolved.
   const plugin = unworklet();
-  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  await (plugin.configResolved as unknown as ConfigResolvedFn)({
+    command: "serve",
+    root,
+    base: "/",
+  });
   const tsconfig = path.join(root, ".unworklet", "tsconfig.json");
   const witness = path.join(root, ".unworklet", "worklets.d.ts");
   const tsconfigMtime = statSync(tsconfig).mtimeMs;
@@ -127,7 +212,11 @@ test("re-loading a `?worklet` rewrites neither tsconfig nor an unchanged witness
 
 test("loading a processor recreates a witness removed by a clean task", async () => {
   const plugin = unworklet();
-  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  await (plugin.configResolved as unknown as ConfigResolvedFn)({
+    command: "serve",
+    root,
+    base: "/",
+  });
   await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
   const witness = path.join(root, ".unworklet", "worklets.d.ts");
   rmSync(witness);
@@ -137,7 +226,11 @@ test("loading a processor recreates a witness removed by a clean task", async ()
 
 test("an unrelated edit does not rewrite types or invalidate processor modules", async () => {
   const plugin = unworklet();
-  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  await (plugin.configResolved as unknown as ConfigResolvedFn)({
+    command: "serve",
+    root,
+    base: "/",
+  });
   await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
   const witness = path.join(root, ".unworklet", "worklets.d.ts");
   const timestamp = statSync(witness).mtimeMs;

@@ -35,7 +35,7 @@ const FIXTURE = fileURLToPath(
 );
 const VIRTUAL_ID_PREFIX = "\0unworklet:";
 
-type ConfigResolvedFn = (config: { command: string; root: string; base: string }) => void;
+type ConfigResolvedFn = (config: { command: string; root: string; base: string }) => Promise<void>;
 type LoadFn = (this: { emitFile: () => string; addWatchFile: () => void }, id: string) => unknown;
 const mockCtx = (): { emitFile: () => string; addWatchFile: () => void } => ({
   emitFile: () => "ref",
@@ -71,7 +71,11 @@ afterEach(() => {
 /** Drive the plugin so it writes `.unworklet/`, then write the app's `main.ts`. */
 async function emitAndWriteMain(): Promise<void> {
   const plugin = unworklet();
-  (plugin.configResolved as unknown as ConfigResolvedFn)({ command: "serve", root, base: "/" });
+  await (plugin.configResolved as unknown as ConfigResolvedFn)({
+    command: "serve",
+    root,
+    base: "/",
+  });
   await (plugin.load as unknown as LoadFn).call(mockCtx(), `${VIRTUAL_ID_PREFIX}${FIXTURE}`);
   writeFileSync(
     path.join(root, "main.ts"),

@@ -46,6 +46,8 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Fixed
 
+- Vite configuration waits for initial worklet type generation while keeping
+  generated configuration files available synchronously.
 - `$prev` feedback derives its scalar from the resolved return type regardless of
   quote style, whitespace, parentheses, type aliases, or intersections.
 - Generated `$prev` feedback slots and return temporaries avoid collisions with
