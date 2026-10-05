@@ -313,6 +313,9 @@ importers:
       bumpp:
         specifier: ^11.1.0
         version: 11.1.0
+      playwright:
+        specifier: 'catalog:'
+        version: 1.60.0
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

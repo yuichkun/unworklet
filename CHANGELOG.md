@@ -46,6 +46,11 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Fixed
 
+- Worklet revision URLs and processor registrations include their metadata, so
+  parameter renames with unchanged WASM can coexist in the same AudioContext.
+- Vite HMR refreshes the raw processor namespace along with its compiled wrapper,
+  keeping parameters, migrations, and DSP revisions consistent.
+
 - Processors without declared audio ports can be created for MIDI and control
   processing. Their native node has one silent output; public port maps stay empty.
 - Disposing a node stops its DSP after the queued shutdown reaches the worklet,

@@ -17,6 +17,7 @@ export default defineConfig({
   fmt: {},
   test: {
     include: ["src/**/*.test.ts"],
+    exclude: ["src/**/*.browser.test.ts", "**/node_modules/**"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
