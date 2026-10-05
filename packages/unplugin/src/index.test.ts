@@ -965,9 +965,9 @@ test("dev HMR: editing a subgraph .uwk.ts invalidates the processors that import
 
   const handleHotUpdate = plugin.handleHotUpdate as unknown as (
     this: unknown,
-    ctx: { file: string; server: unknown },
+    ctx: { file: string; server: unknown; modules: unknown[] },
   ) => Promise<unknown[] | undefined>;
-  const result = await handleHotUpdate.call(null, { file: subgraph, server });
+  const result = await handleHotUpdate.call(null, { file: subgraph, server, modules: [] });
 
   // Editing the subgraph (not a processor itself) invalidated the importing
   // processor's virtual module — so a `replaceProcessor` HMR fires for it.
@@ -1455,12 +1455,10 @@ test("dev middleware fresh-compiles on snapshot miss and serves the bytes when t
     root: "/Users/yuichkun/workspace/unworklet/examples/01-stereo-gain",
   });
   await primeAllowlist(plugin, FIXTURE_GAIN_PATH);
-  // Compute the current revision hash by invoking compile() directly so
-  // we know which URL the middleware should accept.
-  const fixtureModule = (await import(FIXTURE_GAIN_PATH)) as Record<string, unknown>;
-  const direct = await compile(fixtureModule["stereoGain"] as Parameters<typeof compile>[0]);
-  const { createHash } = await import("node:crypto");
-  const hash = createHash("sha256").update(direct.wasm).digest("hex").slice(0, 8);
+  const wrapper = (await callLoadInServeMode(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
+    root: "/unworklet-revision-fixture",
+  })) as string;
+  const hash = wrapper.match(/\?v=([0-9a-f]{8})/)![1]!;
   const encoded = Buffer.from(FIXTURE_GAIN_PATH, "utf8").toString("base64url");
   const res = makeResponseStub();
   let nextCalled = 0;
