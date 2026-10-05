@@ -26,13 +26,13 @@ const load = (plugin: ReturnType<typeof unworklet>, source: string): Promise<str
     { emitFile: () => "asset", addWatchFile: () => {} },
     `\0unworklet:${source}`,
   );
-const configure = (plugin: ReturnType<typeof unworklet>, root: string): void => {
-  (
+const configure = async (plugin: ReturnType<typeof unworklet>, root: string): Promise<void> => {
+  await (
     plugin.configResolved as unknown as (config: {
       command: string;
       root: string;
       base: string;
-    }) => void
+    }) => Promise<void>
   )({ command: "build", root, base: "/" });
 };
 
@@ -82,7 +82,7 @@ test("witness write rejection warns once while processor compilation remains ava
   const { default: factory } = await import("./index.ts");
   const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
   const plugin = factory();
-  configure(plugin, temporaryRoot());
+  await configure(plugin, temporaryRoot());
   const first = await load(plugin, fixture);
   const second = await load(plugin, fixture);
   expect(first).toContain("__unworkletAugmented");

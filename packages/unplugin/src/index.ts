@@ -969,7 +969,6 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       // found"). The async pass then fills the witness with the real per-processor
       // types as each `?worklet` loads.
       seedUnworkletDir(projectRoot);
-      void writeWorkletsWitness();
       // Dev internal URLs (= `/@id/...`, `/__unworklet/...`) must be
       // request-path absolute so the middleware's `startsWith(...)` match
       // works. Vite documents `base` may be `'./'` / `''` (= relative,
@@ -990,6 +989,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       const resolvedHeaders =
         (config as { server?: { headers?: Record<string, string> } }).server?.headers ?? {};
       pageCoep = resolvedHeaders["Cross-Origin-Embedder-Policy"];
+      return writeWorkletsWitness();
     },
     transformIndexHtml() {
       if (!isServe || !devtoolsActive) return;
