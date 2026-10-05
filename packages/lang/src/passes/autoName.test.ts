@@ -72,3 +72,89 @@ const level = state.f32(0.5).named("meter").expose(exposure);`,
     mono(`const level = state.f32(0.5).expose({ name: "meter", snapshot: "transient" });`, "level"),
   );
 });
+
+for (const item of cases) {
+  test.each(["variable", "helper"])(
+    `.expose derives the ${item.kind} name while preserving a nameless %s bag`,
+    async (form) => {
+      const options = item.options.replace(/name: "[^"]+", /, "");
+      const setup =
+        form === "variable"
+          ? `const exposure = ${options};`
+          : `const exposure = () => (${options});`;
+      const arg = form === "variable" ? "exposure" : "exposure()";
+      const source = mono(
+        `${setup}\nconst level = ${item.declaration}.expose(${arg});`,
+        item.value,
+      );
+      const explicit = mono(
+        `const level = ${item.declaration}.expose({ name: "level", ...${options} });`,
+        item.value,
+      );
+      await expectSameLowering(source, explicit);
+      const rendered = await renderLowered(source, { sampleRate: SR, duration: 128 / SR });
+      expect([...rendered.outputs.main[0]!]).toEqual(
+        Array.from({ length: 128 }, () => item.expected),
+      );
+    },
+  );
+}
+
+test(".expose evaluates helper options once and preserves inherited fields without mutating them", async () => {
+  const source = mono(
+    `
+const calls = { count: 0 };
+class Exposure {
+  get snapshot() { return "transient"; }
+  get publish() { return { rateFps: 30 }; }
+}
+const exposure = Object.freeze(new Exposure());
+const options = () => { calls.count += 1; return exposure; };
+const level = state.f32(0.5).expose(options());`,
+    "level * calls.count",
+  );
+  const explicit = mono(
+    `const level = state.f32(0.5).expose({ name: "level", snapshot: "transient", publish: { rateFps: 30 } });`,
+    "level * 1",
+  );
+  await expectSameLowering(source, explicit);
+  const rendered = await renderLowered(source, { sampleRate: SR, duration: 128 / SR });
+  expect([...rendered.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, () => 0.5));
+});
+
+test(".expose applies an explicit name without an intermediate binding-name collision", async () => {
+  const source = mono(
+    `
+const other = state.f32(0.25).named("level");
+const exposure = { name: "meter", publish: { rateFps: 30 } };
+const level = state.f32(0.5).expose(exposure);`,
+    "level + other",
+  );
+  const explicit = mono(
+    `
+const other = state.f32(0.25).named("level");
+const level = state.f32(0.5).expose({ name: "meter", publish: { rateFps: 30 } });`,
+    "level + other",
+  );
+  await expectSameLowering(source, explicit);
+  const rendered = await renderLowered(source, { sampleRate: SR, duration: 128 / SR });
+  expect([...rendered.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, () => 0.75));
+});
+
+test.each([
+  { declaration: 'state.named("meter").f32(0.5)', name: "meter" },
+  { declaration: "state.f32(0.5).named()", name: "level" },
+])(".expose retains the naming marker in $declaration", async ({ declaration, name }) => {
+  const source = mono(
+    `const exposure = { publish: { rateFps: 30 } };
+const level = ${declaration}.expose(exposure);`,
+    "level",
+  );
+  const explicit = mono(
+    `const level = state.f32(0.5).expose({ name: "${name}", publish: { rateFps: 30 } });`,
+    "level",
+  );
+  await expectSameLowering(source, explicit);
+  const rendered = await renderLowered(source, { sampleRate: SR, duration: 128 / SR });
+  expect([...rendered.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, () => 0.5));
+});

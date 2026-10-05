@@ -207,3 +207,22 @@ process(() => { forSample(i => { out.ch(0)[i] = s.run(i == 0); }); });`);
     URL.revokeObjectURL(proc.worklet.wasmUrl!);
   }
 });
+
+test("runtime compile derives a name for helper-returned exposure options", async () => {
+  const proc = await compileSource(`
+const exposure = () => ({ snapshot: "transient", publish: { rateFps: 30 } });
+const level = state.f32(0.5).expose(exposure());
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => { out.ch(0)[i] = level; }); });`);
+  try {
+    expect(proc.worklet.publishSlots).toEqual([
+      expect.objectContaining({ name: "level", type: "f32" }),
+    ]);
+    expect(WebAssembly.validate(new Uint8Array(await fetchBytes(proc.worklet.wasmUrl!)))).toBe(
+      true,
+    );
+  } finally {
+    URL.revokeObjectURL(proc.worklet.moduleUrl!);
+    URL.revokeObjectURL(proc.worklet.wasmUrl!);
+  }
+});

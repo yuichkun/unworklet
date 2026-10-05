@@ -41,6 +41,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 - Language lowering preserves `.expose(options)` variable and helper-returned
   options, including explicit names, snapshot policy, and scalar publish settings.
+  Nameless option bags retain binding-derived names; helper calls run once.
 - `$prev` feedback derives its scalar from the resolved return type regardless of
   quote style, whitespace, parentheses, type aliases, or intersections.
 - Generated `$prev` feedback slots and return temporaries avoid collisions with
