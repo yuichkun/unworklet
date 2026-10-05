@@ -18,6 +18,8 @@
     "@unworklet/core": "workspace:*",
     "@unworklet/lang": "workspace:*",
     "@unworklet/offline": "workspace:*",
+    "@volar/language-core": "catalog:",
+    "@volar/typescript": "catalog:",
     "monaco-editor": "catalog:",
     "typescript": "catalog:",
     "vue": "catalog:",

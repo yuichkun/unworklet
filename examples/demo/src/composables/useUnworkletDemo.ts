@@ -11,6 +11,8 @@ import type { UnworkletNode } from "@unworklet/core";
 import { ref } from "vue";
 
 import type { Example } from "../examples.ts";
+import type { EditorDiagnostic } from "../editor/protocol.ts";
+import { diagnosticFromError } from "../editor/diagnostics.ts";
 import { compileSource } from "@unworklet/lang/browser";
 
 const FADE = 0.08;
@@ -28,6 +30,7 @@ export type ParamControl = {
 export function useUnworkletDemo() {
   const status = ref<string>("idle");
   const error = ref<string | null>(null);
+  const failure = ref<EditorDiagnostic | null>(null);
   const ready = ref(false);
   const playing = ref(false);
   const busy = ref(false);
@@ -75,6 +78,7 @@ export function useUnworkletDemo() {
   const watchErrors = (n: UnworkletNode<unknown>): void => {
     n.onError((e) => {
       error.value = `worklet error: ${JSON.stringify(e)}`;
+      failure.value = diagnosticFromError(e, "runtime", 0);
     });
   };
 
@@ -100,6 +104,7 @@ export function useUnworkletDemo() {
     busy.value = true;
     ready.value = false;
     error.value = null;
+    failure.value = null;
     status.value = "compiling…";
     try {
       node = await createNode(c, await compileSource(ex.source));
@@ -113,6 +118,7 @@ export function useUnworkletDemo() {
       status.value = "ready";
     } catch (e) {
       error.value = String(e);
+      failure.value = diagnosticFromError(e, "compile", ex.source.length);
       status.value = "compile failed";
     } finally {
       busy.value = false;
@@ -186,6 +192,7 @@ export function useUnworkletDemo() {
     busy.value = true;
     status.value = "recompiling…";
     error.value = null;
+    failure.value = null;
     try {
       const r = await replaceProcessor(node, await compileSource(newSource));
       const newMaster = ctx.createGain();
@@ -218,6 +225,7 @@ export function useUnworkletDemo() {
       status.value = `recompiled${r.applied.length ? ` (carried ${r.applied.join(", ")})` : ""}`;
     } catch (e) {
       error.value = String(e);
+      failure.value = diagnosticFromError(e, "compile", newSource.length);
       status.value = "recompile failed";
     } finally {
       busy.value = false;
@@ -247,6 +255,7 @@ export function useUnworkletDemo() {
   return {
     status,
     error,
+    failure,
     ready,
     playing,
     busy,

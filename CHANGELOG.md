@@ -9,6 +9,18 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ## Unreleased — requires 0.5.0
 
+### Playground editor
+
+- Sugar-aware completion, inferred-type hover, signature help, and static diagnostics
+  run in a browser worker using the same ambient types and Volar mappings as the
+  language tools. Editor results are scoped to a model and source version.
+- API reference and sugar help provide searchable, source-typed signatures and
+  executable examples without replacing the editor's contents.
+- Compile/runtime failures retain structured codes and messages. `LowerError`
+  optionally supplies original-source UTF-16 `sourceRange` offsets; unsupported
+  DSP `if` errors identify their condition. Unpositioned failures remain
+  document-level diagnostics.
+
 ### Breaking
 
 - **Message and MIDI handlers enforce loop bounds at compilation.** Handler

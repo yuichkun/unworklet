@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import MonacoEditor from "../components/MonacoEditor.vue";
+import PlaygroundHelp from "../components/PlaygroundHelp.vue";
+import type { EditorDiagnostic } from "../editor/protocol.ts";
 import { useUnworkletDemo } from "../composables/useUnworkletDemo.ts";
 import type { SourceType } from "../composables/useUnworkletDemo.ts";
 import { exampleBySlug } from "../examples.ts";
@@ -9,10 +11,36 @@ import { exampleBySlug } from "../examples.ts";
 const props = defineProps<{ slug: string }>();
 const ex = exampleBySlug(props.slug);
 const src = ref(ex?.source ?? "");
+const editor = ref<{
+  focus(): void;
+  reveal(diagnostic: EditorDiagnostic): void;
+  document(): { uri: string; version: number; source: string } | undefined;
+}>();
+const help = ref<"api" | "sugar" | null>(null);
+const liveDiagnostics = ref<EditorDiagnostic[]>([]);
+const assistanceStatus = ref("Loading editor assistance…");
+const compileDiagnostic = ref<{ version: number; diagnostic: EditorDiagnostic }>();
+function onDiagnostics(diagnostics: EditorDiagnostic[], status: string): void {
+  liveDiagnostics.value = diagnostics;
+  assistanceStatus.value = status;
+}
+function sourceLocation(diagnostic: EditorDiagnostic): string {
+  if (diagnostic.start === undefined) return "Document";
+  const lines = src.value.slice(0, diagnostic.start).split("\n");
+  return `Line ${lines.length}, column ${lines[lines.length - 1]!.length + 1}`;
+}
+async function closeHelp(): Promise<void> {
+  help.value = null;
+  await nextTick();
+  editor.value?.focus();
+}
+watch(src, () => {
+  compileDiagnostic.value = undefined;
+});
 
 const {
   status,
-  error,
+  failure,
   ready,
   playing,
   busy,
@@ -61,8 +89,19 @@ function release(note: number): void {
   if (down.delete(note)) noteOff(note);
 }
 
-function doRecompile(): void {
-  void recompile(src.value);
+async function doRecompile(): Promise<void> {
+  if (busy.value || !ready.value) return;
+  const document = editor.value?.document();
+  compileDiagnostic.value = undefined;
+  await recompile(src.value);
+  const current = editor.value?.document();
+  if (
+    failure.value?.phase === "compile" &&
+    document &&
+    current?.uri === document.uri &&
+    current.version === document.version
+  )
+    compileDiagnostic.value = { version: document.version, diagnostic: failure.value };
 }
 function onFile(e: Event): void {
   const file = (e.target as HTMLInputElement).files?.[0];
@@ -74,7 +113,7 @@ function fmtVal(v: number): string {
 
 // Space toggles play / stop for effects — unless you're typing in the editor or a control.
 function onGlobalKey(e: KeyboardEvent): void {
-  if (e.code !== "Space" || ex?.kind !== "effect" || !ready.value) return;
+  if (help.value || e.code !== "Space" || ex?.kind !== "effect" || !ready.value) return;
   const t = e.target as HTMLElement | null;
   if (t?.closest("input, textarea, select, .monaco-host")) return;
   e.preventDefault();
@@ -107,11 +146,41 @@ onBeforeUnmount(() => {
       <div class="editor-wrap">
         <div class="editor-bar">
           <span class="file">{{ ex.slug }}.uwk.ts</span>
+          <div class="editor-help-actions">
+            <button @click="help = 'api'">API reference</button>
+            <button @click="help = 'sugar'">Sugar help</button>
+          </div>
           <span class="label" style="text-transform: none">
             <kbd>⌘</kbd> <kbd>⏎</kbd>&nbsp; recompile
           </span>
         </div>
-        <MonacoEditor v-model="src" @submit="doRecompile" />
+        <MonacoEditor
+          ref="editor"
+          v-model="src"
+          :filename="ex.slug"
+          :compile-diagnostic="compileDiagnostic"
+          @submit="doRecompile"
+          @diagnostics="onDiagnostics"
+        />
+        <section class="source-diagnostics" aria-label="Source diagnostics">
+          <p role="status">{{ assistanceStatus }}</p>
+          <ul v-if="liveDiagnostics.length">
+            <li v-for="(diagnostic, index) in liveDiagnostics" :key="index">
+              <button
+                v-if="diagnostic.start !== undefined"
+                class="diagnostic-location"
+                @click="editor?.reveal(diagnostic)"
+              >
+                {{ sourceLocation(diagnostic) }}
+              </button>
+              <span v-else>Document</span>
+              <strong
+                >{{ diagnostic.severity }} · {{ diagnostic.phase }} · {{ diagnostic.code }}</strong
+              >
+              <span>{{ diagnostic.message }}</span>
+            </li>
+          </ul>
+        </section>
       </div>
 
       <div class="panel">
@@ -191,9 +260,78 @@ onBeforeUnmount(() => {
         </div>
 
         <p class="status" :class="{ live: playing }"><span class="dot" />{{ status }}</p>
-        <p v-if="error" class="error">{{ error }}</p>
+        <div v-if="failure" class="error" role="alert">
+          <strong>{{ failure.severity }} · {{ failure.phase }} · {{ failure.code }}</strong>
+          <p>{{ failure.message }}</p>
+          <button
+            v-if="compileDiagnostic?.diagnostic.start !== undefined"
+            @click="editor?.reveal(compileDiagnostic.diagnostic)"
+          >
+            Show {{ sourceLocation(compileDiagnostic.diagnostic) }}
+          </button>
+          <p v-else>No current source location is available.</p>
+        </div>
       </div>
     </div>
   </template>
-  <p v-else>Example not found. <RouterLink to="/">Back to examples</RouterLink></p>
+  <PlaygroundHelp v-if="help" :initial-tab="help" @close="closeHelp" />
+  <p v-if="!ex">Example not found. <RouterLink to="/">Back to examples</RouterLink></p>
 </template>
+
+<style scoped>
+.editor-help-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.editor-help-actions button {
+  font-size: 11px;
+  padding: 3px 7px;
+}
+.source-diagnostics {
+  border-top: 1px solid #e2e8f0;
+  padding: 10px 14px;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  background: #f8fafc;
+}
+.source-diagnostics p {
+  margin: 0;
+  color: #475569;
+}
+.source-diagnostics ul {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.source-diagnostics li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 8px 0;
+  border-top: 1px solid #e2e8f0;
+}
+.source-diagnostics li > span:last-child {
+  flex-basis: 100%;
+  white-space: pre-wrap;
+}
+.diagnostic-location {
+  padding: 0;
+  border: 0;
+  text-decoration: underline;
+  font-size: inherit;
+}
+.error p {
+  white-space: pre-wrap;
+}
+@media (max-width: 640px) {
+  .editor-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .editor-help-actions {
+    margin-left: 0;
+  }
+}
+</style>

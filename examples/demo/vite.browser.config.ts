@@ -8,12 +8,17 @@
  *
  * COOP/COEP enable cross-origin isolation so `SharedArrayBuffer` is available.
  */
+import { editorAssets } from "./editor-assets.ts";
+import vue from "@vitejs/plugin-vue";
+import type { Plugin } from "vite-plus";
 import unworklet from "@unworklet/unplugin";
 import { playwright } from "vite-plus/test/browser-playwright";
 import { defineConfig } from "vite-plus";
 
 export default defineConfig({
-  plugins: [unworklet()],
+  define: { __DEMO_BUILD_LABEL__: JSON.stringify("Browser test · workspace") },
+  plugins: [vue() as unknown as Plugin, unworklet(), editorAssets()],
+  worker: { plugins: () => [editorAssets()] },
   server: {
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",

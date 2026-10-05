@@ -32,13 +32,14 @@ const select = (c: ts.Expression, x: ts.Expression, y: ts.Expression): ts.Expres
 // left as a build-time `if`: a `.uwk.ts` file is `@ts-nocheck`, so the condition is
 // a truthy DSP object at graph-capture time and only the then-branch would run —
 // silently producing wrong audio. Refuse it with guidance instead.
-const unsupportedDspIf = (): never => {
+const unsupportedDspIf = (node: ts.IfStatement): never => {
   throw new LowerError(
     "uwk-unsupported-if",
     "an `if` with a Node<'bool'> condition lowers only as a single state/buffer write " +
       "(optionally a symmetric `if`/`else` writing the same target) or guarded port.emit(...) " +
       "calls. Rewrite this branch into one of those shapes, or compute the value directly with " +
       "select(cond, whenTrue, whenFalse).",
+    { start: node.expression.getStart(), length: node.expression.getWidth() },
   );
 };
 
@@ -169,7 +170,7 @@ export function tryIfSugar(
       if (w !== undefined)
         return writeWith(checker, w, select(cond, v(w.value), writeRead(checker, w)));
     }
-    return unsupportedDspIf();
+    return unsupportedDspIf(node);
   }
 
   // Shape 2: symmetric if-else to the same target.
@@ -182,5 +183,5 @@ export function tryIfSugar(
       return writeWith(checker, tw, select(cond, v(tw.value), v(ew.value)));
     }
   }
-  return unsupportedDspIf();
+  return unsupportedDspIf(node);
 }

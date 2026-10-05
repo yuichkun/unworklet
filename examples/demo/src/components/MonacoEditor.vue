@@ -1,16 +1,15 @@
 <script setup lang="ts">
-import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-// The Monarch TypeScript grammar = syntax highlighting only, with no language
-// service (so no worker, no type checking, no completion). That is all the
-// `.uwk.ts` editor needs — the sources reference DSL globals (`audioInput`,
-// `process`, `$prev`, …) that have no ambient types here, and a language service
-// would only flag them as errors.
 import "monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  attachEditorAssistance,
+  setDiagnostics,
+  sourceRange,
+} from "../editor/monaco-assistance.ts";
+import type { EditorDiagnostic } from "../editor/protocol.ts";
 
-// One-time Vite worker wiring. With highlighting-only there is no language worker;
-// monaco still uses the base editor worker for core text operations.
 const monacoEnv = self as unknown as { MonacoEnvironment?: monaco.Environment };
 monacoEnv.MonacoEnvironment ??= {
   getWorker: (): Worker => new editorWorker(),
@@ -42,17 +41,48 @@ monaco.editor.defineTheme("uwk-light", {
   },
 });
 
-const props = defineProps<{ modelValue: string }>();
-const emit = defineEmits<{ "update:modelValue": [string]; submit: [] }>();
+const props = defineProps<{
+  modelValue: string;
+  filename?: string;
+  compileDiagnostic?: { version: number; diagnostic: EditorDiagnostic };
+}>();
+const emit = defineEmits<{
+  "update:modelValue": [string];
+  submit: [];
+  diagnostics: [EditorDiagnostic[], string];
+}>();
 
 const host = ref<HTMLDivElement | null>(null);
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
+let assistance: { dispose(): void } | undefined;
+let contentListener: monaco.IDisposable | undefined;
+
+defineExpose({
+  focus: () => editor?.focus(),
+  document: () => {
+    const model = editor?.getModel();
+    return model
+      ? { uri: model.uri.toString(), version: model.getVersionId(), source: model.getValue() }
+      : undefined;
+  },
+  reveal: (diagnostic: EditorDiagnostic) => {
+    const model = editor?.getModel();
+    if (!model || diagnostic.start === undefined) return;
+    const range = sourceRange(model, diagnostic.start, diagnostic.length ?? 0);
+    editor!.setSelection(range);
+    editor!.revealRangeInCenter(range);
+    editor!.focus();
+  },
+});
 
 onMounted(() => {
   if (!host.value) return;
+  const uri = monaco.Uri.parse(
+    `file:///playground/${encodeURIComponent(props.filename ?? "processor")}-${crypto.randomUUID()}.uwk.ts`,
+  );
+  const model = monaco.editor.createModel(props.modelValue, "typescript", uri);
   editor = monaco.editor.create(host.value, {
-    value: props.modelValue,
-    language: "typescript",
+    model,
     theme: "uwk-light",
     automaticLayout: true,
     minimap: { enabled: false },
@@ -67,7 +97,13 @@ onMounted(() => {
     scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
     padding: { top: 12, bottom: 12 },
   });
-  editor.onDidChangeModelContent(() => emit("update:modelValue", editor!.getValue()));
+  contentListener = editor.onDidChangeModelContent(() => {
+    setDiagnostics(model, "uwk-compile", []);
+    emit("update:modelValue", editor!.getValue());
+  });
+  assistance = attachEditorAssistance(model, (diagnostics, status) =>
+    emit("diagnostics", diagnostics, status),
+  );
   // ⌘⏎ / Ctrl+⏎ recompiles, so the user can edit and hear it without reaching for the button.
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => emit("submit"));
 });
@@ -81,9 +117,25 @@ watch(
   },
 );
 
+watch(
+  () => props.compileDiagnostic,
+  (value) => {
+    const model = editor?.getModel();
+    if (model)
+      setDiagnostics(
+        model,
+        "uwk-compile",
+        value?.version === model.getVersionId() ? [value.diagnostic] : [],
+      );
+  },
+);
+
 onBeforeUnmount(() => {
-  editor?.getModel()?.dispose();
+  assistance?.dispose();
+  contentListener?.dispose();
+  const model = editor?.getModel();
   editor?.dispose();
+  model?.dispose();
   editor = null;
 });
 </script>

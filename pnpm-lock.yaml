@@ -128,6 +128,12 @@ importers:
       '@unworklet/offline':
         specifier: workspace:*
         version: link:../../packages/offline
+      '@volar/language-core':
+        specifier: 'catalog:'
+        version: 2.4.15
+      '@volar/typescript':
+        specifier: 'catalog:'
+        version: 2.4.15
       monaco-editor:
         specifier: 'catalog:'
         version: 0.55.1
