@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { createNode, inspectSnapshot, replaceProcessor } from "../../index.ts";
+import frozenCounter from "./fixtures/restore-frozen-counter.processor.ts?worklet";
 import oldProcessor from "./fixtures/snapshot-old.processor.ts?worklet";
 import nextProcessor from "./fixtures/snapshot-next.processor.ts?worklet";
 
@@ -72,5 +73,42 @@ test("suspended snapshots round-trip through restore and replacement before rend
   } finally {
     node.dispose();
     target.dispose();
+  }
+});
+
+test("live restore keeps a frozen accumulator unchanged while the main thread is busy", async () => {
+  const ctx = new AudioContext({ sampleRate: 48000 });
+  await ctx.suspend();
+  const node = await createNode(ctx, frozenCounter);
+  const mute = ctx.createGain();
+  mute.gain.value = 0;
+  node.outputs.main!.connect(mute);
+  mute.connect(ctx.destination);
+  try {
+    const saved = await node.snapshot();
+    node.params.freeze!.value = 0;
+    await ctx.resume();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(inspectSnapshot(await node.snapshot()).slots.count).not.toEqual({
+      kind: "state",
+      type: "f32",
+      value: 0,
+    });
+    const restoring = node.restore(saved);
+    const deadline = performance.now() + 100;
+    while (performance.now() < deadline) {
+      /* Keep the acknowledgement queued while audio renders. */
+    }
+    expect((await restoring).ok).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
+      kind: "state",
+      type: "f32",
+      value: 0,
+    });
+  } finally {
+    node.dispose();
+    mute.disconnect();
+    await ctx.close();
   }
 });

@@ -26,8 +26,10 @@ import { expect, test, vi } from "vite-plus/test";
 import { createNode } from "./client.ts";
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioOutput, event, state } from "./dsl/declarations.ts";
+import { audioOutput, event, param, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
+import { decodeScalar } from "./snapshot.ts";
+import { decodeSnapshot } from "./snapshotBlob.ts";
 import { defineProcessor } from "./processor.ts";
 import type { CompiledProcessor, MidiEvent } from "./types.ts";
 
@@ -59,7 +61,7 @@ type LoopbackHarness = {
  */
 const installLoopback = (
   wasmBytes: Uint8Array,
-  opts: { crossOriginIsolated: boolean },
+  opts: { crossOriginIsolated: boolean; beforeRestoreDone?: () => void },
 ): LoopbackHarness => {
   const coiTarget = globalThis as unknown as { crossOriginIsolated?: boolean };
   const prevCoi = coiTarget.crossOriginIsolated;
@@ -80,6 +82,7 @@ const installLoopback = (
   const workletSelf: LoopbackHarness["workletSelf"] = {
     port: {
       postMessage: (m: unknown) => {
+        if ((m as { kind: string }).kind === "restore-done") opts.beforeRestoreDone?.();
         // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot: a listener (awaitReady) removes itself during dispatch
         for (const fn of [...clientPortListeners]) fn({ data: m });
       },
@@ -116,7 +119,13 @@ const installLoopback = (
       start: () => {},
       close: () => {},
     };
-    parameters = { get: (_name: string) => ({ value: 0 }) };
+    private paramValues = new Map<string, { value: number }>();
+    parameters = {
+      get: (name: string) => {
+        if (!this.paramValues.has(name)) this.paramValues.set(name, { value: 0 });
+        return this.paramValues.get(name)!;
+      },
+    };
     context: unknown;
     constructor(ctx: unknown, _name: string, nodeOptions: { processorOptions?: unknown }) {
       this.context = ctx;
@@ -250,7 +259,7 @@ type LoopbackSession = {
 /** Boot the real client against the real worklet namespace and return both ends. */
 const bootLoopback = async (
   processor: CompiledProcessor<unknown>,
-  opts: { crossOriginIsolated: boolean },
+  opts: { crossOriginIsolated: boolean; beforeRestoreDone?: () => void },
 ): Promise<LoopbackSession> => {
   const { wasm } = await compile(processor);
   const harness = installLoopback(wasm, opts);
@@ -271,7 +280,14 @@ const bootLoopback = async (
     node,
     harness,
     runQuantum: () => {
-      processor.worklet.process(harness.workletSelf as never, [], outputs, {});
+      processor.worklet.process(
+        harness.workletSelf as never,
+        [],
+        outputs,
+        Object.fromEntries(
+          Object.entries(node.params).map(([name, p]) => [name, new Float32Array([p.value])]),
+        ),
+      );
     },
   };
 };
@@ -992,3 +1008,46 @@ test("SAB sysex sends during copying are queued as immutable complete messages",
     session.harness.cleanup();
   }
 });
+
+for (const transport of ["sab", "postMessage"] as const) {
+  test(`restore (${transport}): restored persistent state never runs with the pre-restore control`, async () => {
+    const processor = defineProcessor(() => {
+      const freeze = param
+        .f32({ default: 1, min: 0, max: 1, automationRate: "k-rate" })
+        .named("freeze");
+      const count = state.named("count").f32(0);
+      const out = audioOutput({ channels: 1, name: "main" });
+      return {
+        process: () =>
+          forSample((i) => {
+            count.write(count.read().add(freeze.at(i).neg().add(1)));
+            out.ch(0).at(i).write(count.read());
+          }),
+      };
+    }) as unknown as CompiledProcessor<unknown>;
+    let onRestore = () => {};
+    const session = await bootLoopback(processor, {
+      crossOriginIsolated: transport === "sab",
+      beforeRestoreDone: () => onRestore(),
+    });
+    try {
+      session.node.params.freeze!.value = 1;
+      session.runQuantum();
+      const saved = await session.node.snapshot();
+      session.node.params.freeze!.value = 0;
+      session.runQuantum();
+      onRestore = () => {
+        for (let i = 0; i < 3; i++) session.runQuantum();
+      };
+      expect((await session.node.restore(saved)).ok).toBe(true);
+      session.runQuantum();
+      const restored = decodeSnapshot(await session.node.snapshot());
+      expect(decodeScalar("f32", restored.slots.find((slot) => slot.name === "count")!.data)).toBe(
+        0,
+      );
+    } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
