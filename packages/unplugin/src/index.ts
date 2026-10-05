@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { ANALYSIS_ARTIFACT_MAX_BYTES, partitionAnalysisArtifacts } from "./analysis-artifacts.ts";
 import { withExtensionHint } from "./native-import-hint.ts";
+import { preserveNativeCommonJs } from "./native-commonjs.ts";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
@@ -255,6 +256,7 @@ const importFresh = async (sourcePath: string): Promise<Record<string, unknown>>
     optimizeDeps: { noDiscovery: true },
     ssr: { external: true },
   });
+  preserveNativeCommonJs(server.environments.ssr);
   const sourceModule = await server.ssrLoadModule(sourcePath).catch(async (err: unknown) => {
     // A cleanup failure must not replace the source diagnostic.
     await server.close().catch(() => {});

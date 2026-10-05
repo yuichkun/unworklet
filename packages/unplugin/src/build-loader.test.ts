@@ -4,6 +4,7 @@ import unworklet from "./index.ts";
 
 const { createServer } = vi.hoisted(() => ({ createServer: vi.fn() }));
 vi.mock("vite-plus", () => ({ createServer }));
+vi.mock("./native-commonjs.ts", () => ({ preserveNativeCommonJs: vi.fn() }));
 
 afterEach(() => vi.resetAllMocks());
 
@@ -18,7 +19,11 @@ const load = (): Promise<unknown> => {
 test("a failed graph evaluation keeps its diagnostic if cleanup also fails", async () => {
   const failure = new Error("helper could not be evaluated");
   const close = vi.fn().mockRejectedValue(new Error("cleanup failed"));
-  createServer.mockResolvedValue({ ssrLoadModule: vi.fn().mockRejectedValue(failure), close });
+  createServer.mockResolvedValue({
+    ssrLoadModule: vi.fn().mockRejectedValue(failure),
+    close,
+    environments: { ssr: {} },
+  });
   await expect(load()).rejects.toBe(failure);
   expect(close).toHaveBeenCalledTimes(1);
 });
@@ -26,7 +31,11 @@ test("a failed graph evaluation keeps its diagnostic if cleanup also fails", asy
 test("cleanup failure after successful evaluation is reported", async () => {
   const failure = new Error("cleanup failed");
   const close = vi.fn().mockRejectedValue(failure);
-  createServer.mockResolvedValue({ ssrLoadModule: vi.fn().mockResolvedValue({}), close });
+  createServer.mockResolvedValue({
+    ssrLoadModule: vi.fn().mockResolvedValue({}),
+    close,
+    environments: { ssr: {} },
+  });
   await expect(load()).rejects.toBe(failure);
   expect(close).toHaveBeenCalledTimes(1);
 });

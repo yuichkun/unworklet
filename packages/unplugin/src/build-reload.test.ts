@@ -47,22 +47,45 @@ await mkdir(linked);
 await writeFile(path.join(linked, "package.json"), JSON.stringify({ type: "module", exports: "./index.mjs" }));
 await writeFile(path.join(linked, "index.mjs"), "export const identity = {};\\n");
 await symlink(linked, path.join(root, "node_modules/reload-linked"), "junction");
+await writeFile(path.join(app, "child.cjs"), "module.exports = 42;\\n");
+await writeFile(path.join(app, "local.cjs"), "exports.__esModule = true; exports.identity = {}; exports.child = require('./child.cjs'); exports.filename = __filename; exports.directory = __dirname;\\n");
+for (const [directory, manifest] of [["commonjs", { type: "commonjs" }], ["typeless", {}]]) {
+  await mkdir(path.join(app, directory));
+  await writeFile(path.join(app, directory, "package.json"), JSON.stringify(manifest));
+  await writeFile(path.join(app, directory, "helper.js"), "exports.identity = {};\\n");
+}
 globalThis.expectedFramework = defineProcessor;
 globalThis.expectedDependency = (await import("reload-external")).identity;
 globalThis.expectedLinked = (await import("reload-linked")).identity;
+globalThis.expectedCommonJsNamespaces = await Promise.all(["./app/local.cjs", "./app/commonjs/helper.js", "./app/typeless/helper.js"].map(p => import(p)));
+globalThis.expectedCommonJs = globalThis.expectedCommonJsNamespaces.map(m => m.default);
 const entry = path.join(app, "tone.processor.mjs");
 const helper = path.join(app, "constants.mjs");
 const outside = path.join(root, "outside.mjs");
+await mkdir(path.join(root, "typeless-esm"));
+await writeFile(path.join(root, "typeless-esm/package.json"), "{}");
+await writeFile(path.join(root, "typeless-esm/helper.js"), 'export { OFFSET } from "../outside.mjs";\\n');
 await writeFile(outside, "export const OFFSET = 0;\\n");
-await writeFile(helper, 'import { OFFSET } from "../outside.mjs"; export const LEVEL = 0.25 + OFFSET;\\n');
+await writeFile(helper, 'import { OFFSET } from "../typeless-esm/helper.js"; export const LEVEL = 0.25 + OFFSET;\\n');
 await writeFile(entry, \`import { audioOutput, defineProcessor, forSample } from "@unworklet/core";
 import { strict as assert } from "node:assert";
 import { identity } from "reload-external";
 import { identity as linkedIdentity } from "reload-linked";
+import localCjs, { identity as localCjsIdentity } from "./local.cjs";
+import * as localCjsNamespace from "./local.cjs";
+import commonJs from "./commonjs/helper.js";
+import typeless from "./typeless/helper.js";
 import { LEVEL } from "./constants.mjs";
 assert.equal(defineProcessor, globalThis.expectedFramework);
 assert.equal(identity, globalThis.expectedDependency);
 assert.equal(linkedIdentity, globalThis.expectedLinked);
+assert.equal(localCjs, globalThis.expectedCommonJs[0]);
+assert.equal(localCjsIdentity, localCjs.identity);
+assert.equal(localCjsNamespace, globalThis.expectedCommonJsNamespaces[0]);
+assert.equal(localCjsNamespace.__esModule, true);
+assert.equal(localCjs.child, 42);
+assert.equal(commonJs, globalThis.expectedCommonJs[1]);
+assert.equal(typeless, globalThis.expectedCommonJs[2]);
 export const tone = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   return { process: () => forSample(i => out.ch(0).at(i).write(LEVEL)) };
@@ -97,7 +120,7 @@ async function buildWasm(plugin = unworklet(), beforeWorklet = () => {}) {
       write: false,
       minify: false,
       lib: { entry: path.join(app, "main.mjs"), formats: ["es"] },
-      rollupOptions: { external: [helper, "@unworklet/core", "node:assert", "reload-external", "reload-linked"] },
+      rollupOptions: { external: [helper, path.join(app, "local.cjs"), path.join(app, "commonjs/helper.js"), path.join(app, "typeless/helper.js"), "@unworklet/core", "node:assert", "reload-external", "reload-linked"] },
     },
   });
   const outputs = (Array.isArray(result) ? result : [result]).flatMap(r => r.output);
@@ -114,7 +137,7 @@ async function buildWasm(plugin = unworklet(), beforeWorklet = () => {}) {
 const levels = [];
 for (const level of [0.25, 0.25, 0.75, 1, 0.5]) {
   if (level === 0.75) {
-    await writeFile(helper, 'import { OFFSET } from "../outside.mjs"; export const LEVEL = 0.75 + OFFSET;\\n');
+    await writeFile(helper, 'import { OFFSET } from "../typeless-esm/helper.js"; export const LEVEL = 0.75 + OFFSET;\\n');
     await utimes(helper, helperStat.atime, helperStat.mtime);
   }
   if (level === 1) {
