@@ -181,3 +181,24 @@ test("the live-coding demo requests the baked rate on a 44.1 kHz device", async 
     await Promise.all(contexts.map((context) => context.close()));
   }
 });
+
+test("runtime compile preserves typed feedback with authored temporary names", async () => {
+  const proc = await compileSource(`
+const sg = defineSubgraph(() => ({
+  run: (trigger: Node<'bool'>): Node<'f32'> => {
+    const __r = trigger ? 1 : $prev * 0.95;
+    return __r;
+  },
+}));
+const s = instantiate(sg);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => { out.ch(0)[i] = s.run(i == 0); }); });`);
+  try {
+    const wasm = await fetchBytes(proc.worklet.wasmUrl!);
+    expect(WebAssembly.validate(new Uint8Array(wasm))).toBe(true);
+    expectSelfContainedModule(await fetchText(proc.worklet.moduleUrl!));
+  } finally {
+    URL.revokeObjectURL(proc.worklet.moduleUrl!);
+    URL.revokeObjectURL(proc.worklet.wasmUrl!);
+  }
+});
