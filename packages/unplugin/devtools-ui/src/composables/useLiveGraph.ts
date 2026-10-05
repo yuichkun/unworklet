@@ -49,13 +49,13 @@ export function layout(graph: LiveGraph): PlacedNode[] {
   for (let i = 0; i < graph.nodes.length; i++) {
     for (const e of graph.edges) {
       if (!col.has(e.from) || !col.has(e.to)) continue;
-      const c = Math.min((col.get(e.from) ?? 0) + 1, maxCol);
-      if (c > (col.get(e.to) ?? 0)) col.set(e.to, c);
+      const c = Math.min(col.get(e.from)! + 1, maxCol);
+      if (c > col.get(e.to)!) col.set(e.to, c);
     }
   }
   const rowByCol = new Map<number, number>();
   return graph.nodes.map((n) => {
-    const c = col.get(n.id) ?? 0;
+    const c = col.get(n.id)!;
     const r = rowByCol.get(c) ?? 0;
     rowByCol.set(c, r + 1);
     return { ...n, x: COL_X0 + c * COL_W, y: ROW_Y0 + r * ROW_H };

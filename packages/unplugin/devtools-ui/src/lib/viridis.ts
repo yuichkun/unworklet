@@ -32,7 +32,7 @@ const buildViridisLut = (size: number): string[] => {
       const [t0, r0, g0, b0] = VIRIDIS_STOPS[j]!;
       const [t1, r1, g1, b1] = VIRIDIS_STOPS[j + 1]!;
       if (t >= t0 && t <= t1) {
-        const f = t1 === t0 ? 0 : (t - t0) / (t1 - t0);
+        const f = (t - t0) / (t1 - t0);
         r = Math.round(r0 + (r1 - r0) * f);
         g = Math.round(g0 + (g1 - g0) * f);
         b = Math.round(b0 + (b1 - b0) * f);

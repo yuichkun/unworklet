@@ -194,7 +194,7 @@ const midiToPhysicalKey = computed<Record<number, string>>(() => {
   const out: Record<number, string> = {};
   for (const [key, offset] of Object.entries(PC_KEY_TO_OFFSET)) {
     const note = octaveBase.value + offset;
-    if (note >= 0 && note <= 127) out[note] = key.toUpperCase();
+    out[note] = key.toUpperCase();
   }
   return out;
 });
@@ -236,7 +236,6 @@ const onWindowKeyDown = (event: KeyboardEvent): void => {
   if (physicalKeyToMidi.has(key)) return;
 
   const note = octaveBase.value + offset;
-  if (note < 0 || note > 127) return;
   physicalKeyToMidi.set(key, note);
   const vel = event.shiftKey ? SOFT_VELOCITY : velocity.value;
   triggerNoteOn(note, vel);

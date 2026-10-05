@@ -8,6 +8,13 @@ export default defineConfig({
     name: "devtools-ui",
     include: ["src/**/*.test.ts"],
     environment: "happy-dom",
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts", "src/**/*.vue"],
+      exclude: ["src/**/*.test.ts", "src/env.d.ts"],
+      reporter: ["text", "html", "json-summary", "json"],
+      thresholds: { branches: 98 },
+    },
   },
   build: {
     target: "es2022",

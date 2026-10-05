@@ -5,9 +5,13 @@ import { splitSlots } from "../../../src/devbridge";
 import { type LiveNodeState } from "../composables/useLiveState";
 import LiveStateView from "./LiveStateView.vue";
 
-const fixture = vi.hoisted(() => ({ nodes: null as unknown }));
+const fixture = vi.hoisted(() => ({ nodes: null as unknown, history: [] as number[] }));
 vi.mock("../composables/useLiveState", () => ({
-  useLiveState: () => ({ nodes: fixture.nodes, totalScalars: ref(0), getHistory: () => [] }),
+  useLiveState: () => ({
+    nodes: fixture.nodes,
+    totalScalars: ref(0),
+    getHistory: () => fixture.history,
+  }),
 }));
 let app: App | undefined;
 let root: HTMLDivElement;
@@ -31,6 +35,7 @@ const context = {
 beforeEach(() => {
   fills.length = 0;
   nodes.value = [];
+  fixture.history = [];
   fixture.nodes = nodes;
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     context as unknown as CanvasRenderingContext2D,
@@ -139,3 +144,98 @@ test.each([1e308, Number.MIN_VALUE])(
     expect(fills[0]!.y).toBeCloseTo(fills[2]!.y + fills[2]!.h);
   },
 );
+
+test("live state renders empty nodes, typed scalars, histories and all buffer representations", async () => {
+  app = createApp(LiveStateView);
+  app.mount(root);
+  expect(root.textContent).toContain("No live");
+  nodes.value = [{ id: "n1", displayName: "synth", scalars: [], buffers: [] }];
+  await nextTick();
+  expect(root.textContent).toContain("This node declares no state slots.");
+  nodes.value[0]!.scalars = [
+    { name: "gain", kind: "param", type: "f32", value: 0.25 },
+    { name: "double", kind: "state", type: "f64", value: 0.75 },
+    { name: "yes", kind: "state", type: "bool", value: true },
+    { name: "no", kind: "state", type: "bool", value: false },
+    { name: "ticks", kind: "state", type: "i64", value: "9007199254740993" },
+    { name: "count", kind: "state", type: "i32", value: 3 },
+  ];
+  nodes.value[0]!.buffers = [
+    {
+      name: "float",
+      type: "f32",
+      length: 20,
+      data: Array.from({ length: 20 }, (_, i) => i / 2),
+      downsampled: true,
+    },
+    { name: "double", type: "f64", length: 0, data: [], downsampled: false },
+    { name: "flags", type: "bool", length: 2, data: [0, 1], downsampled: false },
+    { name: "bytes", type: "u8", length: 2, data: [0, 255], downsampled: false },
+    { name: "empty", type: "i32", length: 0, data: [], downsampled: false },
+  ];
+  await nextTick();
+  frame(1);
+  for (const text of ["0.250", "0.750", "9007199254740993", "00 FF", "on", "off"])
+    expect(root.textContent).toContain(text);
+  expect(root.querySelectorAll(".bool-cell.on")).toHaveLength(1);
+  expect(root.querySelector(".slot-down")!.textContent).toContain("20");
+  fixture.history = [1];
+  frame(2);
+  fixture.history = [1, 2, 0, 1];
+  frame(3);
+  expect(context.lineTo).toHaveBeenCalled();
+  fixture.history = [1, 1];
+  frame(4);
+  const selectors = root.querySelectorAll<HTMLSelectElement>(".repr-select");
+  selectors[0]!.value = "list";
+  selectors[0]!.dispatchEvent(new Event("change"));
+  await nextTick();
+  expect(root.querySelector(".list-dump")!.textContent).toContain("0.500");
+  expect(root.querySelector(".list-dump")!.textContent).toContain("4 more");
+  selectors[0]!.value = "bar";
+  selectors[0]!.dispatchEvent(new Event("change"));
+  await nextTick();
+  frame(5);
+  expect(fills.length).toBeGreaterThanOrEqual(20);
+  selectors[2]!.value = "list";
+  selectors[2]!.dispatchEvent(new Event("change"));
+  await nextTick();
+  expect([...root.querySelectorAll(".list-dump")].some((el) => el.textContent === "[0, 1]")).toBe(
+    true,
+  );
+  selectors[0]!.value = "waveform";
+  selectors[0]!.dispatchEvent(new Event("change"));
+  await nextTick();
+  nodes.value[0]!.buffers[0]!.data = [0];
+  await nextTick();
+  frame(6);
+});
+
+test("canvas resizes for display density and tolerates an unavailable 2D context", async () => {
+  vi.stubGlobal("devicePixelRatio", 2);
+  vi.spyOn(HTMLCanvasElement.prototype, "clientWidth", "get").mockReturnValue(120);
+  vi.spyOn(HTMLCanvasElement.prototype, "clientHeight", "get").mockReturnValue(60);
+  mount([1, 2]);
+  expect(root.querySelector("canvas")!.width).toBe(240);
+  frame(1);
+  const selector = root.querySelector<HTMLSelectElement>(".repr-select")!;
+  selector.value = "waveform";
+  selector.dispatchEvent(new Event("change"));
+  await nextTick();
+  frame(2);
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const before = fills.length;
+  frame(3);
+  expect(fills).toHaveLength(before);
+  selector.value = "bar";
+  selector.dispatchEvent(new Event("change"));
+  await nextTick();
+  frame(4);
+  expect(fills).toHaveLength(before);
+  nodes.value[0]!.scalars = [{ name: "count", kind: "state", type: "i32", value: 1 }];
+  fixture.history = [1, 2];
+  await nextTick();
+  frame(5);
+  vi.stubGlobal("devicePixelRatio", 0);
+  frame(6);
+});
