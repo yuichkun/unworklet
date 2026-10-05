@@ -29,6 +29,8 @@ export type DevStateBuffer = {
   type: DevSlotType;
   length: number;
   data: number[];
+  /** Exact decimal elements for i64; `data` is its approximate chart projection. */
+  exactData?: string[];
   downsampled: boolean;
 };
 
@@ -49,22 +51,21 @@ export function splitSlots(
     if (s.kind === "buffer") {
       const arr = decodeTypedArray(s.type, s.data);
       const length = arr.length;
-      if (length <= maxBufferPoints) {
-        buffers.push({
-          name: s.name,
-          type: s.type,
-          length,
-          data: Array.from(arr as ArrayLike<number | bigint>, Number),
-          downsampled: false,
-        });
-      } else {
-        const stride = length / maxBufferPoints;
-        const src = arr as ArrayLike<number | bigint>;
-        const data = Array.from({ length: maxBufferPoints }, (_, i) =>
-          Number(src[Math.floor(i * stride)]),
-        );
-        buffers.push({ name: s.name, type: s.type, length, data, downsampled: true });
-      }
+      const downsampled = length > maxBufferPoints;
+      const stride = downsampled ? length / maxBufferPoints : 1;
+      const src = arr as ArrayLike<number | bigint>;
+      const sampled = Array.from(
+        { length: downsampled ? maxBufferPoints : length },
+        (_, i) => src[Math.floor(i * stride)]!,
+      );
+      buffers.push({
+        name: s.name,
+        type: s.type,
+        length,
+        data: sampled.map(Number),
+        ...(s.type === "i64" ? { exactData: sampled.map(String) } : {}),
+        downsampled,
+      });
     } else {
       // A scalar slot's type is always a ScalarType (u8 is buffer-only); the
       // RawSlot type can't express that, so narrow to decodeScalar's parameter.

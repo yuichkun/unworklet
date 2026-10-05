@@ -52,8 +52,10 @@ const setRepr = (nodeId: string, b: LiveBuffer, repr: BufferRepr): void => {
 const formatHex = (data: number[]): string =>
   data.map((b) => (b & 0xff).toString(16).padStart(2, "0").toUpperCase()).join(" ");
 
-const formatList = (data: number[]): string => {
-  const fmt = data.map((v) => (Number.isInteger(v) ? String(v) : v.toFixed(3)));
+const formatList = (data: readonly (number | string)[]): string => {
+  const fmt = data.map((v) =>
+    typeof v === "string" || Number.isInteger(v) ? String(v) : v.toFixed(3),
+  );
   if (fmt.length <= 16) return `[${fmt.join(", ")}]`;
   return `[${fmt.slice(0, 16).join(", ")}, … ${fmt.length - 16} more]`;
 };
@@ -132,21 +134,34 @@ const drawBars = (canvas: HTMLCanvasElement, data: number[]): void => {
   if (!ctx || data.length === 0) return;
   const w = canvas.clientWidth || 120;
   const h = canvas.clientHeight || 60;
-  let min = data[0]!;
-  let max = data[0]!;
+  let min = 0;
+  let max = 0;
   for (const v of data) {
     if (v < min) min = v;
     if (v > max) max = v;
   }
-  const baseline = min < 0 ? 0 : min;
-  const span = Math.max(Math.abs(max - baseline), Math.abs(min - baseline), 1);
+  const scale = Math.max(Math.abs(min), Math.abs(max)) || 1;
+  min /= scale;
+  max /= scale;
+  const span = max - min || 1;
+  const zeroY = 2 + (max / span) * (h - 4);
+  ctx.strokeStyle = "rgba(255, 250, 240, 0.18)";
+  ctx.beginPath();
+  ctx.moveTo(0, zeroY);
+  ctx.lineTo(w, zeroY);
+  ctx.stroke();
   const cellW = w / data.length;
   const barW = Math.max(1, cellW - 2);
   for (let i = 0; i < data.length; i++) {
     const v = data[i]!;
-    const barH = ((v - baseline) / span) * (h - 4);
-    ctx.fillStyle = v >= baseline ? "#fffaf0" : "#ffb4ab";
-    ctx.fillRect(i * cellW + 1, h - 2 - barH, barW, Math.max(1, barH));
+    const valueY = 2 + ((max - v / scale) / span) * (h - 4);
+    ctx.fillStyle = v >= 0 ? "#fffaf0" : "#ffb4ab";
+    ctx.fillRect(
+      i * cellW + 1,
+      Math.min(zeroY, valueY),
+      barW,
+      Math.max(1, Math.abs(valueY - zeroY)),
+    );
   }
 };
 
@@ -294,6 +309,12 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
             </div>
 
             <div class="slot-visual">
+              <span
+                v-if="b.type === 'i64' && ['bar', 'waveform'].includes(reprFor(node.id, b))"
+                class="slot-down mono"
+                title="Chart values are approximate; select List for exact integers"
+                >approximate</span
+              >
               <canvas
                 v-if="reprFor(node.id, b) === 'waveform'"
                 :ref="setWaveformRef(bufKey(node.id, b.name))"
@@ -315,7 +336,7 @@ const isEmpty = computed(() => live.nodes.value.length === 0);
               <span v-else-if="reprFor(node.id, b) === 'hex'" class="hex-dump mono">{{
                 formatHex(b.data)
               }}</span>
-              <span v-else class="list-dump mono">{{ formatList(b.data) }}</span>
+              <span v-else class="list-dump mono">{{ formatList(b.exactData ?? b.data) }}</span>
             </div>
           </li>
         </ul>

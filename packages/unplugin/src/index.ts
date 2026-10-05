@@ -106,6 +106,7 @@ export type DevStateBuffer = {
   type: DevSlotType;
   length: number;
   data: number[];
+  exactData?: string[];
   downsampled: boolean;
 };
 export type DevNodeState = {

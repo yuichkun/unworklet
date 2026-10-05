@@ -148,6 +148,7 @@ export default defineConfig({
     // configs run in parallel as separate projects.
     projects: [
       "packages/*/vite.config.ts",
+      "packages/unplugin/devtools-ui/vite.config.ts",
       "packages/core/vite.browser.config.ts",
       "packages/core/vite.browser-postmessage.config.ts",
       "packages/unplugin/vite.integration.config.ts",
