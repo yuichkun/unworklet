@@ -463,13 +463,12 @@ test("transform strips a query suffix before the .uwk.ts extension test", () => 
   expect(out.code).toContain("export const synth = defineProcessor(");
 });
 
-test("transform camel-cases a kebab-case filename into the export name", () => {
-  expect(
-    (callTransform(UWK_MINIMAL, "/abs/noise-drive.uwk.ts") as { code: string }).code,
-  ).toContain("export const noiseDrive = defineProcessor(");
-  expect((callTransform(UWK_MINIMAL, "/abs/tape-delay.uwk.ts") as { code: string }).code).toContain(
-    "export const tapeDelay = defineProcessor(",
-  );
+test.each([
+  ["noise-drive", "noiseDrive"],
+  ["tape-delay", "tapeDelay"],
+])("transform camel-cases %s into the export name %s", (filename, exportName) => {
+  const transformed = callTransform(UWK_MINIMAL, `/abs/${filename}.uwk.ts`) as { code: string };
+  expect(transformed.code).toContain(`export const ${exportName} = defineProcessor(`);
 });
 
 test("transform falls back to `processor` when the filename has no identifier chars", () => {

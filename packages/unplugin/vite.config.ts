@@ -7,6 +7,8 @@ export default defineConfig({
     deps: {
       skipNodeModulesBundle: true,
     },
+    // Source uses the workspace toolchain; consumers provide the existing Vite peer.
+    outputOptions: { paths: { "vite-plus": "vite" } },
   },
   lint: {
     options: {

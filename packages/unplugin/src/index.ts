@@ -16,12 +16,13 @@
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ANALYSIS_ARTIFACT_MAX_BYTES, partitionAnalysisArtifacts } from "./analysis-artifacts.ts";
 import { withExtensionHint } from "./native-import-hint.ts";
+import { preserveNativeCommonJs } from "./native-commonjs.ts";
 
 import { compile, extractWorkletMeta } from "@unworklet/core";
 import type { CompiledProcessor, WorkletNamespace } from "@unworklet/core";
@@ -34,6 +35,7 @@ import {
 } from "@unworklet/lang";
 import { createUnplugin, type UnpluginOptions } from "unplugin";
 import type { Plugin } from "vite";
+import { createServer } from "vite-plus";
 
 import { workletsDts } from "@unworklet/lang";
 
@@ -241,29 +243,27 @@ const computeProcessorName = (
   return `${exportName}__${srcSuffix}__${revisionHash}`;
 };
 
-/**
- * Re-import `sourcePath` with a mtime-based cache-buster query so Node's
- * ESM module cache returns the **current** disk content instead of the
- * cached evaluation from the first `import()`.
- *
- * Build-mode fallback only — dev mode goes through `ssrLoadModule` so the
- * full transitive import graph rides on Vite's module graph (= helper file
- * edits invalidate automatically = `07-unplugin.md` §3 dev/build symmetry).
- *
- * The buster appears as a URL query (= `?t=<mtimeMs>`). Node treats the
- * resulting specifier as a fresh module identity = forces re-evaluation.
- * Transitive imports inside the source (= e.g. `@unworklet/core`) are NOT
- * cache-busted = build mode never sees this because rolldown re-bundles
- * on each build run, but the comment is kept for the (rare) build code path
- * that still routes through here.
- */
+// A separate graph owns every relative helper evaluation. External packages keep
+// their native identity; changing only the entry's URL cannot refresh helpers
+// already held in Node's permanent ESM cache.
 const importFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
-  const s = await stat(sourcePath);
-  try {
-    return (await import(`${sourcePath}?t=${s.mtimeMs}`)) as Record<string, unknown>;
-  } catch (err) {
+  const server = await createServer({
+    root: path.dirname(sourcePath),
+    configFile: false,
+    envFile: false,
+    logLevel: "silent",
+    server: { middlewareMode: true, hmr: false, watch: null, ws: false },
+    optimizeDeps: { noDiscovery: true },
+    ssr: { external: true },
+  });
+  preserveNativeCommonJs(server.environments.ssr);
+  const sourceModule = await server.ssrLoadModule(sourcePath).catch(async (err: unknown) => {
+    // A cleanup failure must not replace the source diagnostic.
+    await server.close().catch(() => {});
     throw withExtensionHint(err);
-  }
+  });
+  await server.close();
+  return sourceModule as Record<string, unknown>;
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ const importFresh = async (sourcePath: string): Promise<Record<string, unknown>>
 // / test callers share the same multi-file `.uwk.ts` lowering.
 
 /**
- * Build-path module load. A plain `.ts` is imported fresh via Node; a `.uwk.ts`
+ * Build-path module load. Plain modules use an isolated Vite SSR graph; a `.uwk.ts`
  * is lowered (with its transitive `.uwk.ts` imports — see {@link materializeLowered})
  * to temp siblings, imported, then removed. (Node `import()` does not run the Vite
  * transform pipeline, so the build path cannot rely on the `transform` hook.)
@@ -351,7 +351,7 @@ const ssrLoadSource = async (
   //
   // `Date.now()` rather than the source mtime: in dev `sourcePath` is a Vite
   // root-relative URL (e.g. `/src/x.ts`), NOT a filesystem path, so it can't be
-  // `stat`-ed (the build path's `importFresh` resolves an absolute path and can).
+  // `stat`-ed (the build path resolves an absolute path).
   // An integer (no `.`) is required — a fractional query (`?t=123.45`) makes
   // Vite read the trailing digits as the file extension, dropping the `.ts`
   // transform. `compile` is deterministic, so re-evaluating unchanged source
@@ -610,6 +610,21 @@ const assetBaseName = (sourcePath: string): string => {
   if (base.endsWith(".processor")) base = base.slice(0, -".processor".length);
   if (base.endsWith(".uwk")) base = base.slice(0, -".uwk".length);
   return base;
+};
+
+const compileBuildProcessor = async (sourcePath: string) => {
+  const sourceModule = await loadProcessorModuleFresh(sourcePath);
+  const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
+  const result = await compile(processor);
+  const meta = extractWorkletMeta(
+    processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+  );
+  const processorName = computeProcessorName(
+    exportName,
+    sourcePath,
+    computeRevisionHash(result.wasm, meta, exportName),
+  );
+  return { sourceModule, result, meta, processorName };
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -899,9 +914,21 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   };
   const findSnapshot = (sourcePath: string, hash: string): CompileSnapshot | undefined =>
     snapshotsBySource.get(sourcePath)?.find((s) => s.hash === hash);
+  const buildProcessors = new Map<string, ReturnType<typeof compileBuildProcessor>>();
+  const loadBuildProcessor = (sourcePath: string): ReturnType<typeof compileBuildProcessor> => {
+    let pending = buildProcessors.get(sourcePath);
+    if (!pending) {
+      pending = compileBuildProcessor(sourcePath);
+      buildProcessors.set(sourcePath, pending);
+    }
+    return pending;
+  };
   return {
     name: "@unworklet/unplugin",
     enforce: "pre",
+    buildStart() {
+      buildProcessors.clear();
+    },
     config(userConfig, env) {
       // Dev-only gate for the core registry / page bridge: a single statically-
       // replaced boolean — `true` in serve, `false` in build — so production
@@ -1525,22 +1552,11 @@ ensureClient();
           });
         }
 
-        // Build path: rolldown emits the chunk via `this.emitFile`, snapshot
-        // ring not involved. Recompile + recompute the processorName from
-        // the WASM bytes so dev and build produce the same registration name
-        // for a given source / revision pair.
-        const sourceModule = await loadProcessorModuleFresh(sourcePath);
-        const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
-        const buildResult = await compile(processor);
-        const meta = extractWorkletMeta(
-          processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
-        );
+        // The client module and emitted worklet must describe the same evaluation,
+        // even if a helper changes while the bundler is producing the chunks.
+        const { processorName, meta } = await loadBuildProcessor(sourcePath);
         return emitWorkletTemplate({
-          processorName: computeProcessorName(
-            exportName,
-            sourcePath,
-            computeRevisionHash(buildResult.wasm, meta, exportName),
-          ),
+          processorName,
           meta,
         });
       }
@@ -1551,10 +1567,11 @@ ensureClient();
       // it when the file changes (= full-page reload picks up edits without
       // restarting the dev server).
       this.addWatchFile(sourcePath);
-      const sourceModule =
-        isServe && viteDevServer
+      const sourceModule = isServe
+        ? viteDevServer
           ? await ssrLoadSource(viteDevServer, sourcePath)
-          : await loadProcessorModuleFresh(sourcePath);
+          : await loadProcessorModuleFresh(sourcePath)
+        : (await loadBuildProcessor(sourcePath)).sourceModule;
       // Dev mode: fan watch dependencies out across every transitive file
       // reachable from the processor source = a helper edit invalidates this
       // virtual module just like editing the entry would (= 07-unplugin.md
@@ -1623,7 +1640,7 @@ ensureClient();
         // Build mode: emit chunk + asset via rolldown's `emitFile`. URLs are
         // resolved through `import.meta.ROLLUP_FILE_URL_<refId>` placeholders
         // which rolldown rewrites to `new URL(...)` at output time.
-        const result = await compile(processor);
+        const { result, processorName: buildProcessorName } = await loadBuildProcessor(sourcePath);
         const wasmRefId = this.emitFile({
           type: "asset",
           name: `${baseName}.wasm`,
@@ -1636,14 +1653,7 @@ ensureClient();
         });
         moduleUrlExpr = `import.meta.ROLLUP_FILE_URL_${workletRefId}`;
         wasmUrlExpr = `import.meta.ROLLUP_FILE_URL_${wasmRefId}`;
-        const meta = extractWorkletMeta(
-          processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
-        );
-        processorName = computeProcessorName(
-          exportName,
-          sourcePath,
-          computeRevisionHash(result.wasm, meta, exportName),
-        );
+        processorName = buildProcessorName;
         bakedSampleRate = result.sampleRate;
 
         if (emitAnalysisArtifacts) {
