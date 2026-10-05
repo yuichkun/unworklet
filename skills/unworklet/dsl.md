@@ -798,6 +798,11 @@ that default import, including its declared parameters and message payloads.
 | `node.restore(blob)`      | `Promise<RestoreResult>` — runs migrations, applies slots + param values; never throws (returns `{ ok }`)                                                                                                                                                                                                                                                       |
 | `node.dispose()`          | idempotent teardown; stops polling, removes listeners, disconnects proxies; does not touch your graph edges                                                                                                                                                                                                                                                     |
 
+Processors with no declared audio ports use one silent native output to satisfy
+Web Audio's constructor requirements. Their public `inputs` and `outputs` remain
+empty. `dispose()` sends a shutdown message; once the worklet receives it, DSP
+execution stops and `process()` returns `false` to release the processor's lifetime.
+
 `MidiEvent` is a discriminated union (`noteOn` / `noteOff` / `cc` / `pitchBend` /
 `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` / `sysex`). —
 `types.ts:377`
