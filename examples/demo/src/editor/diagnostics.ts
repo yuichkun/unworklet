@@ -1,5 +1,18 @@
 import type { DiagnosticPhase, EditorDiagnostic } from "./protocol.ts";
 
+function errorMessage(error: unknown, object: Record<string, unknown> | undefined): string {
+  if (error instanceof Error) return error.message;
+  if (typeof object?.message === "string") return object.message;
+  if (object) {
+    try {
+      return JSON.stringify(object, null, 2) ?? "Unserializable error details";
+    } catch {
+      return "Unserializable error details";
+    }
+  }
+  return String(error);
+}
+
 export function diagnosticFromError(
   error: unknown,
   phase: DiagnosticPhase,
@@ -22,12 +35,7 @@ export function diagnosticFromError(
         : typeof object?.code === "string"
           ? object.code
           : phase,
-    message:
-      error instanceof Error
-        ? error.message
-        : typeof object?.message === "string"
-          ? object.message
-          : String(error),
+    message: errorMessage(error, object),
     ...(phase !== "runtime" &&
     typeof start === "number" &&
     typeof length === "number" &&

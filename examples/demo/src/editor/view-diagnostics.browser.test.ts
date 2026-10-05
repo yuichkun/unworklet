@@ -1,17 +1,29 @@
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser/context";
+import { page, userEvent } from "vite-plus/test/browser";
 import { createApp, h, nextTick } from "vue";
 import { createMemoryHistory, createRouter } from "vue-router";
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
 import ExampleView from "../views/ExampleView.vue";
 
-const { recompile, destroy } = vi.hoisted(() => ({ recompile: vi.fn(), destroy: vi.fn() }));
+const { recompile, destroy, runtimeError } = vi.hoisted(() => ({
+  recompile: vi.fn(),
+  destroy: vi.fn(),
+  runtimeError: vi.fn(),
+}));
 vi.mock("../composables/useUnworkletDemo.ts", async () => {
   const { ref } = await import("vue");
   return {
     useUnworkletDemo: () => {
       const failure = ref<import("./protocol.ts").EditorDiagnostic | null>(null);
       const status = ref("ready");
+      runtimeError.mockImplementation(() => {
+        failure.value = {
+          phase: "runtime",
+          severity: "error",
+          code: "queue-overflow",
+          message: "midi keys dropped: 2",
+        };
+      });
       return {
         status,
         failure,
@@ -80,7 +92,9 @@ test("explicit Recompile failure shows structured details and source navigation"
   await nextTick();
   expect(recompile).not.toHaveBeenCalled();
   await page.getByRole("button", { name: "↻ Recompile", exact: true }).click();
-  await expect.element(page.getByRole("alert")).toHaveTextContent("uwk-test-failure");
+  await expect
+    .element(page.getByRole("alert", { name: "Compilation and runtime errors" }))
+    .toHaveTextContent("uwk-test-failure");
   expect(recompile).toHaveBeenCalledExactlyOnceWith("process(() => {});");
   expect(
     monaco.editor.getModelMarkers({ owner: "uwk-compile", resource: editor.getModel()!.uri }),
@@ -107,7 +121,9 @@ test("a slow compile cannot mark text edited after the request", async () => {
   editor.setValue("process(() => {});");
   await nextTick();
   finish!();
-  await expect.element(page.getByRole("alert")).toHaveTextContent("A located compilation failure");
+  await expect
+    .element(page.getByRole("alert", { name: "Compilation and runtime errors" }))
+    .toHaveTextContent("A located compilation failure");
   expect(
     monaco.editor.getModelMarkers({ owner: "uwk-compile", resource: editor.getModel()!.uri }),
   ).toEqual([]);
@@ -129,4 +145,20 @@ test("closing help restores editor focus, source and undo history without compil
   expect(recompile).not.toHaveBeenCalled();
   editor.trigger("test", "undo", null);
   expect(editor.getValue()).toBe(before);
+});
+
+test("a later runtime event cannot inherit a failed compile's source marker", async () => {
+  const editor = await mount();
+  await page.getByRole("button", { name: "↻ Recompile", exact: true }).click();
+  await expect.element(page.getByRole("button", { name: "Show Line 1, column 1" })).toBeVisible();
+  runtimeError();
+  await expect
+    .element(page.getByRole("alert", { name: "Compilation and runtime errors" }))
+    .toHaveTextContent("queue-overflow");
+  await expect
+    .element(page.getByRole("button", { name: "Show Line 1, column 1" }))
+    .not.toBeInTheDocument();
+  expect(
+    monaco.editor.getModelMarkers({ owner: "uwk-compile", resource: editor.getModel()!.uri }),
+  ).toEqual([]);
 });

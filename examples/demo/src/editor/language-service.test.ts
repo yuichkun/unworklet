@@ -158,3 +158,48 @@ test.each([
 ])("accepted DSP if sugar has no raw-TypeScript false errors", (text) => {
   expect(query(text, "diagnostics").diagnostics).toEqual([]);
 });
+
+test.each([" ", "\n    ", ""])(
+  "unfinished call inside output-write sugar preserves active argument: %j",
+  (trailing) => {
+    const text = `const s = state.f32(0); process(() => { forSample((i) => { const l = s * 2; out.left[i] = clamp(l, f32(0),${trailing}`;
+    const signature = query(text, "signature").signature!;
+    expect(signature.items[signature.activeSignature]!.label).toContain("clamp(");
+    expect(signature.activeParameter).toBe(2);
+  },
+);
+
+test.each(["input.left[i] ", "s * 2 "])(
+  "signature stays outside a completed sugar argument: %s",
+  (argument) => {
+    const prefix = `const s = state.f32(0); process(() => { forSample((i) => { const result = clamp(${argument}`;
+    const text = `${prefix}, -1, 1); }); });`;
+    const signature = query(text, "signature", prefix.length).signature!;
+    expect(signature.items[signature.activeSignature]!.label).toContain("clamp(");
+    expect(signature.activeParameter).toBe(0);
+  },
+);
+
+test("unfinished output-write call skips comment trivia before the next argument", () => {
+  const text = "out.left[i] = clamp(f32(0), f32(0), /* upper bound */ ";
+  const signature = query(text, "signature").signature!;
+  expect(signature.items[signature.activeSignature]!.label).toContain("clamp(");
+  expect(signature.activeParameter).toBe(2);
+});
+
+test.each([
+  ["clamp(input.left[i] |, -1, 1)", 0],
+  ["clamp(input.left[i] |", 0],
+  ["clamp(input.left[i]|", 0],
+  ["clamp(input.left[i], |)", 1],
+  ["clamp(s * 2 |, -1, 1)", 0],
+  ["clamp(s * 2|, -1, 1)", 0],
+  ["clamp(s * 2, |)", 1],
+  ["clamp(s > 0 ? s : 0 |, -1, 1)", 0],
+])("signature ignores generated-only calls around author cursor: %s", (marked, parameter) => {
+  const text = `const s = state.f32(0); process(() => { forSample((i) => { out.left[i] = ${marked}`;
+  const offset = text.indexOf("|");
+  const signature = query(text.replace("|", ""), "signature", offset).signature!;
+  expect(signature.items[signature.activeSignature]!.label).toMatch(/^clamp\(/);
+  expect(signature.activeParameter).toBe(parameter);
+});

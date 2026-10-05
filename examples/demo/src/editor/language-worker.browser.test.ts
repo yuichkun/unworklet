@@ -27,8 +27,11 @@ test("browser worker loads bundled snapshot and supports sugar hover, completion
     expect(
       (await client.query("completion", 6))?.completions?.some((item) => item.name === "buffer"),
     ).toBe(true);
-    client.update({ uri, version: ++version, source: "clamp(f32(0), " });
-    expect((await client.query("signature", 14))?.signature?.activeParameter).toBe(1);
+    const unfinished = "out.left[i] = clamp(f32(0), f32(0), ";
+    client.update({ uri, version: ++version, source: unfinished });
+    const signature = (await client.query("signature", unfinished.length))?.signature;
+    expect(signature?.items[0]?.label).toContain("clamp(");
+    expect(signature?.activeParameter).toBe(2);
     client.update({ uri, version: ++version, source: "process(() => { unknownName(); });" });
     const invalid = await client.query("diagnostics", 0);
     expect(
@@ -39,7 +42,7 @@ test("browser worker loads bundled snapshot and supports sugar hover, completion
     const warmStart = performance.now();
     await client.query("hover", largest.source.indexOf("const") + 6);
     console.info(
-      `editor benchmark: ${largest.slug} ${largest.source.length} chars, cold ${Math.round(cold)}ms, warm hover ${Math.round(performance.now() - warmStart)}ms`,
+      `editor benchmark: ${largest.slug} ${largest.source.length} chars, cold ${cold.toFixed(2)}ms, warm hover ${(performance.now() - warmStart).toFixed(2)}ms`,
     );
   } finally {
     client.dispose();

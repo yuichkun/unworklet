@@ -86,6 +86,8 @@ onMounted(() => {
     theme: "uwk-light",
     automaticLayout: true,
     minimap: { enabled: false },
+    // No occurrence provider is installed; its cross-model work is unnecessary.
+    occurrencesHighlight: "off",
     fontSize: 13,
     lineHeight: 21,
     fontFamily: '"JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace',

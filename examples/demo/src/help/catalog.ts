@@ -7,7 +7,7 @@ export function filterEntries<T extends HelpEntry>(
   query: string,
   category: string,
 ): T[] {
-  const terms = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   return entries.filter((entry) => {
     const text = [
       entry.name,
@@ -17,7 +17,7 @@ export function filterEntries<T extends HelpEntry>(
       ...(entry.aliases ?? []),
     ]
       .join(" ")
-      .toLocaleLowerCase();
+      .toLowerCase();
     return (
       (category === "all" || entry.category === category) &&
       terms.every((term) => text.includes(term))

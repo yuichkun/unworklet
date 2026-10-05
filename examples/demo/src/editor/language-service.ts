@@ -105,6 +105,81 @@ export function createEditorLanguageService(snapshot: FsSnapshot) {
     return result;
   }
 
+  function signatureAt(offset: number): ts.SignatureHelpItems | undefined {
+    const [script, target, author] = getServiceScript(language, fileName);
+    if (!script || !target) return undefined;
+    const parsed = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+    let activeCall: ts.CallExpression | undefined;
+    const onlyTrivia = (text: string) =>
+      ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text).scan() ===
+      ts.SyntaxKind.EndOfFileToken;
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && node.arguments.pos <= offset) {
+        const last = node.getChildren(parsed).at(-1)!;
+        const closed = last.kind === ts.SyntaxKind.CloseParenToken;
+        if (
+          offset <= (closed ? last.getStart(parsed) : node.arguments.end) ||
+          (!closed && offset >= node.end && onlyTrivia(source.slice(node.end, offset)))
+        )
+          activeCall = node;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parsed);
+    if (!activeCall) return undefined;
+    const toGenerated = (position: number) =>
+      toGeneratedOffset(language, script, author, position, isSignatureHelpEnabled);
+    const argumentStart = toGenerated(activeCall.arguments.pos);
+    if (argumentStart === undefined) return undefined;
+    let generatedOffset = toGenerated(offset);
+    for (
+      let position = offset - 1;
+      generatedOffset === undefined && position >= activeCall.arguments.pos;
+      position -= 1
+    )
+      generatedOffset = toGenerated(position);
+    if (generatedOffset === undefined) return undefined;
+    const getAt = (position: number) =>
+      rawService.getSignatureHelpItems(target.id, position, undefined);
+    const info = getAt(generatedOffset);
+    if (info?.applicableSpan.start === argumentStart) return info;
+    const seeds = [generatedOffset];
+    const scanner = ts.createScanner(
+      ts.ScriptTarget.Latest,
+      true,
+      ts.LanguageVariant.Standard,
+      source.slice(0, offset),
+    );
+    let tokenEnd = offset;
+    while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) tokenEnd = scanner.getTextPos();
+    const tokenOffset = toGenerated(tokenEnd);
+    if (tokenOffset !== undefined && tokenOffset !== generatedOffset) seeds.push(tokenOffset);
+    const generated = rawService.getProgram()!.getSourceFile(target.id)!.text;
+    // Sugar adds closing delimiters that have no authored call. Query on the
+    // other side only when TypeScript's argument span identifies the same
+    // authored call, preserving overload resolution and the active parameter.
+    for (const seed of seeds) {
+      const direct = getAt(seed);
+      if (direct?.applicableSpan.start === argumentStart) return direct;
+      for (const direction of [-1, 1]) {
+        let position = seed;
+        while (position >= 0 && position <= generated.length) {
+          let character = generated[direction === -1 ? position - 1 : position];
+          if (character === undefined || !/[\s)\]}]/.test(character)) break;
+          if (/\s/.test(character)) {
+            do {
+              position += direction;
+              character = generated[direction === -1 ? position - 1 : position];
+            } while (character !== undefined && /\s/.test(character));
+          } else position += direction;
+          const candidate = getAt(position);
+          if (candidate?.applicableSpan.start === argumentStart) return candidate;
+        }
+      }
+    }
+    return undefined;
+  }
+
   return {
     query(query: EditorQuery): EditorResult {
       if (source !== query.source) {
@@ -147,17 +222,7 @@ export function createEditorLanguageService(snapshot: FsSnapshot) {
           }));
       }
       if (query.kind === "signature") {
-        // The public proxy drops signatures whose applicable span reaches the
-        // unmapped module suffix in incomplete calls. Only the request position
-        // is needed here; use Volar’s same mapping without returning that span.
-        const [script, target, author] = getServiceScript(language, fileName);
-        const generatedOffset =
-          script &&
-          toGeneratedOffset(language, script, author, query.offset, isSignatureHelpEnabled);
-        const info =
-          generatedOffset === undefined || !target
-            ? undefined
-            : rawService.getSignatureHelpItems(target.id, generatedOffset, undefined);
+        const info = signatureAt(query.offset);
         if (info)
           result.signature = {
             activeSignature: info.selectedItemIndex,

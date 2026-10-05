@@ -57,14 +57,23 @@ test("actual Monaco accepts a source completion, shows sugar hover and call sign
     .toContain("audioInput");
   editor.trigger("test", "acceptSelectedSuggestion", {});
   expect(editor.getValue()).toBe("audioInput");
-  const source =
-    'const input = audioInput({ channels: 2 }); const gain = param.f32({ default: 1, min: 0, max: 2, automationRate: "a-rate" }); process(() => { forSample((i) => { const l = input.left[i] * gain[i]; }); });';
+  const source = `const input = audioInput({ channels: 2 });
+const gain = param.f32({ default: 1, min: 0, max: 2, automationRate: "a-rate" });
+process(() => { forSample((i) => {
+  const l = input.left[i] * gain[i];
+}); });`;
   editor.setValue(source);
   editor.setPosition(editor.getModel()!.getPositionAt(source.indexOf("const l") + 6));
   editor.revealPositionInCenter(editor.getPosition()!);
   await editor.getAction("editor.action.showHover")!.run();
   await expect
-    .poll(() => document.querySelector(".monaco-hover")?.textContent, { timeout: 20_000 })
+    .poll(
+      () =>
+        [...document.querySelectorAll(".monaco-hover")]
+          .map((element) => element.textContent)
+          .join("\n"),
+      { timeout: 20_000 },
+    )
     .toContain('Node<"f32">');
   editor.setValue("clamp(f32(0), ");
   editor.setPosition({ lineNumber: 1, column: 15 });

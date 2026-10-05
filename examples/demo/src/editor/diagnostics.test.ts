@@ -38,3 +38,24 @@ test.each([
 ])("only a valid explicitly source-tagged range becomes a compile marker", (error) => {
   expect(diagnosticFromError(error, "compile", 10)).not.toHaveProperty("start");
 });
+
+test.each([
+  { code: "queue-overflow", source: "midi", name: "keys", dropped: 2 },
+  { code: "block-length-mismatch", expected: 128, received: 64 },
+  { code: "sab-unavailable" },
+  { code: "worklet-initialize-not-called" },
+] satisfies import("@unworklet/core").NodeErrorEvent[])(
+  "real worklet event details stay readable: $code",
+  (event) => {
+    const diagnostic = diagnosticFromError(event, "runtime", 0);
+    expect(diagnostic.code).toBe(event.code);
+    expect(JSON.parse(diagnostic.message)).toEqual(event);
+    expect(diagnostic).not.toHaveProperty("start");
+  },
+);
+
+test("unserializable thrown objects do not break the error panel", () => {
+  const object: Record<string, unknown> = { code: "custom-error" };
+  object.circular = object;
+  expect(() => diagnosticFromError(object, "compile", 0)).not.toThrow();
+});

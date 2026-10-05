@@ -60,6 +60,11 @@ const {
   destroy,
 } = useUnworkletDemo();
 
+watch(failure, (value) => {
+  if (value?.phase !== "compile" || value !== compileDiagnostic.value?.diagnostic)
+    compileDiagnostic.value = undefined;
+});
+
 const WAVES: { value: SourceType; label: string }[] = [
   { value: "sawtooth", label: "Sawtooth" },
   { value: "sine", label: "Sine" },
@@ -260,11 +265,11 @@ onBeforeUnmount(() => {
         </div>
 
         <p class="status" :class="{ live: playing }"><span class="dot" />{{ status }}</p>
-        <div v-if="failure" class="error" role="alert">
+        <div v-if="failure" class="error" role="alert" aria-label="Compilation and runtime errors">
           <strong>{{ failure.severity }} · {{ failure.phase }} · {{ failure.code }}</strong>
           <p>{{ failure.message }}</p>
           <button
-            v-if="compileDiagnostic?.diagnostic.start !== undefined"
+            v-if="failure.phase === 'compile' && compileDiagnostic?.diagnostic.start !== undefined"
             @click="editor?.reveal(compileDiagnostic.diagnostic)"
           >
             Show {{ sourceLocation(compileDiagnostic.diagnostic) }}
