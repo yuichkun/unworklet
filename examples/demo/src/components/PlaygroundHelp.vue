@@ -41,6 +41,38 @@ onBeforeUnmount(() => {
   dialog.value!.close();
 });
 
+function dialogKey(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    // Search inputs otherwise consume Escape to clear their value.
+    event.preventDefault();
+    event.stopPropagation();
+    emit("close");
+    return;
+  }
+  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+  const controls = [
+    ...dialog.value!.querySelectorAll<HTMLElement>(
+      "button, a[href], input, select, textarea, [tabindex]",
+    ),
+  ].filter(
+    (element) =>
+      element.tabIndex >= 0 &&
+      !element.matches(":disabled") &&
+      element.getClientRects().length > 0 &&
+      getComputedStyle(element).visibility !== "hidden",
+  );
+  const first = controls[0]!;
+  const last = controls.at(-1)!;
+  // Native dialog focus can leave an embedded document at its boundaries.
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function changeTab(value: "api" | "sugar") {
   tab.value = value;
   query.value = "";
@@ -84,6 +116,7 @@ async function copyExample() {
     aria-labelledby="help-title"
     aria-describedby="help-scope"
     @cancel.prevent="emit('close')"
+    @keydown="dialogKey"
   >
     <header class="help-header">
       <div>

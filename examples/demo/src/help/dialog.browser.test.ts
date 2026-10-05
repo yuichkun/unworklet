@@ -58,9 +58,13 @@ test("tabs support arrow keys, filters show empty results, and remount resets li
     .element(page.getByText("No matching entries. Try another name or purpose."))
     .toBeVisible();
   await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  expect(closes).toHaveBeenCalledOnce();
   open.value = true;
   await nextTick();
+  await expect.element(page.getByRole("dialog", { name: "Playground help" })).toBeVisible();
   await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   expect(closes).toHaveBeenCalledTimes(2);
 });
 
@@ -70,6 +74,9 @@ test("native modal contains Tab focus and clipboard rejection stays actionable",
   document.querySelector<HTMLButtonElement>('[aria-label="Close help"]')!.focus();
   await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
   expect(document.querySelector("dialog")!.contains(document.activeElement)).toBe(true);
+  expect(document.activeElement).toBe(document.querySelector('[aria-label="Example source"]'));
+  await userEvent.keyboard("{Tab}");
+  expect(document.activeElement).toBe(document.querySelector('[aria-label="Close help"]'));
   await page.getByRole("button", { name: "Copy example", exact: true }).click();
   await expect
     .element(page.getByText("Copy unavailable. Select the example below and copy it manually."))

@@ -140,6 +140,7 @@ test("closing help restores editor focus, source and undo history without compil
   await page.getByRole("button", { name: "Sugar help", exact: true }).click();
   await page.getByRole("searchbox", { name: "Search help" }).fill("short");
   await userEvent.keyboard("{Escape}");
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   await expect.poll(() => editor.hasTextFocus()).toBe(true);
   expect(editor.getValue()).toBe(edited);
   expect(recompile).not.toHaveBeenCalled();
