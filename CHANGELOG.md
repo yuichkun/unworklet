@@ -95,8 +95,8 @@ installed `@unworklet/*` packages together to 0.5.0.
 - DevTools releases held MIDI keys on their original port and channel when
   routing changes or the view closes. Panic also sends All Notes Off on every
   channel of the selected input.
-- DevTools live subscriptions recover as selected nodes become available, and
-  stale state is cleared when nodes disappear. Signed buffers render around a
+- DevTools graph and live-state views unsubscribe on unmount and ignore
+  connections that finish after the view closes. Signed buffers render around a
   zero baseline; `i64` lists preserve exact integer values, while their charts
   are explicitly approximate.
 
