@@ -18,8 +18,6 @@
 
 import ts from "typescript";
 
-import { typeString } from "../classify.ts";
-
 const f = ts.factory;
 const id = (n: string): ts.Identifier => f.createIdentifier(n);
 const method = (obj: ts.Expression, name: string, args: ts.Expression[]): ts.Expression =>
@@ -44,7 +42,18 @@ function usesPrev(node: ts.Node): boolean {
   return found;
 }
 
-const NODE_SCALAR = /^Node<"(\w+)">/;
+function nodeScalar(checker: ts.TypeChecker, type: ts.Type): string | undefined {
+  if (type.isIntersection()) {
+    for (const part of type.types) {
+      const scalar = nodeScalar(checker, part);
+      if (scalar !== undefined) return scalar;
+    }
+    return undefined;
+  }
+  if (type.getSymbol()?.name !== "Node") return undefined;
+  const scalar = checker.getTypeArguments(type as ts.TypeReference)[0];
+  return scalar?.isStringLiteral() ? scalar.value : undefined;
+}
 
 /** The method's representative return expression (first `return`, or the concise body). */
 function returnExpression(m: ts.ArrowFunction): ts.Expression | undefined {
@@ -75,17 +84,17 @@ function returnExpression(m: ts.ArrowFunction): ts.Expression | undefined {
  */
 function slotScalar(checker: ts.TypeChecker, m: ts.ArrowFunction): string {
   if (m.type !== undefined) {
-    const match = NODE_SCALAR.exec(m.type.getText());
-    if (match) return match[1]!;
+    const scalar = nodeScalar(checker, checker.getTypeFromTypeNode(m.type));
+    if (scalar !== undefined) return scalar;
   }
   const ret = returnExpression(m);
   if (ret !== undefined) {
-    const match = NODE_SCALAR.exec(typeString(checker, ret));
-    if (match) return match[1]!;
+    const scalar = nodeScalar(checker, checker.getTypeAtLocation(ret));
+    if (scalar !== undefined) return scalar;
   }
   for (const p of m.parameters) {
-    const match = NODE_SCALAR.exec(typeString(checker, p.name));
-    if (match) return match[1]!;
+    const scalar = nodeScalar(checker, checker.getTypeAtLocation(p.name));
+    if (scalar !== undefined) return scalar;
   }
   return "f32";
 }
