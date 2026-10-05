@@ -1,23 +1,39 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, test } from "vite-plus/test";
 
-test("repeated Vite builds use current native ESM helpers across the source graph", () => {
-  // Native import must run outside Vitest's module runner, whose own cache and
-  // transforms otherwise hide Node's persistent transitive ESM cache.
-  const root = mkdtempSync(path.resolve(import.meta.dirname, "../__fixtures__/reload-"));
-  const runner = path.join(root, "run.mjs");
-  writeFileSync(
-    runner,
-    `import { strict as assert } from "node:assert";
+test.each(["source", "packed"])(
+  "repeated Vite builds reload the helper graph (%s)",
+  (mode) => {
+    // Native import must run outside Vitest's module runner, whose own cache and
+    // transforms otherwise hide Node's persistent transitive ESM cache.
+    const root = mkdtempSync(path.resolve(import.meta.dirname, "../__fixtures__/reload-"));
+    try {
+      const runner = path.join(root, "run.mjs");
+      let pluginPath = path.join(import.meta.dirname, "index.ts");
+      if (mode === "packed") {
+        const output = path.join(root, "packed");
+        execFileSync(
+          path.resolve(import.meta.dirname, "../../../node_modules/.bin/vp"),
+          ["pack", "src/index.ts", "--out-dir", output],
+          { cwd: path.resolve(import.meta.dirname, ".."), stdio: "pipe", timeout: 60_000 },
+        );
+        pluginPath = path.join(output, "index.mjs");
+        const published = readFileSync(pluginPath, "utf8");
+        expect(published).toMatch(/from ["']vite["']/);
+        expect(published).not.toMatch(/from ["']vite-plus["']/);
+      }
+      writeFileSync(
+        runner,
+        `import { strict as assert } from "node:assert";
 import { mkdir, readFile, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { build } from "vite-plus";
 import { audioOutput, compile, defineProcessor, forSample } from "@unworklet/core";
-import unworklet from ${JSON.stringify(pathToFileURL(path.join(import.meta.dirname, "index.ts")).href)};
+import unworklet from ${JSON.stringify(pathToFileURL(pluginPath).href)};
 
 const root = import.meta.dirname;
 const app = path.join(root, "app");
@@ -131,16 +147,17 @@ assert.deepEqual(await buildWasm(plugin, () => writeFile(helper, "export const L
 assert.deepEqual(await buildWasm(plugin), Buffer.from(await expected(0.75)));
 console.log(JSON.stringify(levels));
 `,
-  );
-  try {
-    const stdout = execFileSync(process.execPath, [runner], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 90_000,
-      env: { ...process.env, NODE_OPTIONS: "" },
-    });
-    expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual([0.25, 0.25, 0.75, 1, 0.5]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-}, 100_000);
+      );
+      const stdout = execFileSync(process.execPath, [runner], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 90_000,
+        env: { ...process.env, NODE_OPTIONS: "" },
+      });
+      expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual([0.25, 0.25, 0.75, 1, 0.5]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  100_000,
+);

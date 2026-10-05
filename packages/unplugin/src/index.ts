@@ -33,7 +33,8 @@ import {
   seedUnworkletDir,
 } from "@unworklet/lang";
 import { createUnplugin, type UnpluginOptions } from "unplugin";
-import { createServer, type Plugin } from "vite";
+import type { Plugin } from "vite";
+import { createServer } from "vite-plus";
 
 import { workletsDts } from "@unworklet/lang";
 

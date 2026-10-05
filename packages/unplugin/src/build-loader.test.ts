@@ -3,7 +3,7 @@ import { afterEach, expect, test, vi } from "vite-plus/test";
 import unworklet from "./index.ts";
 
 const { createServer } = vi.hoisted(() => ({ createServer: vi.fn() }));
-vi.mock("vite", () => ({ createServer }));
+vi.mock("vite-plus", () => ({ createServer }));
 
 afterEach(() => vi.resetAllMocks());
 
