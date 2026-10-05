@@ -16,7 +16,7 @@
 
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,7 +33,7 @@ import {
   seedUnworkletDir,
 } from "@unworklet/lang";
 import { createUnplugin, type UnpluginOptions } from "unplugin";
-import type { Plugin } from "vite";
+import { createServer, type Plugin } from "vite";
 
 import { workletsDts } from "@unworklet/lang";
 
@@ -245,29 +245,26 @@ const computeProcessorName = (
   return `${exportName}__${srcSuffix}__${revSuffix}`;
 };
 
-/**
- * Re-import `sourcePath` with a mtime-based cache-buster query so Node's
- * ESM module cache returns the **current** disk content instead of the
- * cached evaluation from the first `import()`.
- *
- * Build-mode fallback only — dev mode goes through `ssrLoadModule` so the
- * full transitive import graph rides on Vite's module graph (= helper file
- * edits invalidate automatically = `07-unplugin.md` §3 dev/build symmetry).
- *
- * The buster appears as a URL query (= `?t=<mtimeMs>`). Node treats the
- * resulting specifier as a fresh module identity = forces re-evaluation.
- * Transitive imports inside the source (= e.g. `@unworklet/core`) are NOT
- * cache-busted = build mode never sees this because rolldown re-bundles
- * on each build run, but the comment is kept for the (rare) build code path
- * that still routes through here.
- */
+// A separate graph owns every relative helper evaluation. External packages keep
+// their native identity; changing only the entry's URL cannot refresh helpers
+// already held in Node's permanent ESM cache.
 const importFresh = async (sourcePath: string): Promise<Record<string, unknown>> => {
-  const s = await stat(sourcePath);
-  try {
-    return (await import(`${sourcePath}?t=${s.mtimeMs}`)) as Record<string, unknown>;
-  } catch (err) {
+  const server = await createServer({
+    root: path.dirname(sourcePath),
+    configFile: false,
+    envFile: false,
+    logLevel: "silent",
+    server: { middlewareMode: true, hmr: false, watch: null, ws: false },
+    optimizeDeps: { noDiscovery: true },
+    ssr: { external: ["@unworklet/core", "@unworklet/lang"] },
+  });
+  const sourceModule = await server.ssrLoadModule(sourcePath).catch(async (err: unknown) => {
+    // A cleanup failure must not replace the source diagnostic.
+    await server.close().catch(() => {});
     throw withExtensionHint(err);
-  }
+  });
+  await server.close();
+  return sourceModule as Record<string, unknown>;
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -288,7 +285,7 @@ const importFresh = async (sourcePath: string): Promise<Record<string, unknown>>
 // / test callers share the same multi-file `.uwk.ts` lowering.
 
 /**
- * Build-path module load. A plain `.ts` is imported fresh via Node; a `.uwk.ts`
+ * Build-path module load. Plain modules use an isolated Vite SSR graph; a `.uwk.ts`
  * is lowered (with its transitive `.uwk.ts` imports — see {@link materializeLowered})
  * to temp siblings, imported, then removed. (Node `import()` does not run the Vite
  * transform pipeline, so the build path cannot rely on the `transform` hook.)
@@ -355,7 +352,7 @@ const ssrLoadSource = async (
   //
   // `Date.now()` rather than the source mtime: in dev `sourcePath` is a Vite
   // root-relative URL (e.g. `/src/x.ts`), NOT a filesystem path, so it can't be
-  // `stat`-ed (the build path's `importFresh` resolves an absolute path and can).
+  // `stat`-ed (the build path resolves an absolute path).
   // An integer (no `.`) is required — a fractional query (`?t=123.45`) makes
   // Vite read the trailing digits as the file extension, dropping the `.ts`
   // transform. `compile` is deterministic, so re-evaluating unchanged source

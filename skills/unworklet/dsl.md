@@ -849,6 +849,11 @@ Same compiled result; plain `.ts` checked by stock `tsc`. Use it when you need a
 surface `.uwk.ts` does not expose (SIMD via `@unworklet/core/simd`). Authoring is
 explicit: `defineProcessor` wrapper, explicit imports, method chains.
 
+The Vite build evaluates plain processor modules in an isolated SSR module graph.
+Repeating `build()` in one Node process reloads their direct and transitive local
+helpers, including helpers outside the app root. Package dependencies retain their
+native module identity; editing installed packages still requires a process restart.
+
 ```ts
 // stereo-gain.processor.ts
 import { audioInput, audioOutput, defineProcessor, forSample, param, state } from "@unworklet/core";
