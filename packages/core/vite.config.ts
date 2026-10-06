@@ -29,7 +29,6 @@ export default defineConfig({
         "src/**/*.test.ts",
         // types-only (= no functions / branches)
         "src/types.ts",
-        "src/compile/ast.ts",
         // public re-export hub (`export` statements only)
         "src/index.ts",
         // browser e2e fixtures require a real `AudioContext`, so they are not part
