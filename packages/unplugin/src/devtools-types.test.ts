@@ -50,7 +50,7 @@ test("a consumer using the public DevTools type entry can type documented client
   const file = path.join(import.meta.dirname, "devtools-consumer.type-fixture.ts");
   const source = readFileSync(new URL("./devtools-consumer.ts.txt", import.meta.url), "utf8")
     .replace('"@unworklet/unplugin"', '"./index.ts"')
-    .replace('"@unworklet/unplugin/devtools"', '"../devtools.d.ts"');
+    .replace('"@unworklet/unplugin/devtools"', '"../devtools.d.mts"');
   const options: ts.CompilerOptions = {
     strict: true,
     noEmit: true,

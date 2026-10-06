@@ -22,7 +22,7 @@
   "files": [
     "dist",
     "client.d.ts",
-    "devtools.d.ts"
+    "devtools.d.mts"
   ],
   "type": "module",
   "exports": {
@@ -41,7 +41,7 @@
     },
     "./package.json": "./package.json",
     "./devtools": {
-      "types": "./devtools.d.ts"
+      "types": "./devtools.d.mts"
     }
   },
   "publishConfig": {
@@ -59,7 +59,7 @@
       },
       "./package.json": "./package.json",
       "./devtools": {
-        "types": "./devtools.d.ts"
+        "types": "./devtools.d.mts"
       }
     },
     "access": "public"
