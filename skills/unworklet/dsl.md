@@ -952,10 +952,13 @@ with core `Node` method chains _inside_ a `.uwk.ts` is fine and common (§2).
 - **Type-check** `.uwk.ts` sugar with the `@unworklet/lang/typescript-plugin`
   TS-server plugin (editor) or the `unworklet-tsc --noEmit` CLI (CI). — see `ide-and-typecheck.md`.
 - **Browser live-coding:** `compileSource(src)` (full lower→compile→worklet) /
-  `lowerToProcessor(src)` from `@unworklet/lang/browser`. `compileSource` bakes
+  `lowerToProcessor(src)` from `@unworklet/lang/browser`.
+  [cite: packages/lang/src/browser.ts :: `export function lowerToProcessor(`]
+  [cite: packages/lang/src/browser.ts :: `export async function compileSource(`]
+  `compileSource` bakes
   48000 Hz: use `new AudioContext({ sampleRate: 48000 })`. `createNode` rejects
   other context rates before module loading; browser compilation has no rate option.
   **Programmatic:**
-  `lower(uwkSource, { exportName })` → virtual `.ts` string. — [cite: packages/lang/src/index.ts :: `export { lower, LowerError }`] [cite: packages/lang/src/index.ts :: `export { lowerToProcessor }`]
+  `lower(uwkSource, { exportName })` → virtual `.ts` string. — [cite: packages/lang/src/index.ts :: `export { lower, LowerError }`]
 - **Test:** render with `@unworklet/offline` (`renderOffline`) + assert with
   `@unworklet/test` matchers. — see `testing.md`.

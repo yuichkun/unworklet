@@ -17,6 +17,36 @@ test("the authoring-form reference identifies both successful client import case
   expect(section).toContain('expect(diagnose("with-ref-uwk.ts")).toEqual([]);');
 });
 
+test("runner-import references identify the actual imports", () => {
+  const guide = readFileSync(path.join(GUIDE_DIR, "testing.md"), "utf8");
+  for (const source of [
+    "examples/demo/src/examples.render.test.ts",
+    "packages/test/src/index.test.ts",
+  ]) {
+    expect(guide).toContain(
+      `[cite: ${source} :: \`import { expect, test } from "vite-plus/test";\`]`,
+    );
+  }
+});
+
+test("the lowpass example points to the demonstrated lowpass test", () => {
+  const guide = readFileSync(path.join(GUIDE_DIR, "testing.md"), "utf8");
+  expect(guide).toContain(
+    '[cite: examples/demo/src/examples.render.test.ts :: `test("lowpass: a step input ramps smoothly toward it ($prev feedback works)"`]',
+  );
+});
+
+test("browser API references identify browser entry points", () => {
+  const guide = readFileSync(path.join(GUIDE_DIR, "dsl.md"), "utf8");
+  expect(guide).toContain(
+    "[cite: packages/lang/src/browser.ts :: `export function lowerToProcessor(`]",
+  );
+  expect(guide).toContain(
+    "[cite: packages/lang/src/browser.ts :: `export async function compileSource(`]",
+  );
+  expect(guide).toContain("[cite: packages/lang/src/index.ts :: `export { lower, LowerError }`]");
+});
+
 test("guide citations stay visible instead of becoming Markdown reference definitions", () => {
   for (const name of readdirSync(GUIDE_DIR).filter((file) => file.endsWith(".md"))) {
     const tokens = marked.lexer(readFileSync(path.join(GUIDE_DIR, name), "utf8"));
@@ -52,12 +82,21 @@ test("every explicit guide citation and full repository-file reference resolves 
   for (const name of guides) {
     const markdown = readFileSync(path.join(GUIDE_DIR, name), "utf8");
     anchors += [...markdown.matchAll(/\[cite:/g)].length;
+    const checked = new Set<string>();
     errors.push(
       ...validateGuideCitations(markdown, (file) => {
+        checked.add(file);
         const target = path.join(REPO, file);
         return existsSync(target) ? readFileSync(target, "utf8") : undefined;
       }).map((error) => `${name} → ${error}`),
     );
+    // All repository evidence in the shipped guides must reach the reader;
+    // Markdown tokenization must not silently drop a migrated reference.
+    for (const [file] of markdown.matchAll(
+      /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g,
+    )) {
+      expect(checked.has(file), `${name} → unchecked ${file}`).toBe(true);
+    }
   }
   expect(errors).toEqual([]);
   expect(anchors).toBeGreaterThan(50);

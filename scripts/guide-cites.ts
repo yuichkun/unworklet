@@ -16,7 +16,7 @@ export function validateGuideCitations(
   const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
   let locations = markdown;
   for (const start of markdown.matchAll(/\[cite:/g)) {
-    const citation = /^\[cite:\s*([\w./-]+\.[A-Za-z]+)\s*::\s*`([^`]+)`\s*\]/.exec(
+    const citation = /^\[cite:\s*([\w./-]+\.[A-Za-z0-9_-]+)\s*::\s*`([^`]+)`\s*\]/.exec(
       markdown.slice(start.index),
     );
     if (!citation || citation[1]!.split("/").includes("..") || !normalize(citation[2]!)) {
@@ -46,48 +46,50 @@ export function validateGuideCitations(
       errors.push(`${file}: anchor is ambiguous (${matches} matches): ${anchor}`);
   }
 
-  // Require citation syntax, rather than rejecting ordinary L1/L2 cache prose.
-  // Whole-file references, inline path:line, links and bracketed shorthand all
-  // occur outside [cite:] blocks in the guide, so scan beyond those blocks.
-  const numeric =
-    /[\w./-]+\.[A-Za-z]+(?:`?(?:\s+\(?|\s*\()`?L\d+(?:-L?\d+)?|:L?\d+(?:-L?\d+)?|#L\d+(?:-L?\d+)?)|`:\d+(?:-\d+)?`/g;
-  const reportLocation = (location: string): void => {
-    errors.push(`numeric source location: ${location}; use a content-anchored [cite:]`);
-  };
-  // Strip URL authorities (including ports), retaining their source paths and
-  // fragments so GitHub path#L links are still checked.
-  const paths = locations.replace(/\b[a-z][a-z\d+.-]*:\/\/[^/\s)]+/gi, "");
-  for (const [location] of paths.matchAll(numeric)) reportLocation(location);
-  void marked.walkTokens(marked.lexer(paths), (token) => {
-    // Code spans/blocks can contain array literals and indexed identifiers.
-    // Only leaf prose text can use bracketed shorthand as a citation.
-    if (token.type === "text" && !("tokens" in token && token.tokens)) {
-      for (const [location] of token.text.matchAll(/(?<![\w$.\]])\[L\d+(?:-L?\d+)?\]/g)) {
-        reportLocation(location);
+  // The same path grammar establishes both file existence and numeric-location
+  // intent. Bare application filenames and orphan line labels are not evidence.
+  const repositoryFile =
+    /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g;
+  const afterPath =
+    /^`?(?:[#:]\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
+  const beforePath =
+    /(?:\bL\d+(?:[-–]L?\d+)?|\blines?\s+`?L?\d+(?:(?:[-–]|\s+to\s+)L?\d+)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
+  const inspectProse = (text: string): void => {
+    const references = [...text.matchAll(repositoryFile)];
+    for (const reference of references) {
+      const file = reference[0];
+      sourceFor(file);
+      const after = afterPath.exec(text.slice(reference.index + file.length));
+      const before = beforePath.exec(text.slice(0, reference.index));
+      const location = after?.[0] ?? before?.[0];
+      if (location) {
+        errors.push(
+          `numeric source location: ${file} ${location.trim()}; use a content-anchored [cite:]`,
+        );
       }
     }
-    if (!["paragraph", "text", "heading"].includes(token.type) || !("text" in token)) return;
-    const paragraph = token.text;
-    if (!/\b(?:[\w./-]+\.(?:[cm]?[jt]sx?|vue|json|md|ya?ml|sh))\b/.test(paragraph)) return;
-    // Worded labels may precede or follow the path, with punctuation or code
-    // spans between them. Counts such as "12 lines" are not source labels.
-    for (const [location] of paragraph.matchAll(/\blines?\s+`?L?\d+(?:[-–]L?\d+)?/gi)) {
-      reportLocation(location);
+    // An explicit "at `L...`" phrase can refer back across a clause. It still
+    // needs a repository path in this prose region; consumer filenames do not
+    // establish that context.
+    if (references.length > 0) {
+      for (const [location] of text.matchAll(
+        /\bat\s+`L\d+(?:-L?\d+)?`(?=\s*(?:[.,;)]|(?:on|in)\b|$))/g,
+      )) {
+        errors.push(`numeric source location: ${location}; use a content-anchored [cite:]`);
+      }
     }
-    // A phrase such as "at `L1692` on the hook" refers back to the file in
-    // this paragraph. A code-span identifier on its own supplies no location.
-    for (const [, location] of paragraph.matchAll(
-      /\b(?:at|lines?)\s+`(L\d+(?:-L?\d+)?)`(?=\s*(?:[.,;)]|(?:on|in)\b|$))/g,
-    )) {
-      reportLocation(location!);
+  };
+  void marked.walkTokens(marked.lexer(locations), (token) => {
+    // Inline code is how the guide spells paths, but fenced examples/output
+    // are not source-reference prose. Links carry evidence in their destination.
+    if (
+      ["paragraph", "text", "heading", "codespan", "link"].includes(token.type) &&
+      "text" in token
+    ) {
+      inspectProse(token.text);
     }
+    if (token.type === "link") inspectProse(token.href);
   });
 
-  // Whole-file references need no content selector, but must still exist.
-  for (const [file] of markdown.matchAll(
-    /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z]+|(?<![\w/])README\.md\b/g,
-  )) {
-    sourceFor(file);
-  }
   return [...new Set(errors)];
 }

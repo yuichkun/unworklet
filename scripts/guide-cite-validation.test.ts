@@ -63,13 +63,14 @@ test.each([
   `\`${file}:12-34\``,
   `\`${file}:L12-L34\``,
   `[cite: \`${file}:12\`]`,
-  "`classify.ts:120`",
-  "[L97-109]",
-  "[L97]",
+  `${file} [L97-109]`,
+  `${file} [L97]`,
   `\`${file}\` L12`,
+  `The rationale is at \`L1692\` in \`${file}\`.`,
+  `The rationale is in \`${file}\` at \`L1692\` on the hook.`,
   `The import is in \`${file}\`; the rationale is at \`L1692\`.`,
   `The import is in \`${file}\`; the rationale is at \`L1692\` on the hook.`,
-  "`:64-84`",
+  `${file} \`:64-84\``,
   `[source](${file}#L12-L34)`,
 ])("numeric source locations cannot bypass validation: %s", (markdown) => {
   expect(
@@ -189,4 +190,39 @@ test.each([
   `\`\`\`ts\nconst diagnostic = "${file} line 12";\nconst lines = [12, 34];\n\`\`\``,
 ])("worded line labels need source-reference prose rather than counts or code: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
+test.each([
+  "check.uwk.ts:12",
+  "`check.uwk.ts:12`",
+  "```text\ncheck.uwk.ts:12: type error\n```",
+  "`classify.ts:120`",
+  "[L97-109] and `L1692` and `:64-84`",
+  `The loader is in \`${file}\`. Its diagnostic is \`check.uwk.ts:12\`.`,
+  `The loader is in \`${file}\`. Its diagnostic is \`check.uwk.ts line 12\`.`,
+  `The loader is in \`${file}\`. Its example uses \`cache[L1]\` and \`[L1]\`.`,
+  `\`\`\`text\n${file}:12: example diagnostic\n\`\`\``,
+])("consumer diagnostics and orphan labels are not repository evidence: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
+test.each(["css", "html", "svg", "json", "woff2", "custom", "7z", "my_ext"])(
+  "worded locations use the whole-file reference extension rules: %s",
+  (extension) => {
+    const source = `packages/unplugin/devtools-ui/src/style.${extension}`;
+    expect(
+      validateGuideCitations(`See ${source} line 12`, (name) =>
+        name === source ? "body" : undefined,
+      ).join("\n"),
+    ).toContain("numeric source location");
+  },
+);
+
+test("a full source path in a link still checks numeric fragments", () => {
+  expect(
+    validateGuideCitations(
+      `[source](https://github.com/yuichkun/unworklet/blob/main/${file}#L12)`,
+      read(anchor),
+    ).join("\n"),
+  ).toContain("numeric source location");
 });

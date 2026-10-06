@@ -29,7 +29,7 @@ Node's `loadUwkProcessor`.
 
 ## Import `expect` / `test`
 
-Cite `packages/test/README.md`, [cite: examples/demo/src/examples.render.test.ts :: `async function render(slug: string`], [cite: packages/test/src/index.test.ts :: `const monoResult =`].
+Cite `packages/test/README.md`, [cite: examples/demo/src/examples.render.test.ts :: `import { expect, test } from "vite-plus/test";`], [cite: packages/test/src/index.test.ts :: `import { expect, test } from "vite-plus/test";`].
 
 - Plain matchers need NO `expect.extend` and NO special `expect` — they throw `Error`
   and the runner reports it. Import `test` from your runner:
@@ -251,7 +251,7 @@ The processor is authored in `.uwk.ts` (the recommended form; full authoring in
   error naming the import. Give the helper a `.mjs` extension (or keep it
   erasable — a `const` object rather than an `enum`) to avoid both.
 
-Single-file pattern from [cite: examples/demo/src/examples.render.test.ts :: `test("distortion: an overdriven signal saturates to the ±1 rails, never NaN"`]:
+Single-file pattern from [cite: examples/demo/src/examples.render.test.ts :: `test("lowpass: a step input ramps smoothly toward it ($prev feedback works)"`]:
 
 ```ts
 import { renderOffline } from "@unworklet/offline";
