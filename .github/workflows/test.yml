@@ -1,5 +1,5 @@
 name: Test
-run-name: "Issue 145 temporary guard validation 4: missing-artifact"
+run-name: "Issue 145 temporary guard validation 5: cancel-producer"
 
 # Diagnostic branch only. Never merge this workflow into the product branch.
 on:
@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ISSUE145_GATE_SCENARIO: "missing-artifact"
+  ISSUE145_GATE_SCENARIO: "cancel-producer"
 
 jobs:
   coverage:
