@@ -1,12 +1,12 @@
 import { expect, test } from "vite-plus/test";
 
-import "../../dsl/primitives.ts";
-import { compile } from "../../compile/index.ts";
-import type { Layout } from "../../compile/layout.ts";
-import { event } from "../../dsl/declarations.ts";
-import { forSample } from "../../dsl/loop.ts";
-import { defineProcessor } from "../../processor.ts";
-import type { CompiledProcessor, Node } from "../../types.ts";
+import "./primitives.ts";
+import { compile } from "../compile/index.ts";
+import type { Layout } from "../compile/layout.ts";
+import { event } from "./declarations.ts";
+import { forSample } from "./loop.ts";
+import { defineProcessor } from "../processor.ts";
+import type { CompiledProcessor, Node } from "../types.ts";
 
 function timingOutputs() {
   const output = event<{ value: number }>({ to: "main", name: "output", capacity: 64 });
