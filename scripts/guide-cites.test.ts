@@ -10,6 +10,13 @@ import { validateGuideCitations } from "./guide-cites.ts";
 const REPO = path.resolve(import.meta.dirname, "..");
 const GUIDE_DIR = path.join(REPO, "skills/unworklet");
 
+test("the authoring-form reference identifies both successful client import cases", () => {
+  const guide = readFileSync(path.join(GUIDE_DIR, "setup.md"), "utf8");
+  const section = guide.split("## 4. File conventions")[1]!.split("## 5.")[0]!;
+  expect(section).toContain('expect(diagnose("with-ref.ts")).toEqual([]);');
+  expect(section).toContain('expect(diagnose("with-ref-uwk.ts")).toEqual([]);');
+});
+
 test("guide citations stay visible instead of becoming Markdown reference definitions", () => {
   for (const name of readdirSync(GUIDE_DIR).filter((file) => file.endsWith(".md"))) {
     const tokens = marked.lexer(readFileSync(path.join(GUIDE_DIR, name), "utf8"));
@@ -38,7 +45,7 @@ test("slot exposure and events render as separate headings and fenced examples",
   ]);
 });
 
-test("every guide reference names an existing file and a unique current source anchor", () => {
+test("every explicit guide citation and full repository-file reference resolves to current evidence", () => {
   const guides = readdirSync(GUIDE_DIR).filter((name) => name.endsWith(".md"));
   const errors: string[] = [];
   let anchors = 0;

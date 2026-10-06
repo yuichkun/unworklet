@@ -217,7 +217,8 @@ packages you already rely on (e.g. `"node"`), since `types` disables automatic
 | `.processor.ts` | secondary, explicit alternative — `defineProcessor(() => ({ process }))` with the `@unworklet/core` method API (`.at(i)`, `.mul()`, `.write()`) and explicit imports.                                                                                                                                                              |
 
 Both compile to the same `CompiledProcessor` and both load identically via
-`?worklet`. [cite: packages/unplugin/src/client-types.test.ts :: `has no exported member 'stereoGain'`] Authoring
+`?worklet`. [cite: packages/unplugin/src/client-types.test.ts :: `expect(diagnose("with-ref.ts")).toEqual([]);`]
+[cite: packages/unplugin/src/client-types.test.ts :: `expect(diagnose("with-ref-uwk.ts")).toEqual([]);`] Authoring
 detail (sugar, the core method API, subgraphs) → dsl.md §1-4; the `?worklet` import +
 `createNode` → dsl.md §5.
 

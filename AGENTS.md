@@ -27,9 +27,12 @@ Guidance for AI agents working on unworklet itself.
 - **Guide source references** use ``[cite: path :: `unique source excerpt`]`` (the
   excerpt is a single Markdown code span). Prefer a declaration or distinctive
   expression; CI requires one match after whitespace normalization. Use a full
-  repository-relative path, including for whole-file references. Numeric source
-  locations, shortened paths, missing files, and missing/ambiguous excerpts must
-  not substitute for a checkable reference. Run `vp test run --root scripts
+  repository-relative path for source citations. Unmarked whole-file evidence
+  uses full `packages/`, `examples/`, or `scripts/` paths, or the root `README.md`.
+  The gate validates those paths and explicit citation markers; it does not infer
+  source-citation intent from bare consumer filenames in prose. Within source
+  citations, numeric locations, shortened paths, missing files, and missing or
+  ambiguous excerpts must not substitute for checkable evidence. Run `vp test run --root scripts
 --config vite.config.ts guide-cite` after editing citations. This gate checks
   reference locations, not whether a prose claim is semantically correct.
 - **`docs/`** is history only — `decisions-log.md` for why a question was settled the way it was, and the RFCs. Neither describes current behaviour, so neither can contradict it. Do not treat either as a contract.

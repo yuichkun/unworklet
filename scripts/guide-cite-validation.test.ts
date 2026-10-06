@@ -102,6 +102,28 @@ test("plain full repository file references are checked outside cite markers", (
   ]);
 });
 
+test.each(["lower.ts", "src/client.ts"])(
+  "explicit shortened citations fail unless their path exists at the repository root: %s",
+  (file) => {
+    expect(validateGuideCitations(`[cite: ${file} :: \`declaration\`]`, () => undefined)).toEqual([
+      `${file}: missing file`,
+    ]);
+  },
+);
+
+test.each([
+  "Edit `./src/synth.uwk.ts` and `../shared/voice.ts` in your app.",
+  "Your `vite.config.ts` and `vite-env.d.ts` configure the app.",
+  "Generated `worklets.d.ts` and shipped `dist/ambient.d.ts` provide types.",
+  "A diagnostic points at your `check.uwk.ts` or `gain.processor.ts`.",
+  '```ts\nimport value from "src/client.ts";\n```',
+])(
+  "consumer/generated filenames and code examples are not repository citations: %s",
+  (markdown) => {
+    expect(validateGuideCitations(markdown, () => undefined)).toEqual([]);
+  },
+);
+
 test("ordinary numbers, ports, consumer paths, and citation-like prose are not source locations", () => {
   expect(
     validateGuideCitations(
