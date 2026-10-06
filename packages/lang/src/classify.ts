@@ -160,8 +160,14 @@ function isDspCall(checker: ts.TypeChecker, call: ts.CallExpression): boolean {
   inFlight.add(decl);
   try {
     if (!ts.isBlock(body)) return isDspExpr(checker, body);
-    const ret = body.statements.find(ts.isReturnStatement);
-    return ret?.expression !== undefined && isDspExpr(checker, ret.expression);
+    const returnsDsp = (node: ts.Node): boolean => {
+      if (ts.isReturnStatement(node)) {
+        return node.expression !== undefined && isDspExpr(checker, node.expression);
+      }
+      if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+      return ts.forEachChild(node, returnsDsp) ?? false;
+    };
+    return returnsDsp(body);
   } finally {
     inFlight.delete(decl);
   }

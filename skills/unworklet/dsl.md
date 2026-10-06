@@ -104,6 +104,10 @@ lowers to — a `Node<T>` (`isDspExpr`, `packages/lang/src/classify.ts:147`). Pu
 `number op number` (e.g. `Math.LN2 / 12`, `ctx.sampleRate * 0.5`) stays
 build-time JS. Operands recurse bottom-up, so JS precedence is preserved.
 
+A helper returning DSP arithmetic can use build-time `if`/`else`, `switch`, or
+other statement blocks. Arithmetic applied to its return value lowers in the
+same way as arithmetic inside the helper.
+
 ### Operators → free-fn calls (`packages/lang/src/passes/operators.ts`)
 
 | sugar                                   | lowers to                              |
