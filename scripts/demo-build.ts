@@ -71,6 +71,16 @@ export function prepareDemoBuild(
   if (!/^\d+\.\d+\.\d+$/.test(version) || versions.some((value) => value !== version)) {
     throw new Error("Workspace package versions are invalid or inconsistent");
   }
+  if (env.VERCEL_ENV === "preview") {
+    console.info(
+      "[unworklet/build-identity] git status (paths only):\n" +
+        git(root, ["status", "--porcelain=v1", "--untracked-files=all"]),
+    );
+    console.info(
+      "[unworklet/build-identity] tracked paths differing from HEAD:\n" +
+        git(root, ["diff", "--name-only", "HEAD"]),
+    );
+  }
   const source = sourceDigest(root);
   const dirty = git(root, ["status", "--porcelain"]).length > 0;
   // lang/browser embeds core/worklet from dist, so rebuilding core first is essential.
