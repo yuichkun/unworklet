@@ -47,6 +47,15 @@ test.each([
   `[cite: ${file} L12-34]`,
   `(${file} L12)`,
   `${file} (L12)`,
+  `${file} line 12`,
+  `${file} lines 12-34`,
+  `\`${file}\` (lines 12-34)`,
+  `\`${file}\`, line 12`,
+  `\`${file}\`: lines 12-34`,
+  `\`${file}\` at line 12`,
+  `\`${file}\` lines \`12-34\``,
+  `Line 12 in \`${file}\` explains the setting.`,
+  `See \`${file}\`; lines 12–34 explain the setting.`,
   `\`${file}\` (L12-L34)`,
   `\`${file}\` (\`L12\`)`,
   `(\`${file}\` L12-34)`,
@@ -149,4 +158,13 @@ test("source citations leave a following fenced example separate", () => {
   expect(
     validateGuideCitations(`${cite}\n\n\`\`\`ts\nconst items = [L1];\n\`\`\``, read(anchor)),
   ).toEqual([]);
+});
+
+test.each([
+  `The renderer in \`${file}\` processes 12 lines per block.`,
+  `\`${file}\` uses a 12-line buffer and a lineWidth of 12.`,
+  "At https://example.com:5173/ the line 12 field selects an input record.",
+  `\`\`\`ts\nconst diagnostic = "${file} line 12";\nconst lines = [12, 34];\n\`\`\``,
+])("worded line labels need source-reference prose rather than counts or code: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
 });

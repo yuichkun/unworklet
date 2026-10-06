@@ -58,16 +58,22 @@ export function validateGuideCitations(
   // fragments so GitHub path#L links are still checked.
   const paths = locations.replace(/\b[a-z][a-z\d+.-]*:\/\/[^/\s)]+/gi, "");
   for (const [location] of paths.matchAll(numeric)) reportLocation(location);
-  void marked.walkTokens(marked.lexer(locations), (token) => {
+  void marked.walkTokens(marked.lexer(paths), (token) => {
     // Code spans/blocks can contain array literals and indexed identifiers.
     // Only leaf prose text can use bracketed shorthand as a citation.
-    if (token.type !== "text" || ("tokens" in token && token.tokens)) return;
-    for (const [location] of token.text.matchAll(/(?<![\w$.\]])\[L\d+(?:-L?\d+)?\]/g)) {
+    if (token.type === "text" && !("tokens" in token && token.tokens)) {
+      for (const [location] of token.text.matchAll(/(?<![\w$.\]])\[L\d+(?:-L?\d+)?\]/g)) {
+        reportLocation(location);
+      }
+    }
+    if (!["paragraph", "text", "heading"].includes(token.type) || !("text" in token)) return;
+    const paragraph = token.text;
+    if (!/\b(?:[\w./-]+\.(?:[cm]?[jt]sx?|vue|json|md|ya?ml|sh))\b/.test(paragraph)) return;
+    // Worded labels may precede or follow the path, with punctuation or code
+    // spans between them. Counts such as "12 lines" are not source labels.
+    for (const [location] of paragraph.matchAll(/\blines?\s+`?L?\d+(?:[-–]L?\d+)?/gi)) {
       reportLocation(location);
     }
-  });
-  for (const paragraph of locations.split(/\n\s*\n/)) {
-    if (!/[\w./-]+\.[A-Za-z]+/.test(paragraph)) continue;
     // A phrase such as "at `L1692` on the hook" refers back to the file in
     // this paragraph. A code-span identifier on its own supplies no location.
     for (const [, location] of paragraph.matchAll(
@@ -75,7 +81,7 @@ export function validateGuideCitations(
     )) {
       reportLocation(location!);
     }
-  }
+  });
 
   // Whole-file references need no content selector, but must still exist.
   for (const [file] of markdown.matchAll(
