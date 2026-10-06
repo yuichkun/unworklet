@@ -12,8 +12,9 @@
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
-import { getPanelRpc, type PanelRpc } from "../lib/rpc";
-import { computed, onMounted, ref } from "vue";
+import type { PanelRpc } from "../lib/rpc";
+import { usePageState, type PageSnapshots } from "./usePageState";
+import { computed, ref } from "vue";
 
 export type MidiEvent =
   | { type: "noteOn"; channel: number; note: number; velocity: number }
@@ -75,10 +76,15 @@ export type MidiShared = { ports: RawMidiPort[]; log: RawMidiLog[] };
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
-    "unworklet:midi": MidiShared;
+    "unworklet:midi": PageSnapshots<MidiShared>;
   }
   interface DevToolsRpcServerFunctions {
-    "unworklet:midi-inject": (cmd: { nodeId: string; port: string; event: MidiEvent }) => void;
+    "unworklet:midi-inject": (cmd: {
+      pageId: string;
+      nodeId: string;
+      port: string;
+      event: MidiEvent;
+    }) => void;
   }
 }
 
@@ -116,30 +122,18 @@ export function mapLog(s: MidiShared): MidiLogEntry[] {
     .reverse();
 }
 
-// ── module-level singleton (one RPC subscription shared by every consumer) ──
-const shared = ref<MidiShared>({ ports: [], log: [] });
-let rpcClient: PanelRpc | null = null;
-let started = false;
-
-const ensureStarted = (): void => {
-  if (started) return;
-  started = true;
-  const connect = async (): Promise<void> => {
-    const rpc = await getPanelRpc();
-    rpcClient = rpc;
-    const s = await rpc.sharedState.get("unworklet:midi");
-    shared.value = normalizeMidi(s.value() as MidiShared | undefined);
-    s.on("updated", (next) => {
-      shared.value = normalizeMidi(next as MidiShared);
-    });
-  };
-  void connect().catch(() => {
-    started = false;
-  });
-};
-
 export function useLiveMidi() {
-  onMounted(ensureStarted);
+  const shared = ref<MidiShared>({ ports: [], log: [] });
+  let rpcClient: PanelRpc | null = null;
+  const pageId = usePageState<MidiShared>(
+    "unworklet:midi",
+    (value) => {
+      shared.value = normalizeMidi(value);
+    },
+    (rpc) => {
+      rpcClient = rpc;
+    },
+  );
 
   const ports = computed<MidiPortMeta[]>(() => mapPorts(shared.value));
   const overflow = computed<Record<string, number>>(() => mapOverflow(shared.value));
@@ -154,12 +148,15 @@ export function useLiveMidi() {
   /** Send an event into a real input port via the inject RPC. */
   const injectMidi = (targetPortKey: string, event: MidiEventInput): void => {
     const meta = portByKey.value[targetPortKey];
-    if (!meta || !rpcClient) return;
-    void rpcClient.call("unworklet:midi-inject", {
-      nodeId: meta.nodeId,
-      port: meta.name,
-      event,
-    });
+    if (!meta || meta.direction !== "in" || !rpcClient || !pageId) return;
+    void Promise.resolve(
+      rpcClient.call("unworklet:midi-inject", {
+        pageId,
+        nodeId: meta.nodeId,
+        port: meta.name,
+        event,
+      }),
+    ).catch(() => {});
   };
 
   return { ports, portKey, log, overflow, injectMidi };

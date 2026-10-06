@@ -1,11 +1,16 @@
 import { createSharedState } from "@vitejs/devtools-kit/utils/shared-state";
 import { expect, test, vi } from "vite-plus/test";
-import { createApp, nextTick } from "vue";
+import { createApp, nextTick, ref } from "vue";
 
 import { getPanelRpc, type PanelRpc } from "../lib/rpc";
 import MidiView from "./MidiView.vue";
 
 vi.mock("../lib/rpc", () => ({ getPanelRpc: vi.fn() }));
+const forPage = <T extends object>(shared: ReturnType<typeof createSharedState<T>>) => ({
+  value: () => ({ pages: { "page-a": shared.value() } }),
+  on: (_event: string, callback: (value: unknown) => void) =>
+    shared.on("updated", (value) => callback({ pages: { "page-a": value } })),
+});
 
 test("MIDI routing changes and route exit send balanced note events through the real composable", async () => {
   const shared = createSharedState({
@@ -22,11 +27,12 @@ test("MIDI routing changes and route exit send balanced note events through the 
   });
   const call = vi.fn();
   vi.mocked(getPanelRpc).mockResolvedValue({
-    sharedState: { get: async () => shared },
+    sharedState: { get: async () => forPage(shared) },
     call,
   } as unknown as PanelRpc);
   const root = document.createElement("div");
   const app = createApp(MidiView);
+  app.provide("unworklet:page-id", ref("page-a"));
   app.mount(root);
   try {
     for (let i = 0; i < 5; i++) await Promise.resolve();
@@ -42,19 +48,39 @@ test("MIDI routing changes and route exit send balanced note events through the 
     expect(call.mock.calls).toEqual([
       [
         "unworklet:midi-inject",
-        { nodeId: "n1", port: "in", event: { type: "noteOn", channel: 0, note: 60, velocity: 96 } },
+        {
+          pageId: "page-a",
+          nodeId: "n1",
+          port: "in",
+          event: { type: "noteOn", channel: 0, note: 60, velocity: 96 },
+        },
       ],
       [
         "unworklet:midi-inject",
-        { nodeId: "n1", port: "in", event: { type: "noteOff", channel: 0, note: 60, velocity: 0 } },
+        {
+          pageId: "page-a",
+          nodeId: "n1",
+          port: "in",
+          event: { type: "noteOff", channel: 0, note: 60, velocity: 0 },
+        },
       ],
       [
         "unworklet:midi-inject",
-        { nodeId: "n2", port: "in", event: { type: "noteOn", channel: 0, note: 60, velocity: 96 } },
+        {
+          pageId: "page-a",
+          nodeId: "n2",
+          port: "in",
+          event: { type: "noteOn", channel: 0, note: 60, velocity: 96 },
+        },
       ],
       [
         "unworklet:midi-inject",
-        { nodeId: "n2", port: "in", event: { type: "noteOff", channel: 0, note: 60, velocity: 0 } },
+        {
+          pageId: "page-a",
+          nodeId: "n2",
+          port: "in",
+          event: { type: "noteOff", channel: 0, note: 60, velocity: 0 },
+        },
       ],
     ]);
   } finally {

@@ -112,7 +112,11 @@ unworklet({
 
 In `vite dev`, the plugin registers an "unworklet" panel in the Vite DevTools
 dock and injects a zero-config page bridge — your app writes no DevTools code.
-The panels read live data from every running node:
+Choose an **Application page** in the sidebar. The panels read live data from
+that page’s running nodes, and MIDI injection targets only its selected input.
+A closed or reloaded page stays disconnected until you select a live page.
+
+The four panels are:
 
 - **Audio graph** — the real Web-Audio topology + a per-node detail pane.
 - **Live state** — each node's WASM slots (scalars + buffers), X-rayed live.

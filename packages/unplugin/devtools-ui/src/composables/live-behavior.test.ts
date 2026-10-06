@@ -1,6 +1,6 @@
 import { createSharedState } from "@vitejs/devtools-kit/utils/shared-state";
 import { afterEach, expect, test, vi } from "vite-plus/test";
-import { type App, createApp, nextTick } from "vue";
+import { type App, createApp, nextTick, ref } from "vue";
 
 import { getPanelRpc, type PanelRpc } from "../lib/rpc";
 import { layout, type LiveGraph, useLiveGraph } from "./useLiveGraph";
@@ -9,6 +9,11 @@ import { type LiveSignals, useLiveSignals } from "./useLiveSignals";
 import { type LiveState, useLiveState } from "./useLiveState";
 
 vi.mock("../lib/rpc", () => ({ getPanelRpc: vi.fn() }));
+const forPage = <T extends object>(shared: ReturnType<typeof createSharedState<T>>) => ({
+  value: () => ({ pages: { "page-a": shared.value() } }),
+  on: (_event: string, callback: (value: unknown) => void) =>
+    shared.on("updated", (value) => callback({ pages: { "page-a": value } })),
+});
 
 const apps: App[] = [];
 const mount = <T>(useComposable: () => T): T => {
@@ -19,6 +24,7 @@ const mount = <T>(useComposable: () => T): T => {
       return () => null;
     },
   });
+  app.provide("unworklet:page-id", ref("page-a"));
   app.mount(document.createElement("div"));
   apps.push(app);
   return result;
@@ -43,7 +49,7 @@ const graphData = (): LiveGraph => ({
 
 test("graph selection follows live nodes and clears when a node or the snapshot disappears", async () => {
   const shared = createSharedState({ initialValue: graphData() });
-  const get = vi.fn(async () => shared);
+  const get = vi.fn(async () => forPage(shared));
   vi.mocked(getPanelRpc).mockResolvedValue({ sharedState: { get } } as unknown as PanelRpc);
   const graph = mount(useLiveGraph);
   expect(graph.selectedNode.value).toBeNull();
@@ -131,7 +137,7 @@ test("scalar histories cap at 150 polls, exclude i64, and prune removed nodes an
       ],
     },
   });
-  const get = vi.fn(async () => shared);
+  const get = vi.fn(async () => forPage(shared));
   vi.mocked(getPanelRpc).mockResolvedValue({ sharedState: { get } } as unknown as PanelRpc);
   const state = mount(useLiveState);
   expect(state.getHistory("missing", "slot")).toEqual([]);
@@ -163,7 +169,7 @@ test("scalar histories cap at 150 polls, exclude i64, and prune removed nodes an
   expect(state.getHistory("synth", "level")).toEqual([]);
 });
 
-test("signals retries failed connections, shares one subscription, and replaces frames without rerendering structure", async () => {
+test("signals retries failed connections, scopes subscriptions to each mounted view, and replaces frames without rerendering structure", async () => {
   vi.mocked(getPanelRpc).mockRejectedValueOnce(new Error("offline"));
   const failed = mount(useLiveSignals);
   await flush();
@@ -188,7 +194,7 @@ test("signals retries failed connections, shares one subscription, and replaces 
   const get = vi
     .fn()
     .mockRejectedValueOnce(new Error("state unavailable"))
-    .mockResolvedValue(shared);
+    .mockResolvedValue(forPage(shared));
   const subscribe = vi.spyOn(shared, "on");
   vi.mocked(getPanelRpc).mockResolvedValue({ sharedState: { get } } as unknown as PanelRpc);
   mount(useLiveSignals);
@@ -196,10 +202,10 @@ test("signals retries failed connections, shares one subscription, and replaces 
   const current = mount(useLiveSignals);
   const second = mount(useLiveSignals);
   await flush();
-  expect(get).toHaveBeenCalledTimes(2);
+  expect(get).toHaveBeenCalledTimes(3);
   expect(get).toHaveBeenLastCalledWith("unworklet:signals");
-  expect(subscribe).toHaveBeenCalledTimes(1);
-  expect(current.nodes.value).toBe(second.nodes.value);
+  expect(subscribe).toHaveBeenCalledTimes(2);
+  expect(current.nodes.value).toEqual(second.nodes.value);
   expect(current.nodes.value[0]).toEqual({
     id: "synth",
     displayName: "Synth",
@@ -230,7 +236,7 @@ test("signals retries failed connections, shares one subscription, and replaces 
   expect(current.getFrame("synth", "aux")).toBeUndefined();
 });
 
-test("MIDI retries initialization, shares live snapshots, and injects only known targets", async () => {
+test("MIDI retries initialization, reads live snapshots, and injects only known targets", async () => {
   const event = { type: "noteOn", channel: 0, note: 60, velocity: 96 } as const;
   vi.mocked(getPanelRpc).mockRejectedValueOnce(new Error("offline"));
   const failed = mount(useLiveMidi);
@@ -249,7 +255,7 @@ test("MIDI retries initialization, shares live snapshots, and injects only known
   const get = vi
     .fn()
     .mockRejectedValueOnce(new Error("state unavailable"))
-    .mockResolvedValue(shared);
+    .mockResolvedValue(forPage(shared));
   const subscribe = vi.spyOn(shared, "on");
   vi.mocked(getPanelRpc).mockResolvedValue({ call, sharedState: { get } } as unknown as PanelRpc);
   mount(useLiveMidi);
@@ -257,9 +263,9 @@ test("MIDI retries initialization, shares live snapshots, and injects only known
   const current = mount(useLiveMidi);
   const second = mount(useLiveMidi);
   await flush();
-  expect(get).toHaveBeenCalledTimes(2);
+  expect(get).toHaveBeenCalledTimes(3);
   expect(get).toHaveBeenLastCalledWith("unworklet:midi");
-  expect(subscribe).toHaveBeenCalledTimes(1);
+  expect(subscribe).toHaveBeenCalledTimes(2);
   expect(current.ports.value).toEqual([{ nodeId: "synth", portName: "keys", kind: "input" }]);
   expect(current.portKey(current.ports.value[0]!)).toBe("synth.keys");
   expect(current.overflow.value).toEqual({ "synth.keys": 2 });
@@ -267,6 +273,7 @@ test("MIDI retries initialization, shares live snapshots, and injects only known
   expect(call).not.toHaveBeenCalled();
   current.injectMidi("synth.keys", event);
   expect(call).toHaveBeenCalledExactlyOnceWith("unworklet:midi-inject", {
+    pageId: "page-a",
     nodeId: "synth",
     port: "keys",
     event,

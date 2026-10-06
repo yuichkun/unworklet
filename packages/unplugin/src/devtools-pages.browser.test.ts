@@ -1,0 +1,190 @@
+import { createRequire } from "node:module";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { parseRemoteConnection } from "@vitejs/devtools-kit/client";
+import type { ViteDevToolsNodeContext } from "@vitejs/devtools-kit";
+import { chromium } from "playwright";
+import { createServer, type Plugin } from "vite-plus";
+import { expect, test } from "vite-plus/test";
+import { closeHmrServer } from "./hmr-fixture.ts";
+import type { DevPages, DevPageSnapshots } from "./devtools-pages.ts";
+import unworklet, {
+  type DevMidiInjectCommand,
+  type DevMidiInject,
+  type DevMidiState,
+} from "./index.ts";
+
+const repo = path.resolve(import.meta.dirname, "../../..");
+const demoRequire = createRequire(path.join(repo, "examples/demo/package.json"));
+const source = (id: string) => `
+import { audioOutput, defineProcessor, event, forSample } from "@unworklet/core";
+export const thru = defineProcessor(() => {
+  const keys = event.midi({ from: "main", name: "in" });
+  const sent = event.midi({ to: "main", name: "out" });
+  const out = audioOutput({ channels: 1, name: "audio" });
+  return { process: () => {
+    forSample(i => out.ch(0).at(i).write(0));
+    keys.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {
+      sent.emitIf(true, { type: "noteOn", channel, note, velocity, atSample });
+    });
+  } };
+}, { id: ${JSON.stringify(id)} });
+`;
+const main = `
+import { createNode } from "@unworklet/core";
+import processor from "./thru.processor.mjs?worklet";
+const context = new AudioContext({ sampleRate: 48000 });
+await context.resume();
+let node;
+globalThis.received = [];
+globalThis.generation = 0;
+const start = async (processor) => {
+  node?.dispose();
+  node = await createNode(context, processor);
+  node.outputs.audio.connect(context.destination);
+  node.midi.out.onEvent("noteOn", e => globalThis.received.push(e.note));
+  globalThis.generation++;
+};
+if (import.meta.hot) import.meta.hot.accept("./thru.processor.mjs?worklet", updated => start(updated.default));
+await start(processor);
+`;
+
+test("real DevTools routes two same-app tabs independently across node HMR, page reload and close", async () => {
+  const { DevTools } = await import(pathToFileURL(demoRequire.resolve("@vitejs/devtools")).href);
+  const root = await mkdtemp(path.join(tmpdir(), "unworklet-devtools-pages-"));
+  await mkdir(path.join(root, "node_modules/@unworklet"), { recursive: true });
+  await mkdir(path.join(root, "node_modules/@vitejs"), { recursive: true });
+  for (const name of ["core", "unplugin"])
+    await symlink(
+      path.join(repo, "packages", name),
+      path.join(root, "node_modules/@unworklet", name),
+    );
+  await symlink(
+    path.dirname(createRequire(import.meta.url).resolve("@vitejs/devtools-kit/package.json")),
+    path.join(root, "node_modules/@vitejs/devtools-kit"),
+  );
+  await writeFile(
+    path.join(root, "index.html"),
+    '<title>Same app</title><script type="module" src="/main.mjs"></script>',
+  );
+  await writeFile(path.join(root, "main.mjs"), main);
+  const processorPath = path.join(root, "thru.processor.mjs");
+  await writeFile(processorPath, source("first"));
+  let ctx!: ViteDevToolsNodeContext;
+  const capture = {
+    name: "capture-devtools-test-context",
+    devtools: {
+      setup(value: ViteDevToolsNodeContext) {
+        ctx = value;
+      },
+    },
+  } as Plugin;
+  const server = await createServer({
+    root,
+    configFile: false,
+    logLevel: "error",
+    plugins: [unworklet() as Plugin, capture, DevTools({ builtinDevTools: false })],
+    server: { host: "127.0.0.1", port: 0, fs: { allow: [root, repo] } },
+    resolve: { conditions: ["development"] },
+    ssr: { noExternal: [/^@unworklet\//] },
+  });
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  try {
+    await server.listen();
+    browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
+    const browserContext = await browser.newContext();
+    const dock = ctx.docks.values().find((entry) => entry.id === "unworklet");
+    if (!dock || dock.type !== "iframe") throw new Error("unworklet dock was not registered");
+    const panelUrl = new URL(dock.url, ctx.host.resolveOrigin());
+    panelUrl.hash = "/midi";
+    const panel = await browserContext.newPage();
+    await panel.goto(panelUrl.href);
+    const selector = panel.getByLabel("Application page");
+    await panel.waitForFunction(
+      (token) => Object.values(localStorage).includes(token),
+      parseRemoteConnection(panelUrl.href)!.authToken,
+    );
+    const a = await browserContext.newPage();
+    const b = await browserContext.newPage();
+    const url = server.resolvedUrls!.local[0]!;
+    await a.goto(url);
+    await a.waitForFunction("globalThis.generation === 1");
+    await expect
+      .poll(
+        async () =>
+          (await ctx.rpc.sharedState.get<DevPages>("unworklet:pages")).value().pages.length,
+      )
+      .toBe(1);
+    const pages = await ctx.rpc.sharedState.get<DevPages>("unworklet:pages");
+    const aId = pages.value().pages[0]!.id;
+    await b.goto(url);
+    await b.waitForFunction("globalThis.generation === 1");
+    await expect.poll(() => pages.value().pages.length).toBe(2);
+    const bId = pages.value().pages.find((p) => p.id !== aId)!.id;
+    const midi = await ctx.rpc.sharedState.get<DevPageSnapshots<DevMidiState>>("unworklet:midi");
+    const input = (id: string) => midi.value().pages[id]?.ports.find((p) => p.direction === "in");
+    await expect.poll(() => input(aId)?.nodeId).toBe("n0");
+    await expect.poll(() => input(bId)?.nodeId).toBe("n0");
+    const inject = (pageId: string, nodeId: string, note: number) =>
+      (
+        ctx.rpc.invokeLocal as (
+          name: string,
+          cmd: Omit<DevMidiInjectCommand, "seq">,
+        ) => Promise<void>
+      )("unworklet:midi-inject", {
+        pageId,
+        nodeId,
+        port: "in",
+        event: { type: "noteOn", channel: 0, note, velocity: 100 },
+      });
+    await selector.selectOption(aId);
+    await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
+    await panel.locator(".key-white").nth(0).click();
+    await a.waitForFunction("globalThis.received.length === 1");
+    expect(await b.evaluate("globalThis.received")).toEqual([]);
+    await selector.selectOption(bId);
+    await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
+    await panel.locator(".key-white").nth(1).click();
+    await b.waitForFunction("globalThis.received.length === 1");
+    expect(await a.evaluate("globalThis.received")).toEqual([60]);
+    await writeFile(processorPath, source("second"));
+    await a.waitForFunction("globalThis.generation === 2");
+    await b.waitForFunction("globalThis.generation === 2");
+    await expect.poll(() => input(aId)?.nodeId ?? "n0").not.toBe("n0");
+    await inject(aId, "n0", 63);
+    await selector.selectOption(aId);
+    await expect
+      .poll(() => panel.locator(".inject-routing select").inputValue())
+      .toBe(input(aId)!.nodeId + ".in");
+    await panel.locator(".key-white").nth(2).click();
+    await a.waitForFunction("globalThis.received.length === 2");
+    expect(await a.evaluate("globalThis.received")).toEqual([60, 64]);
+    expect(await b.evaluate("globalThis.received")).toEqual([62]);
+    await a.close();
+    await expect.poll(() => pages.value().pages.map((p) => p.id)).toEqual([bId]);
+    expect(await selector.inputValue()).toBe(aId);
+    await expect.poll(() => panel.locator(".key-white").count()).toBe(0);
+    await b.reload();
+    await b.waitForFunction("globalThis.generation === 1");
+    await expect
+      .poll(() => pages.value().pages.length === 1 && pages.value().pages[0]!.id !== bId)
+      .toBe(true);
+    const reloadedId = pages.value().pages[0]!.id;
+    await expect.poll(() => input(reloadedId)?.nodeId).toBe("n0");
+    await inject(bId, "n0", 65);
+    expect(await selector.inputValue()).toBe(aId);
+    await selector.selectOption(reloadedId);
+    await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
+    await panel.locator(".key-white").nth(4).click();
+    await b.waitForFunction("globalThis.received.length === 1");
+    expect(await b.evaluate("globalThis.received")).toEqual([67]);
+    const queue = await ctx.rpc.sharedState.get<DevMidiInject>("unworklet:midi-inject");
+    expect(queue.value().commands.every((c) => c.pageId === reloadedId)).toBe(true);
+  } finally {
+    await browser?.close();
+    await closeHmrServer(server);
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);

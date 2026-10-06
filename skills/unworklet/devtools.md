@@ -76,6 +76,18 @@ Run the dev server → open the Vite DevTools overlay → pick the **unworklet**
 `/` redirects to `/audio-graph`. (`README.md` L271-274;
 `packages/unplugin/devtools-ui/src/router.ts`)
 
+Use **Application page** in the sidebar to select an app tab. All four panels
+show only that page's nodes; the MIDI keyboard targets that page and its selected
+input. Identical node IDs in other tabs cannot receive the injection. Switching
+pages releases held notes on the original page and clears the view's selection,
+scalar histories, and signal frames.
+
+Reloading or reconnecting creates a fresh, temporary page session. A disconnected
+selection stays empty until you explicitly choose a live page; it does not switch
+the keyboard to another tab. Page data and pending injections are removed on page
+exit or when the server observes its connection closing. Background tabs are not
+expired for being idle.
+
 Live state renders signed buffers around a zero baseline. For `i64` buffers,
 List preserves exact decimal integers; Bar chart and Waveform are labeled
 approximate because their numeric projections can round values beyond 2^53.
