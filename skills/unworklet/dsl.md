@@ -583,6 +583,15 @@ In `.uwk.ts` arithmetic/compare/power/`neg`/`not` are written with operators (§
 the named functions remain available and `sin`/`exp`/`clamp`/`pipe`/etc. are
 written directly.
 
+Floating `mod` / `%` uses truncating remainder, with the dividend's sign,
+including `-0` for negative exact multiples. It is exact for the operands'
+`f32` or `f64` values, including subnormals; `f32` inputs are rounded before
+the operation. A zero divisor, infinite dividend, or NaN operand yields NaN;
+a finite dividend modulo either infinity is unchanged. Integer-significand
+reduction is bounded by 32 steps for `f32` and 186 for `f64`; ordinary nearby
+exponents need fewer steps. This does not bypass the separate state/buffer-store
+subnormal flush or audio-output non-finite scrub.
+
 `pow` gives what JavaScript's `**` gives, special values included: a negative
 base with a fractional exponent is `NaN`, `x ** 0` is 1, `0 ** -1` is `Infinity`.
 An integral exponent up to ±127 is multiplied out, so `x ** 2` equals `x * x` and
