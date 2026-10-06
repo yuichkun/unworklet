@@ -396,8 +396,10 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   process body and the if-sugar (§2) rewrites it to `emitIf`. —
   `declarations.ts:951,955`
 - Main-thread side is `node.events.<name>` (§5). — `declarations.ts:828,1466`
-- Outbound `atSample` is optional. Omission uses the enclosing `forSample`
-  index, or zero at block level. Set it explicitly with
+- Outbound `atSample` is optional. Omission uses the innermost active `forSample`
+  index, including inside `everyNSamples`, or zero outside a sample loop.
+  A block-level `onReceive` or MIDI `onEvent` handler uses zero, even after a
+  sample loop has completed. Set it explicitly with
   `port.emitIf(cond, { atSample: i, ...userFields })` when another offset is
   intended. It is a sample index within the render quantum.
 - **Payload retention and memory:** each typed-array ring reserves one content
