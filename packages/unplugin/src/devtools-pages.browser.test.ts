@@ -256,14 +256,26 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 3");
     disconnectPage();
     await b.waitForFunction("globalThis.released.filter(note => note === 69).length === 3");
-    await expect
-      .poll(() => pages.value().pages.length === 1 && pages.value().pages[0]!.id !== reloadedId, {
-        timeout: 5000,
-      })
-      .toBe(true);
+    await b.waitForFunction("globalThis.devtoolsStatus() === 'disconnected'");
+    await expect.poll(() => pages.value().pages.length, { timeout: 5000 }).toBe(0);
     expect(await selector.inputValue()).toBe(reloadedId);
     await panel.mouse.up();
     expect(await b.evaluate("globalThis.released")).toEqual([67, 69, 69, 69]);
+    await b.reload();
+    await b.waitForFunction("globalThis.generation === 1");
+    await b.waitForFunction("globalThis.devtoolsStatus() === 'connected'");
+    await expect.poll(() => pages.value().pages.length).toBe(1);
+    const recoveredId = pages.value().pages[0]!.id;
+    expect(recoveredId).not.toBe(reloadedId);
+    await expect.poll(() => input(recoveredId)?.nodeId).toBe("n0");
+    await inject(reloadedId, "n0", 70);
+    expect(await selector.inputValue()).toBe(reloadedId);
+    await selector.selectOption(recoveredId);
+    await panel.locator(".fade-leave-active").waitFor({ state: "detached" });
+    await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
+    await playKey(6);
+    await b.waitForFunction("globalThis.received.length === 1");
+    expect(await b.evaluate("globalThis.received")).toEqual([71]);
   } finally {
     await browser?.close();
     await closeHmrServer(server);

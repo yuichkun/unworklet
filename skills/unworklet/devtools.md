@@ -90,6 +90,8 @@ expired for being idle. Session cleanup sends matching `noteOff` events for
 held DevTools injections through their original local input ports, even if the
 DevTools connection has closed. `MidiPortSurface.send()` has no delivery
 acknowledgment; this cleanup uses the same bounded transport as other MIDI sends.
+The 0.4 host does not automatically reopen a closed DevTools socket. Reload the
+application page to reconnect; its replacement session must be selected explicitly.
 
 Live state renders signed buffers around a zero baseline. For `i64` buffers,
 List preserves exact decimal integers; Bar chart and Waveform are labeled
@@ -118,11 +120,14 @@ they do not change page-scoped state.
 Trusted clients inject with `unworklet:page-midi-inject` and
 `{ pageId, nodeId, port, event }`. Commands appear in `unworklet:page-midi-inject`
 with their page ID and sequence number. The unscoped `unworklet:midi-inject` RPC
-accepts `{ nodeId, port, event }` only when exactly one live application page
-makes the target unambiguous; it rejects calls with zero or multiple live pages.
-Accepted unscoped commands also appear in the unscoped queue with the published
-`DevMidiInjectCommand` shape. That queue is cleared when page membership changes.
-Use explicit page targeting for multi-tab tools.
+accepts `{ nodeId, port, event }` and publishes it to the unscoped queue with the
+`DevMidiInjectCommand` shape, even when no application pages are connected. It
+also forwards the request to every matching input on currently connected pages.
+These calls have no selected page and can reach multiple tabs; use the explicit
+page-targeted RPC whenever isolation is required. The built-in panel uses only
+that explicit path, and its bridge never replays the unscoped queue's history
+into fresh page sessions. Custom consumers of the unscoped queue retain its
+unscoped behavior.
 
 ## The 0.4 pin
 

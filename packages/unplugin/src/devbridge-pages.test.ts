@@ -1,8 +1,10 @@
 import { randomFillSync } from "node:crypto";
+import { createSharedState } from "@vitejs/devtools-kit/utils/shared-state";
 import { createContext, runInContext } from "node:vm";
 import { expect, test, vi } from "vite-plus/test";
 import * as bridge from "./devbridge.ts";
 import unworklet from "./index.ts";
+import { setupDevtoolsPages } from "./devtools-pages.ts";
 
 async function pageBridge() {
   const plugin = unworklet();
@@ -12,7 +14,12 @@ async function pageBridge() {
     .replaceAll("import.meta.hot", "hot");
 }
 
-function createPage(js: string, failOpen = false, rejectOpen = false) {
+type TestTransport = {
+  call: (name: string, arg: unknown) => unknown;
+  states: Map<string, ReturnType<typeof createSharedState<any>>>;
+};
+
+function createPage(js: string, failOpen = false, rejectOpen = false, transport?: TestTransport) {
   const timers = new Map<number, () => unknown>();
   const calls: Array<{ name: string; arg: any }> = [];
   const sharedKeys: string[] = [];
@@ -62,7 +69,7 @@ function createPage(js: string, failOpen = false, rejectOpen = false) {
             rejectOpen = false;
             return Promise.resolve(false);
           }
-          return Promise.resolve(true);
+          return Promise.resolve(transport ? transport.call(name, structuredClone(arg)) : true);
         },
         events: {
           on: (name: string, fn: (...args: any[]) => void) => {
@@ -73,6 +80,14 @@ function createPage(js: string, failOpen = false, rejectOpen = false) {
         sharedState: {
           get: async (key: string) => {
             sharedKeys.push(key);
+            if (transport) {
+              const shared = transport.states.get(key)!;
+              return {
+                value: () => structuredClone(shared.value()),
+                on: (_: string, cb: (value: unknown) => void) =>
+                  shared.on("updated", (value: unknown) => cb(structuredClone(value))),
+              };
+            }
             return {
               value: () => ({ commands: [] }),
               on: (_: string, cb: typeof listener) => {
@@ -428,4 +443,90 @@ test("generated bridge balances repeated noteOn injections with one release per 
     [{ ...note, type: "noteOff", velocity: 0, note: 65 }],
     [{ ...note, type: "noteOff", velocity: 0, note: 65 }],
   ]);
+});
+
+test("custom unscoped consumers and generated scoped bridges deliver once without crossing queues", async () => {
+  const states = new Map<string, ReturnType<typeof createSharedState<any>>>();
+  const handlers = new Map<string, (arg: any) => unknown>();
+  const peers = new Set<any>();
+  const a = { peer: { peers } };
+  const b = { peer: { peers } };
+  peers.add(a.peer);
+  peers.add(b.peer);
+  let session = a;
+  const dispose = await setupDevtoolsPages({
+    rpc: {
+      getCurrentRpcSession: () => ({ meta: session }),
+      sharedState: {
+        get: async (key: string, options: { initialValue: object }) => {
+          const state = createSharedState({ initialValue: options.initialValue });
+          states.set(key, state);
+          return state;
+        },
+      },
+      register: (definition: { name: string; setup: () => { handler: (arg: any) => unknown } }) =>
+        handlers.set(definition.name, definition.setup().handler),
+    },
+  } as any);
+  const call = (name: string, arg: unknown) => handlers.get(name)!(structuredClone(arg));
+  const transport = (owner: typeof a): TestTransport => ({
+    states,
+    call: (name, arg) => {
+      session = owner;
+      return call(name, arg);
+    },
+  });
+  const raw = states.get("unworklet:midi-inject")!;
+  const customSend = vi.fn();
+  let customSeq = 0;
+  const offCustom = raw.on("updated", (value: any) => {
+    for (const command of value.commands) {
+      if (command.seq <= customSeq) continue;
+      customSeq = command.seq;
+      customSend(command.event);
+    }
+  });
+  const command = { nodeId: "n0", port: "in", event: note };
+  const pages: Array<ReturnType<typeof createPage>> = [];
+  try {
+    call("unworklet:midi-inject", command);
+    expect(customSend).toHaveBeenCalledTimes(1);
+    const js = await pageBridge();
+    const first = createPage(js, false, false, transport(a));
+    const second = createPage(js, false, false, transport(b));
+    pages.push(first, second);
+    await flush();
+    for (const page of pages) await page.timers.get(150)!();
+    await flush();
+    expect(first.send).not.toHaveBeenCalled();
+    expect(second.send).not.toHaveBeenCalled();
+    call("unworklet:midi-inject", command);
+    expect(customSend).toHaveBeenCalledTimes(2);
+    expect(first.send).toHaveBeenCalledTimes(1);
+    expect(second.send).toHaveBeenCalledTimes(1);
+    call("unworklet:page-midi-inject", { ...command, pageId: pageId(first) });
+    expect(customSend).toHaveBeenCalledTimes(2);
+    expect(first.send).toHaveBeenCalledTimes(2);
+    expect(second.send).toHaveBeenCalledTimes(1);
+    const oldId = pageId(first);
+    first.events.get("connection:status")!("disconnected");
+    first.events.get("connection:status")!("connected");
+    await flush();
+    await first.timers.get(150)!();
+    await flush();
+    expect(pageId(first)).not.toBe(oldId);
+    expect(first.send.mock.calls.slice(2)).toEqual([
+      [{ ...note, type: "noteOff", velocity: 0 }],
+      [{ ...note, type: "noteOff", velocity: 0 }],
+    ]);
+    call("unworklet:page-midi-inject", { ...command, pageId: oldId });
+    expect(first.send).toHaveBeenCalledTimes(4);
+    expect(second.send).toHaveBeenCalledTimes(1);
+    expect(customSend).toHaveBeenCalledTimes(2);
+    expect(raw.value().commands).toHaveLength(2);
+  } finally {
+    for (const page of pages) page.dispose();
+    offCustom();
+    dispose();
+  }
 });

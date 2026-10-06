@@ -118,7 +118,8 @@ A closed or reloaded page stays disconnected until you select a live page.
 
 Custom DevTools consumers can read page-scoped snapshots and send explicit
 page-targeted MIDI. Unscoped snapshot keys keep the most recently received raw
-snapshot; unscoped MIDI injection requires exactly one live application page.
+snapshot; unscoped MIDI injection can reach matching inputs in multiple pages.
+Use the page-targeted RPC when isolation is required.
 See [the DevTools guide](../../skills/unworklet/devtools.md#shared-state-and-rpc-consumers).
 
 The four panels are:

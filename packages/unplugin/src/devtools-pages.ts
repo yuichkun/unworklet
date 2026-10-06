@@ -91,14 +91,10 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
       draft.log = data.log;
     });
   };
-  const clearUnscopedCommands = (): void => {
-    rawInject.mutate((draft) => {
-      draft.commands = [];
-    });
-  };
   const owners = new Map<string, Session>();
   let timer: ReturnType<typeof setInterval> | undefined;
   let seq = 0;
+  let unscopedSeq = 0;
   let disposed = false;
   // Idle background tabs remain valid; only a closed transport removes their data.
   const connected = (session: Session): boolean => !!session.peer?.peers.has(session.peer);
@@ -108,7 +104,6 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
   };
   const remove = (id: string): void => {
     owners.delete(id);
-    clearUnscopedCommands();
     pages.mutate((draft) => {
       draft.pages = draft.pages.filter((p) => p.id !== id);
     });
@@ -145,7 +140,6 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
       return false;
     for (const [id, owner] of owners) if (owner === session) remove(id);
     owners.set(page.id, session);
-    clearUnscopedCommands();
     pages.mutate((draft) => {
       draft.pages.push(page);
     });
@@ -204,7 +198,7 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
   register(`${ANONYMOUS_RPC_PREFIX}unworklet:state-update`, writeState);
   register(`${ANONYMOUS_RPC_PREFIX}unworklet:signals-update`, writeSignals);
   register(`${ANONYMOUS_RPC_PREFIX}unworklet:midi-update`, writeMidi);
-  const enqueue = (cmd: Omit<PageMidiInjectCommand, "seq">): number | undefined => {
+  const enqueue = (cmd: Omit<PageMidiInjectCommand, "seq">): void => {
     const owner = owners.get(cmd.pageId);
     if (!owner || !connected(owner)) return;
     const ports = midi.value().pages[cmd.pageId]?.ports ?? [];
@@ -214,21 +208,14 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
     inject.mutate((draft) => {
       draft.commands = [...draft.commands, { ...cmd, seq: next }].slice(-64);
     });
-    return next;
   };
   register("unworklet:page-midi-inject", enqueue);
   register<Omit<DevMidiInjectCommand, "seq">>("unworklet:midi-inject", (cmd) => {
-    const live = [...owners].filter(([, owner]) => connected(owner));
-    if (live.length !== 1)
-      throw new Error(
-        "MIDI injection requires exactly one live application page; select a page with unworklet:page-midi-inject.",
-      );
     const command = { nodeId: cmd.nodeId, port: cmd.port, event: cmd.event };
-    const next = enqueue({ ...command, pageId: live[0]![0] });
-    if (next === undefined) return;
     rawInject.mutate((draft) => {
-      draft.commands = [...draft.commands, { ...command, seq: next }].slice(-64);
+      draft.commands = [...draft.commands, { ...command, seq: ++unscopedSeq }].slice(-64);
     });
+    for (const pageId of owners.keys()) enqueue({ ...command, pageId });
   });
   return () => {
     disposed = true;

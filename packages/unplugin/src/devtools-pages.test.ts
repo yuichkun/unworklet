@@ -246,30 +246,43 @@ test("unscoped keys and update RPCs preserve raw latest-snapshot compatibility",
   }
 });
 
-test("unscoped MIDI routes only one live page and keeps the public queue shape", async () => {
+test("unscoped MIDI preserves raw publication and broadcasts only its own calls to live pages", async () => {
   const s = await server();
   const cmd = { nodeId: "n0", port: "in", event: command("a").event };
   try {
-    expect(() => s.call("unworklet:midi-inject", cmd)).toThrow("exactly one live application page");
-    await s.call("page-open", page("a"), s.a);
-    await s.call("page-midi-update", { pageId: "a", data: midi }, s.a);
-    await s.call("unworklet:midi-inject", { ...cmd, port: "missing" });
-    expect(s.raw("midi-inject").commands).toEqual([]);
     await s.call("unworklet:midi-inject", cmd);
     expect(s.raw("midi-inject").commands).toEqual([{ ...cmd, seq: 1 }]);
+    expect(s.read("midi-inject").commands).toEqual([]);
+    await s.call("page-open", page("a"), s.a);
+    await s.call("page-midi-update", { pageId: "a", data: midi }, s.a);
+    expect(s.read("midi-inject").commands).toEqual([]);
+    await s.call("unworklet:midi-inject", { ...cmd, port: "missing" });
+    expect(s.raw("midi-inject").commands).toHaveLength(2);
+    expect(s.read("midi-inject").commands).toEqual([]);
+    await s.call("unworklet:midi-inject", cmd);
+    expect(s.raw("midi-inject").commands.at(-1)).toEqual({ ...cmd, seq: 3 });
     expect(s.read("midi-inject").commands).toEqual([{ ...cmd, seq: 1, pageId: "a" }]);
     await s.call("page-open", page("b"), s.b);
     await s.call("page-midi-update", { pageId: "b", data: midi }, s.b);
-    expect(s.raw("midi-inject").commands).toEqual([]);
-    expect(() => s.call("unworklet:midi-inject", cmd)).toThrow("exactly one live application page");
-    expect(s.read("midi-inject").commands).toHaveLength(1);
+    expect(s.raw("midi-inject").commands).toHaveLength(3);
+    await s.call("unworklet:page-midi-inject", command("a"));
+    expect(s.raw("midi-inject").commands).toHaveLength(3);
+    expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["a", "a"]);
+    await s.call("unworklet:midi-inject", cmd);
+    expect(s.raw("midi-inject").commands.at(-1)).toEqual({ ...cmd, seq: 4 });
+    expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["a", "a", "a", "b"]);
     s.peers.delete(s.a.peer);
     await s.call("unworklet:midi-inject", cmd);
     expect(s.read("midi-inject").commands.at(-1).pageId).toBe("b");
     for (let i = 0; i < 70; i++) await s.call("unworklet:midi-inject", cmd);
     expect(s.raw("midi-inject").commands).toHaveLength(64);
     await s.call("page-close", { pageId: "b" }, s.b);
-    expect(s.raw("midi-inject").commands).toEqual([]);
+    expect(s.raw("midi-inject").commands).toHaveLength(64);
+    s.peers.add(s.a.peer);
+    await s.call("page-open", page("fresh"), s.a);
+    await s.call("page-midi-update", { pageId: "fresh", data: midi }, s.a);
+    expect(s.read("midi-inject").commands).toEqual([]);
+    expect(s.raw("midi-inject").commands).toHaveLength(64);
   } finally {
     s.dispose();
   }
