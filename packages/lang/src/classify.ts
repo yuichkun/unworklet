@@ -30,19 +30,28 @@ export type ValueClass =
 
 /** Recursion guard for the structural fallbacks (bound locals / sugar-bodied calls). */
 const inFlight = new Set<ts.Node>();
+let recursionEpoch = 0;
+
+function recursiveQuery(node: ts.Node): boolean {
+  if (!inFlight.has(node)) return false;
+  recursionEpoch++;
+  return true;
+}
 
 // Per-node memo. Nodes are unique per `ts.Program` (one program per `lower()`),
 // so the WeakMap is self-clearing across calls and never sees a stale checker.
 // The structural fallbacks resolve symbols / signatures, which is expensive, so
-// memoizing turns the whole classify pass from O(queries) to O(nodes).
+// memoization avoids repeating that work. A recursion guard depends on the
+// active query stack, so results affected by one cannot be cached by node alone.
 const classifyMemo = new WeakMap<ts.Node, ValueClass>();
 const dspExprMemo = new WeakMap<ts.Node, boolean>();
 
 export function classify(checker: ts.TypeChecker, node: ts.Node): ValueClass {
   const cached = classifyMemo.get(node);
   if (cached !== undefined) return cached;
+  const epoch = recursionEpoch;
   const result = computeClassify(checker, node);
-  classifyMemo.set(node, result);
+  if (epoch === recursionEpoch) classifyMemo.set(node, result);
   return result;
 }
 
@@ -100,7 +109,7 @@ function typedFromOperands(checker: ts.TypeChecker, node: ts.Node): boolean {
       !ts.isVariableDeclaration(decl) ||
       decl.initializer === undefined ||
       decl.initializer === node ||
-      inFlight.has(decl)
+      recursiveQuery(decl)
     ) {
       return false;
     }
@@ -123,7 +132,7 @@ function isDspBoundLocal(checker: ts.TypeChecker, node: ts.Identifier): boolean 
     !ts.isVariableDeclaration(decl) ||
     decl.initializer === undefined ||
     decl.initializer === node ||
-    inFlight.has(decl)
+    recursiveQuery(decl)
   ) {
     return false;
   }
@@ -145,7 +154,7 @@ function isDspCall(checker: ts.TypeChecker, call: ts.CallExpression): boolean {
   const decl = checker.getResolvedSignature(call)?.declaration;
   if (
     decl === undefined ||
-    inFlight.has(decl) ||
+    recursiveQuery(decl) ||
     !(
       ts.isArrowFunction(decl) ||
       ts.isFunctionExpression(decl) ||
@@ -215,8 +224,9 @@ export function isSugarBinaryOperator(kind: ts.SyntaxKind): boolean {
 export function isDspExpr(checker: ts.TypeChecker, node: ts.Node): boolean {
   const cached = dspExprMemo.get(node);
   if (cached !== undefined) return cached;
+  const epoch = recursionEpoch;
   const result = computeDspExpr(checker, node);
-  dspExprMemo.set(node, result);
+  if (epoch === recursionEpoch) dspExprMemo.set(node, result);
   return result;
 }
 
