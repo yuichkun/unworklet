@@ -7,22 +7,21 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
-## Unreleased — requires 0.5.0
+## 0.5.0 — 2026-10-06
 
-### Playground editor
-
-- Sugar-aware completion, inferred-type hover, signature help, and static diagnostics
-  run in a browser worker using the same ambient types and Volar mappings as the
-  language tools. Editor results are scoped to a model and source version.
-- API reference and sugar help provide searchable, source-typed signatures and
-  executable examples without replacing the editor's contents.
-- Compile/runtime failures retain structured codes and messages. `LowerError`
-  optionally supplies original-source UTF-16 `sourceRange` offsets; unsupported
-  DSP `if` errors identify their condition. Unpositioned failures remain
-  document-level diagnostics.
+Safer processor compilation and testing, more reliable runtime and hot-reload
+behavior, and an assisted playground editor. This release includes compatibility
+changes; review the migrations below when upgrading from 0.4.x. Update all
+installed `@unworklet/*` packages together to 0.5.0.
 
 ### Breaking
 
+- **Browser-compiled processors enforce their baked sample rate.** Browser
+  `compileSource` preserves the compiler's `bakedSampleRate` metadata, so
+  `createNode` rejects contexts whose rate differs from the compiled 48000 Hz
+  before loading the worklet module. Live-coding consumers must request
+  `new AudioContext({ sampleRate: 48000 })` instead of relying on the device's
+  default rate; browser compilation has no sample-rate option.
 - **Message and MIDI handlers enforce loop bounds at compilation.** Handler
   `forSample.byN` strides must be one of `1, 2, 4, 8, 16, 32, 64, 128`, and
   `everyNSamples` divisors must be positive integers. Invalid handler loops fail
@@ -47,40 +46,44 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   and offline restore skip a saved slot when its type differs from the destination,
   even if the byte length matches. For example, an `f32` state is not reinterpreted
   as `i32`, and an `f32` buffer is not copied into an equally sized `f64` buffer.
-  The destination retains its initialized value; live restore reports the name in
-  `skipped`. This change must ship on the pre-1.0 minor axis, not in a 0.4.x patch.
-  When changing a declaration's type, add a migration from the old schema hash to
-  the new one that decodes the old type, converts its values, and writes the slot
+  The destination slot is left unchanged; live restore reports the name in
+  `skipped`. When changing a declaration's type, add a migration from the old
+  schema hash to the new one that decodes the old type, converts its values, and
+  writes the slot
   with the destination type. For scalar `f32` to `i32`, use
   `helpers.parseSlot(blob, "value", "f32")`, choose the required rounding, and call
   `helpers.writeSlot("value", "i32", convertedValue)`. Unchanged slot types require
   no migration.
+- **Automatic chain audio snapshots use one reference per assertion.** Filenames
+  are distinct within a test, and numbering restarts for retries, repeats and
+  reruns, including cached setup dependencies with `isolate: false`. Tests with
+  multiple unnamed assertions need a separate reference for each assertion;
+  review those references rather than overwriting a shared golden.
 
 ### Fixed
 
 - Vite configuration waits for initial worklet type generation while keeping
-  generated configuration files available synchronously.
+  generated configuration files available synchronously. Dev startup discovers
+  worklet imports before a browser request; processor/helper edits and added or
+  removed imports refresh declarations and remove stale witnesses.
+- Repeated native processor builds reload local ESM helper graphs while
+  preserving external package identity and native CommonJS behavior.
 - `$prev` feedback derives its scalar from the resolved return type regardless of
   quote style, whitespace, parentheses, type aliases, or intersections.
 - Generated `$prev` feedback slots and return temporaries avoid collisions with
   authored identifiers.
-
+- Published Volar declarations remain compatible with the supported TypeScript
+  versions, including 5.0.4, 5.5.4 and 5.9.3, without increasing the minimum.
+- Offline event and MIDI drains preserve order and terminate when signed
+  32-bit ring counters wrap.
+- Offline rendering preserves exact 128-sample quantum durations despite
+  floating-point roundoff. A duration above the exact boundary still rounds up.
 - Processors without declared audio ports can be created for MIDI and control
   processing. Their native node has one silent output; public port maps stay empty.
 - Disposing a node stops its DSP after the queued shutdown reaches the worklet,
   including after a processing failure, and releases its active processor lifetime.
 - SIMD buffer loads preserve their read-time lanes across later writes and support
   method-form vector arithmetic with numbers or other loaded vectors (#73, #74).
-- Automatic chain audio snapshots use distinct filenames within a test and
-  restart numbering for retries, repeats, and reruns, including cached setup
-  dependencies with `isolate: false`. Tests with multiple unnamed assertions
-  need a separate reference for each assertion; review those references rather
-  than overwriting a shared golden.
-- Browser `compileSource` preserves the compiler's `bakedSampleRate` metadata.
-  `createNode` rejects contexts whose rate differs from the compiled 48000 Hz
-  before loading the worklet module. Live-coding consumers must request
-  `new AudioContext({ sampleRate: 48000 })` instead of relying on the device's
-  default rate; browser compilation has no sample-rate option.
 - The lang CLI and helper-free sugar compilation resolve package-relative paths
   on Node 20.0.0, preserving the declared Node >=20 support.
 - Parameter snapshots and devtools captures preserve current `AudioParam.value`
@@ -89,6 +92,27 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   parameter renames with unchanged WASM can coexist in the same AudioContext.
 - Vite HMR refreshes the raw processor namespace along with its compiled wrapper,
   keeping parameters, migrations, and DSP revisions consistent.
+- DevTools releases held MIDI keys on their original port and channel when
+  routing changes or the view closes. Panic also sends All Notes Off on every
+  channel of the selected input.
+- DevTools graph and live-state views unsubscribe on unmount and ignore
+  connections that finish after the view closes. Signed buffers render around a
+  zero baseline; `i64` lists preserve exact integer values, while their charts
+  are explicitly approximate.
+
+### Playground editor
+
+- Sugar-aware completion, inferred-type hover, signature help, and static diagnostics
+  run in a browser worker using the same ambient types and Volar mappings as the
+  language tools. Editor results are scoped to a model and source version.
+- API reference and sugar help provide searchable, source-typed signatures and
+  executable examples without replacing the editor's contents.
+- Compile/runtime failures retain structured codes and messages. `LowerError`
+  optionally supplies original-source UTF-16 `sourceRange` offsets; unsupported
+  DSP `if` errors identify their condition. Unpositioned failures remain
+  document-level diagnostics.
+- Expanding the editor preserves its model, undo history, cursor, diagnostics,
+  worker and running audio session. Closing it restores focus and page position.
 
 ### Demo playback
 
