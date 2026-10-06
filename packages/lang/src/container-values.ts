@@ -35,6 +35,16 @@ function literalKey(node: ts.Node): string | undefined {
   node = unwrapValue(node);
   if (ts.isStringLiteral(node)) return node.text;
   if (ts.isNumericLiteral(node)) return String(Number(node.text));
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    (node.operator === ts.SyntaxKind.PlusToken || node.operator === ts.SyntaxKind.MinusToken)
+  ) {
+    const operand = unwrapValue(node.operand);
+    if (ts.isNumericLiteral(operand)) {
+      const value = Number(operand.text);
+      return String(node.operator === ts.SyntaxKind.MinusToken ? -value : value);
+    }
+  }
   return undefined;
 }
 

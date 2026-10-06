@@ -144,13 +144,7 @@ function isLoweredNodeValue(checker: ts.TypeChecker, node: ts.Node): boolean {
   if (ts.isConditionalExpression(node)) return isDspExpr(checker, node.condition);
   if (ts.isElementAccessExpression(node)) {
     const object = classify(checker, node.expression);
-    if (
-      object === "buffer" ||
-      object === "param" ||
-      object === "inputChannel" ||
-      object === "outputChannel"
-    )
-      return true;
+    if (object === "buffer" || object === "param" || object === "inputChannel") return true;
   }
   if (recursiveQuery(node)) return false;
   inFlight.add(node);

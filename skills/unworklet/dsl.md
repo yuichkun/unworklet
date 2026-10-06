@@ -142,6 +142,8 @@ DSP operator results and indexed DSP reads can be stored in local `const`
 array/object literals and read with literal keys (`values[0]`, `values.left`),
 or bound through `const` destructuring of a literal. Nested literal paths and
 numeric sibling fields keep their DSP and build-time meanings respectively.
+Signed numeric object keys such as `{[-1]: value}` are read through the matching
+literal path, such as `values[-1]`.
 
 This inference requires direct, read-only references to the container. It does
 not infer through aliases, value exports, mutation, escapes, dynamic keys, or ambiguous helper

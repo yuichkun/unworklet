@@ -639,3 +639,117 @@ test("preserves local literals inside exported functions", async () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test.each([
+  ["negative integer", "[-1]", "-1"],
+  ["unary plus", "[+1]", "+1"],
+  ["negative exponent", "[-1e2]", "-100"],
+  ["negative hexadecimal", "[-0x10]", "-16"],
+  ["negative binary", "[-0b10]", "-2"],
+  ["negative fractional", "[-0.5]", "-0.5"],
+  ["negative zero", "[-0]", "0"],
+  ["parenthesized operand", "[-(1)]", "-(1)"],
+  ["string property", '"-1"', "-1"],
+] as const)("renders a signed numeric literal key: %s", async (_, key, access) => {
+  const actual = await renderLowered(
+    processor(`const values={${key}:f32(0.5)*2};out.ch(0)[i]=values[${access}]*2;`),
+    config,
+  );
+  const expected = await renderLowered(
+    processor(
+      `const values={${key}:mul(f32(0.5),2)};out.ch(0).at(i).write(mul(values[${access}],2));`,
+    ),
+    config,
+  );
+  expect(expected.outputs.main[0]).toEqual(new Float32Array(128).fill(2));
+  expect(actual.outputs).toEqual(expected.outputs);
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test.each([
+  ["const values={[-1]:VALUE};", "values[-1]", "VALUE"],
+  ["const values={[+1]:VALUE};", "values[+1]", "VALUE"],
+  ["const values={[-0]:VALUE};", "values[0]", "VALUE"],
+  ["const values=[VALUE];", "values[-0]", "VALUE"],
+  ["const values=[VALUE];", "values[+0]", "VALUE"],
+  ["const values={[-(1)]:VALUE};", "values[-(1)]", "VALUE"],
+  ["const values={[-1]:VALUE,'-1':3};", "values[-1]", "3"],
+  ["const values={'-1':3,[-1]:VALUE};", "values[-1]", "VALUE"],
+  ["const key=1;const values={[-1]:VALUE};", "values[-key]", undefined],
+  ["const values={[-1]:VALUE};values[-1]=3;", "values[-1]", undefined],
+  ["const values={[-1]:VALUE};reset(values);", "values[-1]", undefined],
+  ["const values={[-1]:VALUE};const alias=values;", "values[-1]", undefined],
+  ["const key=1;const values={[-1]:VALUE,[-key]:3};", "values[-1]", undefined],
+  ["const values={[-1]:VALUE};", "values[~1]", undefined],
+  ["const values={[-1]:VALUE};", "values[!1]", undefined],
+  ["const values={1:VALUE};", 'values[+"1"]', undefined],
+] as const)("checks signed numeric literal provenance: %s %s", (declarations, value, expected) => {
+  expect(literalOrigin(`${declarations}const result=${value};`)).toBe(expected);
+});
+
+test.each([
+  [
+    "logical negation",
+    'const gate=state.bool(false).named("gate");',
+    "const values=[!gate];out.ch(0)[i]=values[0]?2:1;",
+    2,
+  ],
+  ["build-time unary plus", "", "const values=[+3];out.ch(0)[i]=Math.max(0,values[0]*2);", 6],
+  [
+    "numeric indexed member",
+    "",
+    "const source=[3];const values={left:source[0]};out.ch(0)[i]=Math.max(0,values.left*2);",
+    6,
+  ],
+  [
+    "DSP indexed member",
+    "",
+    "const source=[f32(0.5)*2];const values={left:source[0]};out.ch(0)[i]=values.left*2;",
+    2,
+  ],
+  [
+    "parameter indexed member",
+    'const gain=param.f32({default:1,min:0,max:2,automationRate:"a-rate"}).named("gain");',
+    "const values=[gain[i]];out.ch(0)[i]=values[0]*2;",
+    2,
+  ],
+  [
+    "input indexed member",
+    'const input=audioInput({channels:1,name:"main"});',
+    "const values=[input.ch(0)[i]];out.ch(0)[i]=values[0]*2;",
+    2,
+  ],
+  [
+    "unsupported output read",
+    "",
+    "const values=[out.ch(0)[i]];out.ch(0)[i]=Math.max(0,(values[0]||3)*2);",
+    6,
+  ],
+] as const)("preserves container origin boundary: %s", async (_, declarations, body, expected) => {
+  const actual = await renderLowered(processor(body, declarations), {
+    ...config,
+    inputs: { main: [new Float32Array(128).fill(1)] },
+  });
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(expected));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test("an indexed output read is not a proven emitted Node", () => {
+  const { checker, sourceFile } = buildProgram(
+    'const out=audioOutput({channels:1,name:"main"});const values=[out.ch(0)[0]];const result=values[0];',
+  );
+  const statement = sourceFile.statements.at(-1)! as ts.VariableStatement;
+  expect(classify(checker, statement.declarationList.declarations[0]!.initializer!)).toBe("other");
+});
+
+test.each([
+  ["direct write", "values[-1]=3;"],
+  ["escape", "function reset(value:Record<number,number>){value[-1]=3;}reset(values);"],
+] as const)("preserves signed-key build-time values after %s", async (_, mutation) => {
+  const actual = await renderLowered(
+    processor(`const values={[-1]:f32(0.5)*2};${mutation}out.ch(0)[i]=Math.max(0,values[-1]*2);`),
+    config,
+  );
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(6));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
