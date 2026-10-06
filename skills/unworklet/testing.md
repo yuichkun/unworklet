@@ -22,6 +22,11 @@ Cite `packages/test/package.json` (exports `.` + `./extend`), `packages/offline/
 - `@unworklet/test` peer-deps `vitest@^3 || ^4` and `@unworklet/core` (it imports `expect` from `vitest`).
 - Processor source: `@unworklet/core` `defineProcessor` (`.processor.ts`), or a `.uwk.ts` lowered to a `CompiledProcessor` via `lowerToProcessor` from `@unworklet/lang/browser` (`packages/lang/src/browser.ts:38`).
 
+`lowerToProcessor` in Node and the browser runtime compiler preserve named aliases
+and namespace imports from `@unworklet/core`, such as `import { f32 as value }`
+and `import * as dsp`; other runtime imports require the bundler build path or
+Node's `loadUwkProcessor`.
+
 ## Import `expect` / `test`
 
 Cite `packages/test/README.md`, `examples/demo/src/examples.render.test.ts:31`, `packages/test/src/index.test.ts:13`.

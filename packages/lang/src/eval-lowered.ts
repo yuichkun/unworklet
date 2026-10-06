@@ -11,14 +11,15 @@ import { lower } from "./lower.ts";
 import type { FsSnapshot } from "./program.ts";
 
 const CORE_MODULE = "@unworklet/core";
-const CORE_KEYS = Object.keys(core).filter((k) => /^[A-Za-z_$][\w$]*$/.test(k));
+
+type RuntimeBinding = { name: string; value: unknown };
 
 /**
  * Turn a lowered `.ts` module into a runnable `new Function` body, operating on the
  * parsed AST (not the emitted text — a regex would false-match an `export default`
  * / `import ... from` inside a comment or string literal in the authored body):
  *
- * - drop the `@unworklet/core` import (its names are injected as function params);
+ * - bind `@unworklet/core` imports to their local names as function parameters;
  * - rewrite `export default <expr>` into `return <expr>`.
  *
  * A non-core import is a cross-file import the in-memory / browser runtime cannot
@@ -26,15 +27,15 @@ const CORE_KEYS = Object.keys(core).filter((k) => /^[A-Za-z_$][\w$]*$/.test(k));
  * module, not a processor. Both are surfaced as actionable errors rather than the
  * opaque `SyntaxError: Cannot use import statement` that `new Function` throws.
  */
-function toRunnableBody(loweredTs: string): string {
+function toRunnableBody(loweredTs: string): { body: string; bindings: RuntimeBinding[] } {
   // 1. Strip types, keep ESM — transpileModule passes import/export through and
   //    elides unused imports (so an unused cross-file import drops out harmlessly).
   const jsEsm = ts.transpileModule(loweredTs, {
     compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext },
   }).outputText;
   // 2. Parse the type-free JS and walk its statements, printing each into the
-  //    function body — drop the `@unworklet/core` import (its names are injected as
-  //    params) and turn `export default <expr>` into `return <expr>`. Decisions are
+  //    function body — bind the `@unworklet/core` imports as function parameters
+  //    and turn `export default <expr>` into `return <expr>`. Decisions are
   //    made on AST nodes, so an `export default` / `import` sitting inside a comment
   //    or string literal in the authored body is ignored. Assembling the body from
   //    printed nodes also avoids the trailing `export {}` marker `transpileModule`
@@ -48,6 +49,7 @@ function toRunnableBody(loweredTs: string): string {
   );
   const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
   const parts: string[] = [];
+  const bindings: RuntimeBinding[] = [];
   let sawDefault = false;
   for (const stmt of sf.statements) {
     if (ts.isImportDeclaration(stmt)) {
@@ -59,7 +61,27 @@ function toRunnableBody(loweredTs: string): string {
             "bundler (`?worklet`) build path; in the runtime-compile path, inline the value instead.",
         );
       }
-      continue; // drop the core import
+      const clause = stmt.importClause;
+      if (clause?.name !== undefined) {
+        throw new Error(
+          "unworklet: @unworklet/core has no default export. Use a named or namespace import.",
+        );
+      }
+      const imported = clause?.namedBindings;
+      if (imported !== undefined) {
+        if (ts.isNamespaceImport(imported)) {
+          bindings.push({ name: imported.name.text, value: core });
+        } else {
+          for (const element of imported.elements) {
+            const exportedName = element.propertyName?.text ?? element.name.text;
+            bindings.push({
+              name: element.name.text,
+              value: (core as Record<string, unknown>)[exportedName],
+            });
+          }
+        }
+      }
+      continue;
     }
     if (ts.isExportAssignment(stmt) && stmt.isExportEquals !== true) {
       sawDefault = true;
@@ -123,19 +145,21 @@ function toRunnableBody(loweredTs: string): string {
         "processor that imports and instantiate()s it, not this file.",
     );
   }
-  return parts.join("\n");
+  return { body: parts.join("\n"), bindings };
 }
 
 /**
  * Run a lowered `.ts` processor module to its `CompiledProcessor`, with the real
- * core exports injected as parameters (no module resolution). See {@link toRunnableBody}.
+ * imported core bindings injected as parameters (no module resolution).
+ * See {@link toRunnableBody}.
  */
 export function evalLowered(loweredTs: string): CompiledProcessor<unknown> {
-  const body = toRunnableBody(loweredTs);
-  // The injected identifiers ARE the real core exports — equivalent to importing them.
+  const { body, bindings } = toRunnableBody(loweredTs);
   // oxlint-disable-next-line typescript/no-implied-eval
-  const fn = new Function(...CORE_KEYS, body) as (...args: unknown[]) => CompiledProcessor<unknown>;
-  return fn(...CORE_KEYS.map((k) => (core as Record<string, unknown>)[k]));
+  const fn = new Function(...bindings.map(({ name }) => name), body) as (
+    ...args: unknown[]
+  ) => CompiledProcessor<unknown>;
+  return fn(...bindings.map(({ value }) => value));
 }
 
 /**

@@ -11,10 +11,18 @@ export async function closeHmrServer(
       if (!optimizer) return [];
       const failures: unknown[] = [];
       const observed = new Set<Promise<void>>();
+      const scanning = optimizer.scanProcessing;
+      const scan = Promise.allSettled(scanning ? [scanning] : []);
       // Vite can finish closing while a scanned Rolldown build is still writing.
       // Keep the optimizer alive until its discovered dependencies are committed.
-      await environment.waitForRequestsIdle();
-      await optimizer.scanProcessing;
+      try {
+        await environment.waitForRequestsIdle();
+      } catch (error) {
+        failures.push(error);
+      }
+      for (const result of await scan) {
+        if (result.status === "rejected") failures.push(result.reason);
+      }
       for (;;) {
         const pending = new Set(
           Object.values(optimizer.metadata.discovered)

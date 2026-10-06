@@ -1,4 +1,5 @@
 import { compile } from "@unworklet/core";
+import { renderOffline } from "@unworklet/offline";
 import { expect, test } from "vite-plus/test";
 
 import { captureFsSnapshot } from "./capture.ts";
@@ -129,5 +130,88 @@ test.each(['export * from "./other.ts";', 'export { value } from "./other.ts";']
     expect(() => evalLowered(`${declaration}\nexport default {};`)).toThrow(
       /cannot re-export from other files/,
     );
+  },
+);
+
+test.each([
+  ["named aliases", 'import { f32 as value } from "@unworklet/core";', "value(0.5)"],
+  ["namespace imports", 'import * as dsp from "@unworklet/core";', "dsp.f32(0.5)"],
+  ["Unicode aliases", 'import { f32 as 値 } from "@unworklet/core";', "値(0.5)"],
+  ["core-name aliases", 'import { f32 as i32 } from "@unworklet/core";', "i32(0.5)"],
+  ["core-name namespaces", 'import * as f32 from "@unworklet/core";', "f32.f32(0.5)"],
+  [
+    "multiple aliases for one export",
+    'import { f32 as first, f32 as second } from "@unworklet/core";',
+    "first(0.25).add(second(0.25))",
+  ],
+  [
+    "local core-name declarations",
+    "const f32 = (value: number) => value; const compile = 0.5;",
+    "f32(compile)",
+  ],
+  [
+    "nested alias shadowing",
+    `import { f32 as value } from "@unworklet/core";
+function half(value: number) { return value / 2; }`,
+    "value(half(1))",
+  ],
+  [
+    "type-only bindings and core side-effect imports",
+    `import "@unworklet/core";
+import type { Node } from "@unworklet/core";
+import { type CompiledProcessor, f32 as value } from "@unworklet/core";
+import type { Missing } from "./types-only.ts";
+import { unused } from "./unused.ts";
+const amount: number = 0.5;`,
+    "value(amount)",
+  ],
+])(
+  "evaluates %s with the imported values and renders every sample",
+  async (_, declarations, value) => {
+    const processor = evalLowered(`
+import { audioOutput, defineProcessor, forSample } from "@unworklet/core";
+${declarations}
+export default defineProcessor(() => {
+  const out = audioOutput({ channels: 1, name: "main" });
+  return { process() { forSample((i) => { out.ch(0).at(i).write(${value}); }); } };
+});`);
+    const result = await renderOffline(processor, { sampleRate: 48000, duration: 128 / 48000 });
+    expect([...result.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, () => 0.5));
+  },
+);
+
+test.each([
+  'import "./side-effect.ts";',
+  'import * as other from "./other.ts"; void other;',
+  'import other from "./other.ts"; void other;',
+])("rejects a surviving non-core runtime import: %s", (declaration) => {
+  expect(() => evalLowered(`${declaration}\nexport default {};`)).toThrow(
+    /cannot import from other files/,
+  );
+});
+
+test("rejects a default core import because core has no default export", () => {
+  expect(() => evalLowered('import dsp from "@unworklet/core"; export default dsp;')).toThrow(
+    /@unworklet\/core.*no default export/,
+  );
+});
+
+test.each([false, true])(
+  "lowers core aliases and namespaces to audible PCM (captured snapshot: %s)",
+  async (useSnapshot) => {
+    const snapshot = useSnapshot ? captureFsSnapshot() : undefined;
+    for (const [declaration, value] of [
+      ['import { f32 as value } from "@unworklet/core";', "value(0.5)"],
+      ['import * as dsp from "@unworklet/core";', "dsp.f32(0.5)"],
+    ]) {
+      const processor = lowerToProcessor(
+        `${declaration}
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample((i) => { out.ch(0)[i] = ${value}; }); });`,
+        snapshot,
+      );
+      const result = await renderOffline(processor, { sampleRate: 48000, duration: 128 / 48000 });
+      expect([...result.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, () => 0.5));
+    }
   },
 );
