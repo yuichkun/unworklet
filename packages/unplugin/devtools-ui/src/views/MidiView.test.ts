@@ -341,3 +341,60 @@ test.each([0, 108])("every PC key stays in MIDI range at octave boundary %s", as
       .sort(),
   );
 });
+
+async function sendController(controller: number, value: number): Promise<void> {
+  const input = root.querySelector<HTMLInputElement>(".ctrl-row-aux input")!;
+  input.value = String(controller);
+  input.dispatchEvent(new Event("input"));
+  await nextTick();
+  const slider = root.querySelectorAll<HTMLElement>(".range-slider")[1]!;
+  vi.spyOn(slider, "getBoundingClientRect").mockReturnValue({ left: 0, width: 127 } as DOMRect);
+  slider.dispatchEvent(new PointerEvent("pointerdown", { button: 0, clientX: value }));
+  slider.dispatchEvent(new PointerEvent("pointerup"));
+  await nextTick();
+}
+
+test.each(["channel", "target", "unmount", "panic"])(
+  "%s releases only sustain engaged by the current route after key release",
+  async (reason) => {
+    await sendController(64, 127);
+    key("keydown");
+    key("keyup");
+    if (reason === "channel") {
+      const input = root.querySelector<HTMLInputElement>(".inject-routing input")!;
+      input.value = "1";
+      input.dispatchEvent(new Event("input"));
+      await nextTick();
+    } else if (reason === "target") {
+      const select = root.querySelector<HTMLSelectElement>(".inject-routing select")!;
+      select.value = "n2.in";
+      select.dispatchEvent(new Event("change"));
+      await nextTick();
+    } else if (reason === "unmount") {
+      app!.unmount();
+      app = undefined;
+    } else root.querySelector<HTMLButtonElement>(".panic-btn")!.click();
+    expect(
+      fixture.injectMidi.mock.calls.filter(
+        ([, event]) => event.type === "cc" && event.controller === 64,
+      ),
+    ).toEqual([
+      ["n1.in", { type: "cc", channel: 0, controller: 64, value: 127 }],
+      ["n1.in", { type: "cc", channel: 0, controller: 64, value: 0 }],
+    ]);
+  },
+);
+
+test.each(["pedal up", "controller reset"])(
+  "%s clears the route sustain latch before cleanup",
+  async (reason) => {
+    await sendController(64, 127);
+    await sendController(64, 64);
+    if (reason === "pedal up") await sendController(64, 63);
+    else await sendController(121, 0);
+    const count = fixture.injectMidi.mock.calls.length;
+    app!.unmount();
+    app = undefined;
+    expect(fixture.injectMidi).toHaveBeenCalledTimes(count);
+  },
+);

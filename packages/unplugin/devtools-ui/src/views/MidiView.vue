@@ -68,10 +68,18 @@ const program = ref(0);
 const pressure = ref(0);
 
 const pressedKeys = ref(new Map<number, { port: string; channel: number }>());
+const sustainOrigins = new Map<string, { port: string; channel: number }>();
 
 const sendEvent = (event: MidiEventInput): void => {
-  if (!targetPortKey.value) return;
-  injectMidi(targetPortKey.value, event);
+  const port = targetPortKey.value;
+  if (!port) return;
+  injectMidi(port, event);
+  if (event.type === "cc") {
+    const key = `${port}:${event.channel}`;
+    if (event.controller === 64 && event.value >= 64)
+      sustainOrigins.set(key, { port, channel: event.channel });
+    else if (event.controller === 64 || event.controller === 121) sustainOrigins.delete(key);
+  }
 };
 
 // ──────────────────────────────────────────────────────────────────
@@ -153,10 +161,17 @@ const releaseNotes = (): void => {
   physicalKeyToMidi.clear();
 };
 
-watch([targetPortKey, channel], releaseNotes, { flush: "sync" });
+const releaseRoute = (): void => {
+  releaseNotes();
+  for (const { port, channel } of sustainOrigins.values())
+    injectMidi(port, { type: "cc", channel, controller: 64, value: 0 });
+  sustainOrigins.clear();
+};
+
+watch([targetPortKey, channel], releaseRoute, { flush: "sync" });
 
 const panic = (): void => {
-  releaseNotes();
+  releaseRoute();
   for (let ch = 0; ch < 16; ch++) {
     sendEvent({ type: "cc", channel: ch, controller: 123, value: 0 });
   }
@@ -254,7 +269,7 @@ onMounted(() => {
   window.addEventListener("keyup", onWindowKeyUp);
 });
 onBeforeUnmount(() => {
-  releaseNotes();
+  releaseRoute();
   window.removeEventListener("keydown", onWindowKeyDown);
   window.removeEventListener("keyup", onWindowKeyUp);
 });

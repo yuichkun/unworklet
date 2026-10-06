@@ -1,4 +1,6 @@
 import { randomFillSync } from "node:crypto";
+import { audioOutput, defineProcessor, event, forSample, select, state } from "@unworklet/core";
+import { renderOffline } from "../../offline/src/index.ts";
 import { createSharedState } from "@vitejs/devtools-kit/utils/shared-state";
 import { createContext, runInContext } from "node:vm";
 import { expect, test, vi } from "vite-plus/test";
@@ -529,4 +531,176 @@ test("custom unscoped consumers and generated scoped bridges deliver once withou
     offCustom();
     dispose();
   }
+});
+
+function sustainConsumer() {
+  const down = new Set<string>();
+  const sounding = new Set<string>();
+  const pedals = new Set<number>();
+  const send = vi.fn((event: any) => {
+    const key = `${event.channel}:${event.note}`;
+    if (event.type === "noteOn" && event.velocity > 0) {
+      down.add(key);
+      sounding.add(key);
+    } else if (event.type === "noteOff" || (event.type === "noteOn" && event.velocity === 0)) {
+      down.delete(key);
+      if (!pedals.has(event.channel)) sounding.delete(key);
+    } else if (event.type === "cc" && (event.controller === 64 || event.controller === 121)) {
+      if (event.controller === 64 && event.value >= 64) pedals.add(event.channel);
+      else {
+        pedals.delete(event.channel);
+        for (const note of sounding)
+          if (note.startsWith(`${event.channel}:`) && !down.has(note)) sounding.delete(note);
+      }
+    }
+  });
+  return { send, sounding };
+}
+
+for (const lifecycle of ["disconnect", "pagehide", "HMR", "retired input"] as const) {
+  test(`generated bridge ${lifecycle} releases its sustain after the key was already released`, async () => {
+    const page = createPage(await pageBridge());
+    const synth = sustainConsumer();
+    page.handles[0]!.node.midi.in = { send: synth.send };
+    await flush();
+    await page.timers.get(150)!();
+    await flush();
+    const id = pageId(page);
+    page.inject([
+      injectCommand(id, 1),
+      { ...injectCommand(id, 2), event: { type: "cc", channel: 0, controller: 64, value: 64 } },
+      { ...injectCommand(id, 3), event: { ...note, type: "noteOff", velocity: 0 } },
+    ]);
+    expect([...synth.sounding]).toEqual(["0:60"]);
+    if (lifecycle === "disconnect") page.events.get("connection:status")!("disconnected");
+    else if (lifecycle === "pagehide") page.windowEvents.get("pagehide")!();
+    else if (lifecycle === "HMR") page.dispose();
+    else {
+      page.handles.splice(0);
+      await page.timers.get(150)!();
+    }
+    expect([...synth.sounding]).toEqual([]);
+    expect(synth.send).toHaveBeenLastCalledWith({
+      type: "cc",
+      channel: 0,
+      controller: 64,
+      value: 0,
+    });
+  });
+}
+
+test("sustain cleanup respects thresholds, repeated changes, failed sends and exact port/channel ownership", async () => {
+  const page = createPage(await pageBridge());
+  const first = sustainConsumer();
+  const second = sustainConsumer();
+  page.handles[0]!.node.midi.in = { send: first.send };
+  Object.assign(page.handles[0]!.node.midi, { second: { send: second.send } });
+  page.handles[0]!.midiPorts.push({ name: "second", direction: "in" });
+  await flush();
+  await page.timers.get(150)!();
+  await flush();
+  let seq = 0;
+  const send = (event: object, port = "in") =>
+    page.inject([{ ...injectCommand(pageId(page), ++seq), port, event }]);
+  const pedal = (channel: number, value: number) => ({
+    type: "cc",
+    channel,
+    controller: 64,
+    value,
+  });
+  send(note);
+  send(pedal(0, 64));
+  send(pedal(0, 127));
+  send({ ...note, type: "noteOff", velocity: 0 });
+  first.send.mockImplementationOnce(() => {
+    throw new Error("pedal release failed");
+  });
+  send(pedal(0, 0));
+  send(pedal(1, 64));
+  send(pedal(1, 63));
+  send(pedal(2, 127));
+  send({ type: "cc", channel: 2, controller: 121, value: 0 });
+  first.send.mockImplementationOnce(() => {
+    throw new Error("pedal down failed");
+  });
+  send(pedal(3, 127));
+  send({ ...note, channel: 4 }, "second");
+  send(pedal(4, 127), "second");
+  send({ ...note, channel: 4, type: "noteOff", velocity: 0 }, "second");
+  second.send({ ...note, channel: 5 });
+  second.send(pedal(5, 127));
+  second.send({ ...note, channel: 5, type: "noteOff", velocity: 0 });
+  expect([...first.sounding]).toEqual(["0:60"]);
+  expect([...second.sounding]).toEqual(["4:60", "5:60"]);
+  first.send.mockClear();
+  second.send.mockClear();
+  first.send.mockImplementationOnce(() => {
+    throw new Error("cleanup release failed");
+  });
+  page.events.get("connection:status")!("disconnected");
+  expect([...first.sounding]).toEqual(["0:60"]);
+  expect([...second.sounding]).toEqual(["5:60"]);
+  page.events.get("connection:status")!("disconnected");
+  expect([...first.sounding]).toEqual([]);
+  expect(first.send.mock.calls).toEqual([[pedal(0, 0)], [pedal(0, 0)]]);
+  expect(second.send.mock.calls).toEqual([[pedal(4, 0)]]);
+});
+
+test("session cleanup silences a sustain-aware processor's rendered PCM after noteOff", async () => {
+  const processor = defineProcessor(() => {
+    const keys = event.midi({ from: "main", name: "keys" });
+    const out = audioOutput({ channels: 1, name: "audio" });
+    const pedal = state.bool(false);
+    const keyDown = state.bool(false);
+    const sounding = state.bool(false);
+    return {
+      process: () => {
+        keys.onEvent("noteOn", () => {
+          keyDown.write(true);
+          sounding.write(true);
+        });
+        keys.onEvent("noteOff", () => {
+          keyDown.write(false);
+          sounding.write(pedal.read());
+        });
+        keys.onEvent("cc", ({ controller, value }) => {
+          pedal.write(select(controller.eq(64), value.gte(64), pedal.read()));
+          sounding.write(
+            select(
+              controller.eq(64).and(value.lt(64)).and(keyDown.read().not()),
+              false,
+              sounding.read(),
+            ),
+          );
+        });
+        forSample((i) =>
+          out
+            .ch(0)
+            .at(i)
+            .write(select(sounding.read(), 0.125, 0)),
+        );
+      },
+    };
+  });
+  const page = createPage(await pageBridge());
+  await flush();
+  await page.timers.get(150)!();
+  await flush();
+  const id = pageId(page);
+  page.inject([
+    injectCommand(id, 1),
+    { ...injectCommand(id, 2), event: { type: "cc", channel: 0, controller: 64, value: 127 } },
+    { ...injectCommand(id, 3), event: { ...note, type: "noteOff", velocity: 0 } },
+  ]);
+  const render = async () =>
+    (
+      await renderOffline(processor, {
+        sampleRate: 48000,
+        duration: 128 / 48000,
+        events: page.send.mock.calls.map(([payload]) => ({ name: "keys", atSample: 0, payload })),
+      })
+    ).outputs.audio![0]!;
+  expect([...new Set(await render())]).toEqual([0.125]);
+  page.events.get("connection:status")!("disconnected");
+  expect([...new Set(await render())]).toEqual([0]);
 });

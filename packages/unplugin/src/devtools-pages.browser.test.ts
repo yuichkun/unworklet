@@ -34,18 +34,27 @@ async function availablePort(): Promise<number> {
 }
 
 const source = (id: string) => `
-import { audioOutput, defineProcessor, event, forSample } from "@unworklet/core";
+import { audioOutput, defineProcessor, event, forSample, select, state } from "@unworklet/core";
 export const thru = defineProcessor(() => {
   const keys = event.midi({ from: "main", name: "in" });
   const sent = event.midi({ to: "main", name: "out" });
   const out = audioOutput({ channels: 1, name: "audio" });
+  const pedal = state.bool(false);
+  const keyDown = state.bool(false);
+  const sounding = state.bool(false);
   return { process: () => {
-    forSample(i => out.ch(0).at(i).write(0));
+    forSample(i => out.ch(0).at(i).write(select(sounding.read(), 0.125, 0)));
     keys.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {
+      keyDown.write(true); sounding.write(true);
       sent.emitIf(true, { type: "noteOn", channel, note, velocity, atSample });
     });
     keys.onEvent("noteOff", ({ channel, note, velocity, atSample }) => {
+      keyDown.write(false); sounding.write(pedal.read());
       sent.emitIf(true, { type: "noteOff", channel, note, velocity, atSample });
+    });
+    keys.onEvent("cc", ({ controller, value }) => {
+      pedal.write(select(controller.eq(64), value.gte(64), pedal.read()));
+      sounding.write(select(controller.eq(64).and(value.lt(64)).and(keyDown.read().not()), false, sounding.read()));
     });
   } };
 }, { id: ${JSON.stringify(id)} });
@@ -58,6 +67,13 @@ globalThis.captureConnection = () => getDevToolsClientContext().rpc.call("anonym
 import processor from "./thru.processor.mjs?worklet";
 const context = new AudioContext({ sampleRate: 48000 });
 await context.resume();
+const analyser = context.createAnalyser();
+analyser.fftSize = 256;
+globalThis.audioLevel = () => {
+  const samples = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(samples);
+  return Math.max(...samples.map(Math.abs));
+};
 let node;
 globalThis.received = [];
 globalThis.released = [];
@@ -66,6 +82,7 @@ const start = async (processor) => {
   node?.dispose();
   node = await createNode(context, processor);
   node.outputs.audio.connect(context.destination);
+  node.outputs.audio.connect(analyser);
   node.midi.out.onEvent("noteOn", e => globalThis.received.push(e.note));
   node.midi.out.onEvent("noteOff", e => globalThis.released.push(e.note));
   globalThis.generation++;
@@ -239,12 +256,18 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await selector.selectOption(reloadedId);
     await panel.locator(".fade-leave-active").waitFor({ state: "detached" });
     await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
+    await panel.locator(".ctrl-row-aux input").first().fill("64");
+    const sustain = panel.locator(".range-slider").nth(1);
+    const sustainBounds = await sustain.boundingBox();
+    if (!sustainBounds) throw new Error("CC slider is not visible");
+    await sustain.click({ position: { x: sustainBounds.width - 1, y: sustainBounds.height / 2 } });
     await playKey(4);
     await b.waitForFunction("globalThis.received.length === 1");
     expect(await b.evaluate("globalThis.received")).toEqual([67]);
     const queue = await ctx.rpc.sharedState.get<PageMidiInject>("unworklet:page-midi-inject");
     expect(queue.value().commands.every((c) => c.pageId === reloadedId)).toBe(true);
     await b.waitForFunction("globalThis.released.includes(67)");
+    await b.waitForFunction("globalThis.audioLevel() > 0.1");
     await b.evaluate("globalThis.captureConnection()");
     const held = await panel.locator(".key-white").nth(5).boundingBox();
     if (!held) throw new Error("Piano key is not visible");
@@ -256,6 +279,7 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 3");
     disconnectPage();
     await b.waitForFunction("globalThis.released.filter(note => note === 69).length === 3");
+    await b.waitForFunction("globalThis.audioLevel() < 0.001");
     await b.waitForFunction("globalThis.devtoolsStatus() === 'disconnected'");
     await expect.poll(() => pages.value().pages.length, { timeout: 5000 }).toBe(0);
     expect(await selector.inputValue()).toBe(reloadedId);
