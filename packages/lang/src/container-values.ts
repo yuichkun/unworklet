@@ -32,7 +32,7 @@ export function isConstDeclaration(node: ts.Node): node is ts.VariableDeclaratio
   );
 }
 
-function literalKey(node: ts.Node): string | undefined {
+export function literalKey(node: ts.Node): string | undefined {
   node = unwrapValue(node);
   if (ts.isStringLiteralLike(node)) return node.text;
   if (ts.isNumericLiteral(node)) return String(Number(node.text));
@@ -89,6 +89,8 @@ function isWrite(node: ts.Node): boolean {
     wrappedValue(parent) === node ||
     ts.isArrayLiteralExpression(parent) ||
     ts.isObjectLiteralExpression(parent) ||
+    ts.isSpreadElement(parent) ||
+    ts.isSpreadAssignment(parent) ||
     ts.isPropertyAssignment(parent) ||
     (ts.isPropertyAccessExpression(parent) && parent.expression === node) ||
     (ts.isElementAccessExpression(parent) && parent.expression === node)

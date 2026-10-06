@@ -13,9 +13,55 @@
  * (a visitor receives original, never factory, nodes).
  */
 
+import type { Node as DspNode, ScalarType } from "@unworklet/core";
 import ts from "typescript";
 
-import { containerValueOrigin, isConstDeclaration, unwrapValue } from "./container-values.ts";
+import {
+  containerValueOrigin,
+  isConstDeclaration,
+  literalKey,
+  unwrapValue,
+} from "./container-values.ts";
+
+type DspValue = DspNode<ScalarType | "f32x4">;
+type NodeValueMethod = {
+  [Key in Extract<keyof DspValue, string>]: DspValue[Key] extends (...args: never[]) => DspValue
+    ? Key
+    : never;
+}[Extract<keyof DspValue, string>];
+
+const intrinsicNodeMethods = {
+  add: true,
+  sub: true,
+  mul: true,
+  div: true,
+  mod: true,
+  neg: true,
+  eq: true,
+  lt: true,
+  gt: true,
+  lte: true,
+  gte: true,
+  not: true,
+  and: true,
+  or: true,
+  sin: true,
+  cos: true,
+  tan: true,
+  tanh: true,
+  exp: true,
+  log: true,
+  pow: true,
+  sqrt: true,
+  floor: true,
+  ceil: true,
+  frac: true,
+  abs: true,
+  min: true,
+  max: true,
+  clamp: true,
+  lane: true,
+} satisfies Record<Exclude<NodeValueMethod, "pipe">, true>;
 
 export function typeString(checker: ts.TypeChecker, node: ts.Node): string {
   return checker.typeToString(checker.getTypeAtLocation(node));
@@ -149,6 +195,17 @@ function isLoweredNodeValue(checker: ts.TypeChecker, node: ts.Node): boolean {
   if (recursiveQuery(node)) return false;
   inFlight.add(node);
   try {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapValue(node.expression);
+      if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
+        const method = ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : literalKey(callee.argumentExpression);
+        if (method !== undefined && Object.hasOwn(intrinsicNodeMethods, method)) {
+          return isLoweredNodeValue(checker, callee.expression);
+        }
+      }
+    }
     if (ts.isIdentifier(node)) {
       const declaration = ts.isShorthandPropertyAssignment(node.parent)
         ? checker.getShorthandAssignmentValueSymbol(node.parent)?.valueDeclaration

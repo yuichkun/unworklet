@@ -138,7 +138,7 @@ expecting a conditional to skip it.
 
 ### Local container values
 
-DSP operator results and indexed DSP reads can be stored in local `const`
+DSP operator results, intrinsic Node method results, and indexed DSP reads can be stored in local `const`
 array/object literals and read with literal keys (`values[0]`, `values.left`),
 or bound through `const` destructuring of a literal. Nested literal paths and
 numeric sibling fields keep their DSP and build-time meanings respectively.
@@ -148,7 +148,7 @@ String keys also accept template literals without substitutions, such as
 ``values[`left`]``. Templates with substitutions remain dynamic keys.
 
 This inference requires direct, read-only references to the container. It does
-not infer through aliases, value exports, mutation, escapes, dynamic keys, or ambiguous helper
+not infer through aliases, value exports, mutation, escapes, dynamic keys, or ambiguous helper or callback
 return values. Erased type references such as `type Snapshot = typeof values`
 do not expose or mutate the container. Explicit core operations such as `mul(x, 2)` preserve the `Node`
 type of stored DSP values for ordinary TypeScript inference.

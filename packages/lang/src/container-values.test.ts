@@ -132,6 +132,42 @@ const mutable = [
     "let value = f32(0.5) * 2; value = 3; const values = { value };",
     "values.value",
   ],
+  ["array rest target", "const values={left:f32(0.5)*2}; [...values.left]=[3];", "values.left"],
+  [
+    "nested array rest target",
+    "const values={left:f32(0.5)*2}; [...[values.left]]=[3];",
+    "values.left",
+  ],
+  [
+    "wrapped array rest target",
+    "const values={left:f32(0.5)*2}; [...(values.left)]=[3];",
+    "values.left",
+  ],
+  [
+    "asserted array rest target",
+    "const values={left:f32(0.5)*2}; [...(values.left as number[])]=[3];",
+    "values.left",
+  ],
+  [
+    "object rest target",
+    "const values={left:f32(0.5)*2}; ({...values.left}={valueOf(){return 3;}});",
+    "values.left",
+  ],
+  [
+    "wrapped object rest target",
+    "const values={left:f32(0.5)*2}; ({...(values.left)}={valueOf(){return 3;}});",
+    "values.left",
+  ],
+  [
+    "array rest iteration target",
+    "const values={left:f32(0.5)*2}; for([...values.left] of [[3]]){}",
+    "values.left",
+  ],
+  [
+    "object rest iteration target",
+    "const values={left:f32(0.5)*2}; for({...values.left} of [{valueOf(){return 3;}}]){}",
+    "values.left",
+  ],
 ] as const;
 
 test.each(mutable)("preserves build-time arithmetic after %s", async (_, declarations, value) => {
@@ -862,6 +898,123 @@ test("an indexed output read is not a proven emitted Node", () => {
   const statement = sourceFile.statements.at(-1)! as ts.VariableStatement;
   expect(classify(checker, statement.declarationList.declarations[0]!.initializer!)).toBe("other");
 });
+
+test.each([
+  ["input", "", "input.ch(0)[i].add(1)", "values.left*2", 4],
+  ["buffer", "storage[0]=f32(1);", "storage[0].add(1)", "values.left*2", 4],
+  ["parameter", "", "gain[i].add(1)", "values.left*2", 4],
+  ["sugar", "", "(f32(0.5)*2).add(1)", "values.left*2", 4],
+  ["const alias", "const raw=f32(0.5)*2;", "raw.add(1)", "values.left*2", 4],
+  ["chain", "", "input.ch(0)[i].abs().add(1).floor()", "values.left*2", 4],
+  ["computed method", "", 'input.ch(0)[i]["add"](1)', "values.left*2", 4],
+  ["template method", "", "input.ch(0)[i][`add`](1)", "values.left*2", 4],
+  ["wrapped callee", "", "(input.ch(0)[i].add)(1)", "values.left*2", 4],
+  ["boolean result", "", "input.ch(0)[i].gt(2)", "values.left?2:1", 1],
+  ["i32 result", "", "(i32(7)/2).div(2)", "f32(values.left*2)", 2],
+] as const)(
+  "preserves an intrinsic DSP method result in a container: %s",
+  async (_, prelude, value, output, expected) => {
+    const actual = await renderLowered(
+      processor(
+        `${prelude}const values={left:${value}};out.ch(0)[i]=${output};`,
+        `
+      const input=audioInput({channels:1,name:"main"});
+      const storage=state.buffer.f32({size:1}).named("storage");
+      const gain=param.f32({default:1,min:0,max:2,automationRate:"a-rate"}).named("gain");
+    `,
+      ),
+      { ...config, inputs: { main: [new Float32Array(128).fill(1)] } },
+    );
+    expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(expected));
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
+
+test("intrinsic method provenance matches the public Node return signatures", () => {
+  const publicProgram = buildProgram(
+    'declare const value:Node<"f32"|"f64"|"i32"|"i64"|"bool"|"f32x4">;',
+  );
+  const statement = publicProgram.sourceFile.statements[0]! as ts.VariableStatement;
+  const declaration = statement.declarationList.declarations[0]!;
+  const nodeType = publicProgram.checker.getTypeAtLocation(declaration.name);
+  const methods = publicProgram.checker.getPropertiesOfType(nodeType).flatMap((property) => {
+    const type = publicProgram.checker.getTypeOfSymbolAtLocation(property, declaration.name);
+    const signatures = publicProgram.checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    if (signatures.length === 0) return [];
+    const expected =
+      property.name !== "pipe" &&
+      signatures.every((signature) => {
+        const result = publicProgram.checker.getReturnTypeOfSignature(signature);
+        return (
+          (result.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) === 0 &&
+          publicProgram.checker.isTypeAssignableTo(result, nodeType)
+        );
+      });
+    return [{ name: property.name, expected }];
+  });
+  expect(methods.map((method) => method.name)).toEqual(
+    expect.arrayContaining(["add", "pipe", "lane"]),
+  );
+  const program = buildProgram(
+    "const seed=f32(1)*2;" +
+      methods
+        .map(
+          (method, index) =>
+            `const values${index}={left:seed[${JSON.stringify(method.name)}]()};const result${index}=values${index}.left;`,
+        )
+        .join(""),
+  );
+  methods.forEach((method, index) => {
+    const statement = program.sourceFile.statements[2 + index * 2]! as ts.VariableStatement;
+    expect(
+      classify(program.checker, statement.declarationList.declarations[0]!.initializer!),
+      method.name,
+    ).toBe(method.expected ? "node" : "other");
+  });
+});
+
+test.each([
+  ["pipe callback", "", "input.ch(0)[i].pipe(()=>3)", "values.left*2", 6],
+  ["Object method", "", 'input.ch(0)[i].hasOwnProperty("missing")', "values.left?2:1", 1],
+  ["numeric method", "", "(3).toFixed(0)", "values.left*2", 6],
+  ["ordinary method", "const source={add(){return 3;}};", "source.add()", "values.left*2", 6],
+  [
+    "mixed indexed receiver",
+    "const source=[input.ch(0)[i],{add(){return 3;}}];const index=Math.floor(1);",
+    "source[index].add(1)",
+    "values.left*2",
+    6,
+  ],
+  ["output read", "", "out.ch(0)[i]?.add(1)", "(values.left??3)*2", 6],
+  ["method value", "", "input.ch(0)[i].add", "values.left?3:1", 3],
+  ["wrapped method value", "", "(input.ch(0)[i].add)", "values.left?3:1", 3],
+  ["dynamic method", "const method='pipe';", "input.ch(0)[i][method](()=>3)", "values.left*2", 6],
+] as const)(
+  "preserves a build-time method result in a container: %s",
+  async (_, prelude, value, output, expected) => {
+    const actual = await renderLowered(
+      processor(
+        `${prelude}const values={left:${value}};out.ch(0)[i]=Math.max(0,${output});`,
+        'const input=audioInput({channels:1,name:"main"});',
+      ),
+      { ...config, inputs: { main: [new Float32Array(128).fill(1)] } },
+    );
+    expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(expected));
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
+
+test.each(["const copy={...values.left};", "let copy;copy={...values.left};"])(
+  "keeps a spread source distinct from a write target: %s",
+  async (copy) => {
+    const actual = await renderLowered(
+      processor(`const values={left:f32(0.5)*2};${copy}out.ch(0)[i]=values.left*2;`),
+      config,
+    );
+    expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(2));
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
 
 test.each([
   ["direct write", "values[-1]=3;"],
