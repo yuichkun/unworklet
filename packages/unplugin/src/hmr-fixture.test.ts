@@ -146,13 +146,15 @@ test("waits for crawl and scan completion before reading dependencies from every
       const crawl = deferred();
       const scan = deferred();
       const processing = deferred();
+      const discoveredRead = deferred();
       let completed = false;
       void processing.promise.then(() => {
         completed = true;
       });
-      const discovered = vi.fn(() =>
-        completed ? {} : { dependency: { processing: processing.promise } },
-      );
+      const discovered = vi.fn(() => {
+        discoveredRead.resolve();
+        return completed ? {} : { dependency: { processing: processing.promise } };
+      });
       const environment = {
         waitForRequestsIdle: vi.fn(() => crawl.promise),
         depsOptimizer: {
@@ -164,7 +166,7 @@ test("waits for crawl and scan completion before reading dependencies from every
           },
         },
       } as unknown as DevEnvironment;
-      return [name, { crawl, scan, processing, discovered, environment }];
+      return [name, { crawl, scan, processing, discoveredRead, discovered, environment }];
     }),
   );
   const close = vi.fn(async () => {});
@@ -183,7 +185,7 @@ test("waits for crawl and scan completion before reading dependencies from every
     expect(fixture.discovered).not.toHaveBeenCalled();
     fixture.scan.resolve();
   }
-  await Promise.resolve();
+  await Promise.all(Object.values(environments).map((fixture) => fixture.discoveredRead.promise));
   for (const fixture of Object.values(environments))
     expect(fixture.discovered).toHaveBeenCalledOnce();
   expect(close).not.toHaveBeenCalled();
@@ -266,7 +268,7 @@ test("finishes every environment drain before reporting a failed barrier", async
         waitForRequestsIdle: async () => {
           throw failure;
         },
-        depsOptimizer: {},
+        depsOptimizer: { metadata: { discovered: {} } },
       } as unknown as DevEnvironment,
       ssr: {
         waitForRequestsIdle: async () => {},
@@ -309,7 +311,7 @@ test("reports both a barrier failure and a server shutdown failure", async () =>
           waitForRequestsIdle: async () => {
             throw barrierFailure;
           },
-          depsOptimizer: {},
+          depsOptimizer: { metadata: { discovered: {} } },
         } as unknown as DevEnvironment,
       },
     }),
@@ -383,4 +385,160 @@ test("does not drain settled processing promises again when metadata retains the
   });
   expect(close).toHaveBeenCalledOnce();
   expect(reads).toBe(2);
+});
+
+test.each(["crawl", "scan"])(
+  "keeps draining the scan and discovered writes after a %s rejection",
+  async (stage) => {
+    const failure = new Error(`${stage} failed`);
+    const scan = deferred();
+    const processing = deferred();
+    const discoveredRead = deferred();
+    const close = vi.fn(async () => {});
+    const closing = closeHmrServer({
+      close,
+      environments: {
+        client: {
+          waitForRequestsIdle: async () => {
+            if (stage === "crawl") throw failure;
+          },
+          depsOptimizer: {
+            scanProcessing: scan.promise,
+            metadata: {
+              get discovered() {
+                discoveredRead.resolve();
+                return { dependency: { processing: processing.promise } };
+              },
+            },
+          },
+        } as unknown as DevEnvironment,
+      },
+    });
+    const result = closing.catch((error: unknown) => error);
+    try {
+      if (stage === "crawl") {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(close).not.toHaveBeenCalled();
+        scan.resolve();
+      } else {
+        scan.reject(failure);
+      }
+      await Promise.race([
+        discoveredRead.promise,
+        result.then(() => {
+          throw new Error("server closed before reading the pending dependency write");
+        }),
+      ]);
+      expect(close).not.toHaveBeenCalled();
+      processing.resolve();
+      expect(await result).toBe(failure);
+      expect(close).toHaveBeenCalledOnce();
+    } finally {
+      scan.resolve();
+      processing.resolve();
+      await result;
+    }
+  },
+);
+
+test("preserves crawl, scan, write, and shutdown failures together", async () => {
+  const crawlFailure = new Error("crawl failed");
+  const scanFailure = new Error("scan failed");
+  const writeFailure = new Error("write failed");
+  const closeFailure = new Error("shutdown failed");
+  const processing = deferred();
+  const discoveredRead = deferred();
+  const closing = closeHmrServer({
+    close: async () => {
+      throw closeFailure;
+    },
+    environments: {
+      client: {
+        waitForRequestsIdle: async () => {
+          throw crawlFailure;
+        },
+        depsOptimizer: {
+          get scanProcessing() {
+            return Promise.reject(scanFailure);
+          },
+          metadata: {
+            get discovered() {
+              discoveredRead.resolve();
+              return { dependency: { processing: processing.promise } };
+            },
+          },
+        },
+      } as unknown as DevEnvironment,
+    },
+  });
+  const result = closing.catch((error: unknown) => error);
+  try {
+    await Promise.race([
+      discoveredRead.promise,
+      result.then(() => {
+        throw new Error("server closed before draining after both barrier failures");
+      }),
+    ]);
+    processing.reject(writeFailure);
+    expect(await result).toMatchObject({
+      errors: [crawlFailure, scanFailure, writeFailure, closeFailure],
+    });
+  } finally {
+    processing.resolve();
+    await result;
+  }
+});
+
+test("observes a scan rejection while crawl is pending and reports failures in lifecycle order", async () => {
+  const crawlFailure = new Error("crawl failed");
+  const scanFailure = new Error("scan failed first");
+  const crawl = deferred();
+  const scan = deferred();
+  const scanThen = vi.spyOn(scan.promise, "then");
+  const close = vi.fn(async () => {});
+  const closing = closeHmrServer({
+    close,
+    environments: {
+      client: {
+        waitForRequestsIdle: () => crawl.promise,
+        depsOptimizer: { scanProcessing: scan.promise, metadata: { discovered: {} } },
+      } as unknown as DevEnvironment,
+    },
+  });
+  const result = closing.catch((error: unknown) => error);
+  try {
+    expect(scanThen).toHaveBeenCalledWith(expect.any(Function), expect.any(Function));
+    scan.reject(scanFailure);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(close).not.toHaveBeenCalled();
+    crawl.reject(crawlFailure);
+    expect(await result).toMatchObject({ errors: [crawlFailure, scanFailure] });
+    expect(close).toHaveBeenCalledOnce();
+  } finally {
+    crawl.resolve();
+    scan.resolve();
+    await result;
+  }
+});
+
+test("preserves an optimizer inspection failure while still closing the server", async () => {
+  const failure = new Error("optimizer inspection failed");
+  const close = vi.fn(async () => {});
+  await expect(
+    closeHmrServer({
+      close,
+      environments: {
+        client: {
+          waitForRequestsIdle: async () => {},
+          depsOptimizer: {
+            get scanProcessing() {
+              throw failure;
+            },
+            metadata: { discovered: {} },
+          },
+        } as unknown as DevEnvironment,
+      },
+    }),
+  ).rejects.toBe(failure);
+  expect(close).toHaveBeenCalledOnce();
 });
