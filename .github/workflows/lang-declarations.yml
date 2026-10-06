@@ -2,6 +2,7 @@ name: Lang declaration compatibility
 
 on:
   push:
+    branches-ignore: ["validate/issue145-gate-20261006"]
   pull_request:
   workflow_dispatch:
 
