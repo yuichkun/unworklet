@@ -235,6 +235,9 @@ plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
 - A `Node<'bool'>` `if` outside the 3 shapes → `uwk-unsupported-if`; use `select`.
 - `migrations()` / `options()` are processor-only and cannot reference a
   process-body binding → `uwk-options-binding` / `uwk-options-without-process`.
+  Static property names (such as `options({ id: "osc" })`), imported values, and
+  bindings local to an inline callback are allowed. Shorthand values, computed
+  keys, and callback closures must not capture a processor-body binding.
 - `options({ id: "my-synth" })` sets the processor's stable IDENTITY (also
   `defineProcessor(body, { id })` in `.processor.ts`). It is stamped into every
   snapshot blob: `schemaHash` covers declarations only, so two different
