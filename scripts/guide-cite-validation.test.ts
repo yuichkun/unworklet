@@ -226,3 +226,34 @@ test("a full source path in a link still checks numeric fragments", () => {
     ).join("\n"),
   ).toContain("numeric source location");
 });
+
+test.each([
+  `[source](${file}) at line 12`,
+  `[source](${file}) lines 12-34`,
+  `[source](${file}) (\`L12-L34\`)`,
+  `[source](<${file}>) at line 12`,
+  `[source](${file} "compiler source") at lines \`12-34\``,
+  `**[source](${file})** at line 12`,
+  `[source](${file}) at **lines 12-34**`,
+  `Line 12 in [source](${file}) explains the setting.`,
+  `[source][compiler] at line 12\n\n[compiler]: ${file}`,
+  `[source] at lines 12-34\n\n[source]: ${file}`,
+])("numeric locations remain bound to parsed source links: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+});
+
+test.each([
+  `[source](${file}) processes 12 lines per block.`,
+  `[source](${file}) uses \`L1\` and \`L2\` cache.`,
+  `[source](${file}) emits the consumer diagnostic \`check.uwk.ts:12\`.`,
+  "[consumer](src/check.uwk.ts) at line 12",
+  "[consumer][check] at line 12\n\n[check]: src/check.uwk.ts",
+  `\`\`\`text\n[source](${file}) at line 12\n\`\`\``,
+])(
+  "link context preserves consumer prose, counts, identifiers, and fenced examples: %s",
+  (markdown) => {
+    expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+  },
+);

@@ -1,4 +1,4 @@
-import { marked } from "marked";
+import { marked, type Token } from "marked";
 
 export function validateGuideCitations(
   markdown: string,
@@ -79,6 +79,14 @@ export function validateGuideCitations(
       }
     }
   };
+  const linkDestinations = (tokens: Token[]): string =>
+    tokens
+      .map((token) => {
+        if (token.type === "link") return token.href;
+        if ("tokens" in token && token.tokens) return linkDestinations(token.tokens);
+        return token.raw;
+      })
+      .join("");
   void marked.walkTokens(marked.lexer(locations), (token) => {
     // Inline code is how the guide spells paths, but fenced examples/output
     // are not source-reference prose. Links carry evidence in their destination.
@@ -87,6 +95,7 @@ export function validateGuideCitations(
       "text" in token
     ) {
       inspectProse(token.text);
+      if ("tokens" in token && token.tokens) inspectProse(linkDestinations(token.tokens));
     }
     if (token.type === "link") inspectProse(token.href);
   });
