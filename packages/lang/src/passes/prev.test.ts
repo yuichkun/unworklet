@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 
-import { expectSameLowering, renderLowered } from "../goldenHarness.ts";
+import { expectSameLoweredText, lower, renderLoweredText } from "../goldenHarness.ts";
 
 const SR = 48000;
 const mono = (declarations: string, value: string): string => `
@@ -39,9 +39,17 @@ const sg = defineSubgraph(() => ({
 const s = instantiate(sg);`,
     "s.run(i == 0)",
   );
-  const actual = await renderLowered(source, { sampleRate: SR, duration: 128 / SR });
-  await expectSameLowering(source, decayExplicit);
-  const explicit = await renderLowered(decayExplicit, { sampleRate: SR, duration: 128 / SR });
+  const lowered = lower(source);
+  const loweredExplicit = lower(decayExplicit);
+  const actual = await renderLoweredText(lowered, {
+    sampleRate: SR,
+    duration: 128 / SR,
+  });
+  await expectSameLoweredText(lowered, loweredExplicit);
+  const explicit = await renderLoweredText(loweredExplicit, {
+    sampleRate: SR,
+    duration: 128 / SR,
+  });
   expect(actual.outputs.main[0]).toEqual(explicit.outputs.main[0]);
   let value = 1;
   for (const sample of actual.outputs.main[0]!) {
@@ -72,7 +80,12 @@ test.each([
   `const sg = defineSubgraph(() => { const __prev_0 = f32(1); return { run: () => __prev_0 + $prev }; });`,
 ])("$prev generated bindings preserve authored identifiers: %s", async (declaration) => {
   const source = mono(`${declaration}\nconst s = instantiate(sg);`, "s.run(f32(1))");
-  await expectSameLowering(source, accumulatorExplicit);
-  const result = await renderLowered(source, { sampleRate: SR, duration: 128 / SR });
+  const lowered = lower(source);
+  const loweredExplicit = lower(accumulatorExplicit);
+  await expectSameLoweredText(lowered, loweredExplicit);
+  const result = await renderLoweredText(lowered, {
+    sampleRate: SR,
+    duration: 128 / SR,
+  });
   expect([...result.outputs.main[0]!]).toEqual(Array.from({ length: 128 }, (_, i) => i + 1));
 });
