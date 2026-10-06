@@ -16,7 +16,7 @@ import type {
   PageMidiInject,
   PageMidiInjectCommand,
 } from "./devtools-pages.ts";
-import unworklet, { type DevMidiEvent, type DevMidiState } from "./index.ts";
+import unworklet, { type DevMidiEvent, type DevMidiInject, type DevMidiState } from "./index.ts";
 
 const repo = path.resolve(import.meta.dirname, "../../..");
 const demoRequire = createRequire(path.join(repo, "examples/demo/package.json"));
@@ -54,10 +54,11 @@ export const thru = defineProcessor(() => {
       keyDown.write(false); sounding.write(held());
       sent.emitIf(true, { type: "noteOff", channel, note, velocity, atSample });
     });
-    keys.onEvent("cc", ({ controller, value }) => {
+    keys.onEvent("cc", ({ channel, controller, value, atSample }) => {
       for (const [i, number] of controllers.entries())
         pedals[i].write(select(controller.eq(number), value.gte(64), pedals[i].read()));
       sounding.write(select(held().not().and(keyDown.read().not()), false, sounding.read()));
+      sent.emitIf(true, { type: "cc", channel, controller, value, atSample });
     });
   } };
 }, { id: ${JSON.stringify(id)} });
@@ -80,6 +81,7 @@ globalThis.audioLevel = () => {
 let node;
 globalThis.received = [];
 globalThis.released = [];
+globalThis.controllers = [];
 globalThis.generation = 0;
 const start = async (processor) => {
   node?.dispose();
@@ -88,6 +90,9 @@ const start = async (processor) => {
   node.outputs.audio.connect(analyser);
   node.midi.out.onEvent("noteOn", e => globalThis.received.push(e.note));
   node.midi.out.onEvent("noteOff", e => globalThis.released.push(e.note));
+  node.midi.out.onEvent("cc", e => {
+    if (e.controller === 11) globalThis.controllers.push(e.value);
+  });
   globalThis.generation++;
 };
 if (import.meta.hot) import.meta.hot.accept("./thru.processor.mjs?worklet", updated => start(updated.default));
@@ -215,6 +220,21 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
       });
     const inject = (pageId: string, nodeId: string, note: number) =>
       injectEvent(pageId, nodeId, { type: "noteOn", channel: 0, note, velocity: 100 });
+    await (ctx.rpc.invokeLocal as (name: string, command: unknown) => Promise<void>)(
+      "unworklet:midi-inject",
+      { nodeId: "n0", port: "in", event: { type: "cc", channel: 0, controller: 11, value: 23 } },
+    );
+    await a.waitForFunction("globalThis.controllers.length === 1");
+    await b.waitForFunction("globalThis.controllers.length === 1");
+    expect(await a.evaluate("globalThis.controllers")).toEqual([23]);
+    expect(await b.evaluate("globalThis.controllers")).toEqual([23]);
+    await injectEvent(aId, "n0", { type: "cc", channel: 0, controller: 11, value: 24 });
+    await a.waitForFunction("globalThis.controllers.length === 2");
+    expect(await a.evaluate("globalThis.controllers")).toEqual([23, 24]);
+    expect(await b.evaluate("globalThis.controllers")).toEqual([23]);
+    expect(
+      (await ctx.rpc.sharedState.get<DevMidiInject>("unworklet:midi-inject")).value().commands,
+    ).toHaveLength(1);
     await selector.selectOption(aId);
     await panel.locator(".fade-leave-active").waitFor({ state: "detached" });
     await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");

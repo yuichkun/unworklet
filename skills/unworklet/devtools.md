@@ -134,12 +134,15 @@ Trusted clients inject with `unworklet:page-midi-inject` and
 with their page ID and sequence number. The unscoped `unworklet:midi-inject` RPC
 accepts `{ nodeId, port, event }` and publishes it to the unscoped queue with the
 `DevMidiInjectCommand` shape, even when no application pages are connected. It
-also forwards the request to every matching input on currently connected pages.
-These calls have no selected page and can reach multiple tabs; use the explicit
-page-targeted RPC whenever isolation is required. The built-in panel uses only
-that explicit path, and its bridge never replays the unscoped queue's history
-into fresh page sessions. Custom consumers of the unscoped queue retain its
-unscoped behavior.
+is consumed independently by each bridge, including retained commands when a
+fresh bridge first subscribes. Each bridge advances its unscoped cursor before
+looking up the local node and port, so a command whose local target is missing
+at consumption time is dropped. That cursor persists across reconnects in the
+same bridge instance; a fresh application page starts at zero.
+These calls have no selected page and can reach multiple tabs or fresh pages;
+use the explicit page-targeted RPC whenever isolation is required. The built-in
+panel uses only that explicit path. Scoped commands never enter the unscoped
+queue, and fresh page sessions reject commands targeting an earlier page.
 
 ## The 0.4 pin
 

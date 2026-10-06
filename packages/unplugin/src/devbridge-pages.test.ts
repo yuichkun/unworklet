@@ -25,7 +25,13 @@ function createPage(js: string, failOpen = false, rejectOpen = false, transport?
   const timers = new Map<number, () => unknown>();
   const calls: Array<{ name: string; arg: any }> = [];
   const sharedKeys: string[] = [];
-  let listener: ((value: unknown) => void) | undefined;
+  const listeners = new Map<string, (value: unknown) => void>();
+  const queues = new Map<string, { commands: unknown[] }>();
+  const injectQueue = (key: string, commands: unknown[]) => {
+    const value = structuredClone({ commands });
+    queues.set(key, value);
+    listeners.get(key)?.(value);
+  };
   const send = vi.fn();
   const events = new Map<string, (...args: any[]) => void>();
   const windowEvents = new Map<string, () => void>();
@@ -91,12 +97,10 @@ function createPage(js: string, failOpen = false, rejectOpen = false, transport?
               };
             }
             return {
-              value: () => ({ commands: [] }),
-              on: (_: string, cb: typeof listener) => {
-                listener = cb;
-                return () => {
-                  listener = undefined;
-                };
+              value: () => structuredClone(queues.get(key) ?? { commands: [] }),
+              on: (_: string, cb: (value: unknown) => void) => {
+                listeners.set(key, cb);
+                return () => listeners.delete(key);
               },
             };
           },
@@ -122,7 +126,8 @@ function createPage(js: string, failOpen = false, rejectOpen = false, transport?
     events,
     windowEvents,
     dispose: () => dispose!(),
-    inject: (commands: unknown[]) => listener?.(structuredClone({ commands })),
+    inject: (commands: unknown[]) => injectQueue("unworklet:page-midi-inject", commands),
+    injectRaw: (commands: unknown[]) => injectQueue("unworklet:midi-inject", commands),
   };
 }
 
@@ -160,7 +165,7 @@ test("generated bridge isolates two pages whose first MIDI nodes are both n0", a
   expect(graphA.pageId).toBeTruthy();
   expect(graphB.pageId).not.toBe(graphA.pageId);
   for (const page of [a, b]) {
-    expect(page.sharedKeys).toEqual(["unworklet:page-midi-inject"]);
+    expect(page.sharedKeys).toEqual(["unworklet:page-midi-inject", "unworklet:midi-inject"]);
     await page.timers.get(200)!();
     await page.timers.get(33)!();
     const id = page === a ? graphA.pageId : graphB.pageId;
@@ -471,10 +476,12 @@ test("custom unscoped consumers and generated scoped bridges deliver once withou
     },
   } as any);
   const call = (name: string, arg: unknown) => handlers.get(name)!(structuredClone(arg));
+  let publishMidi = false;
   const transport = (owner: typeof a): TestTransport => ({
     states,
     call: (name, arg) => {
       session = owner;
+      if (!publishMidi && name.endsWith("page-midi-update")) return;
       return call(name, arg);
     },
   });
@@ -500,16 +507,20 @@ test("custom unscoped consumers and generated scoped bridges deliver once withou
     await flush();
     for (const page of pages) await page.timers.get(150)!();
     await flush();
-    expect(first.send).not.toHaveBeenCalled();
-    expect(second.send).not.toHaveBeenCalled();
-    call("unworklet:midi-inject", command);
-    expect(customSend).toHaveBeenCalledTimes(2);
     expect(first.send).toHaveBeenCalledTimes(1);
     expect(second.send).toHaveBeenCalledTimes(1);
-    call("unworklet:page-midi-inject", { ...command, pageId: pageId(first) });
+    expect(states.get("unworklet:page-midi")!.value().pages).toEqual({});
+    call("unworklet:midi-inject", command);
     expect(customSend).toHaveBeenCalledTimes(2);
     expect(first.send).toHaveBeenCalledTimes(2);
-    expect(second.send).toHaveBeenCalledTimes(1);
+    expect(second.send).toHaveBeenCalledTimes(2);
+    publishMidi = true;
+    for (const page of pages) await page.timers.get(150)!();
+    await flush();
+    call("unworklet:page-midi-inject", { ...command, pageId: pageId(first) });
+    expect(customSend).toHaveBeenCalledTimes(2);
+    expect(first.send).toHaveBeenCalledTimes(3);
+    expect(second.send).toHaveBeenCalledTimes(2);
     const oldId = pageId(first);
     first.events.get("connection:status")!("disconnected");
     first.events.get("connection:status")!("connected");
@@ -517,13 +528,14 @@ test("custom unscoped consumers and generated scoped bridges deliver once withou
     await first.timers.get(150)!();
     await flush();
     expect(pageId(first)).not.toBe(oldId);
-    expect(first.send.mock.calls.slice(2)).toEqual([
+    expect(first.send.mock.calls.slice(3)).toEqual([
+      [{ ...note, type: "noteOff", velocity: 0 }],
       [{ ...note, type: "noteOff", velocity: 0 }],
       [{ ...note, type: "noteOff", velocity: 0 }],
     ]);
     call("unworklet:page-midi-inject", { ...command, pageId: oldId });
-    expect(first.send).toHaveBeenCalledTimes(4);
-    expect(second.send).toHaveBeenCalledTimes(1);
+    expect(first.send).toHaveBeenCalledTimes(6);
+    expect(second.send).toHaveBeenCalledTimes(2);
     expect(customSend).toHaveBeenCalledTimes(2);
     expect(raw.value().commands).toHaveLength(2);
   } finally {
@@ -531,6 +543,64 @@ test("custom unscoped consumers and generated scoped bridges deliver once withou
     offCustom();
     dispose();
   }
+});
+
+test("raw queue advances past missing local targets and retains its cursor across reconnect", async () => {
+  const page = createPage(await pageBridge());
+  const handles = page.handles.splice(0);
+  const command = { seq: 1, nodeId: "n0", port: "in", event: note };
+  page.injectRaw([command]);
+  await flush();
+  await page.timers.get(150)!();
+  await flush();
+  page.handles.push(...handles);
+  await page.timers.get(150)!();
+  await flush();
+  expect(page.send).not.toHaveBeenCalled();
+  page.injectRaw([command, { ...command, seq: 2 }]);
+  expect(page.send).toHaveBeenCalledTimes(1);
+  const oldId = pageId(page);
+  page.events.get("connection:status")!("disconnected");
+  expect(page.send).toHaveBeenCalledTimes(2);
+  page.injectRaw([command, { ...command, seq: 2 }, { ...command, seq: 3 }]);
+  page.inject([injectCommand(oldId)]);
+  expect(page.send).toHaveBeenCalledTimes(2);
+  page.events.get("connection:status")!("connected");
+  await flush();
+  await page.timers.get(150)!();
+  await flush();
+  expect(page.send).toHaveBeenCalledTimes(3);
+  expect(page.send).toHaveBeenLastCalledWith(note);
+  page.injectRaw([command, { ...command, seq: 2 }, { ...command, seq: 3 }]);
+  expect(page.send).toHaveBeenCalledTimes(3);
+  page.dispose();
+  page.injectRaw([{ ...command, seq: 4 }]);
+  expect(page.send).toHaveBeenCalledTimes(4);
+});
+
+test("a fresh bridge consumes retained raw commands but never another page's scoped commands", async () => {
+  const js = await pageBridge();
+  const first = createPage(js);
+  const second = createPage(js);
+  const command = { seq: 1, nodeId: "n0", port: "in", event: note };
+  await flush();
+  const scoped = injectCommand(pageId(first));
+  for (const page of [first, second]) {
+    page.injectRaw([command]);
+    page.inject([scoped]);
+    await page.timers.get(150)!();
+  }
+  await flush();
+  expect(first.send).toHaveBeenCalledTimes(2);
+  expect(second.send).toHaveBeenCalledTimes(1);
+  const third = createPage(js);
+  third.injectRaw([command]);
+  third.inject([scoped]);
+  await flush();
+  await third.timers.get(150)!();
+  await flush();
+  expect(third.send).toHaveBeenCalledExactlyOnceWith(note);
+  for (const page of [first, second, third]) page.dispose();
 });
 
 function sustainConsumer() {

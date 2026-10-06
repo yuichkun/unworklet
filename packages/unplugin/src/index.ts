@@ -1241,9 +1241,11 @@ const endSession = () => {
   ready = false;
   pageId = "";
   clearTimeout(clientTimer);
-  offInject?.();
-  offInject = undefined;
-  midiInjectSubscribed = false;
+  for (const queue of Object.values(injectQueues)) {
+    queue.off?.();
+    queue.off = undefined;
+    queue.subscribed = false;
+  }
   clearTimeout(stateTimer); stateTimer = null;
   clearTimeout(signalsTimer); signalsTimer = null;
   clearTimeout(midiTimer); midiTimer = null;
@@ -1252,7 +1254,7 @@ const startSession = async () => {
   if (disposed || hidden || !client || pageId) return;
   const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
   pageId = id;
-  lastInjectSeq = 0;
+  injectQueues.scoped.lastSeq = 0;
   lastMidiSig = "";
   midiLog = [];
   try {
@@ -1418,9 +1420,10 @@ let midiLog = [];
 let midiSeq = 0;
 let lastMidiSig = "";
 const midiTapped = new Map();
-let lastInjectSeq = 0;
-let midiInjectSubscribed = false;
-let offInject;
+const injectQueues = {
+  scoped: { key: "unworklet:page-midi-inject", scoped: true, lastSeq: 0, subscribed: false },
+  raw: { key: "unworklet:midi-inject", scoped: false, lastSeq: 0, subscribed: false },
+};
 const injectedNotes = new Map();
 const NOTE_HOLD_CONTROLLERS = new Set([64, 66, 69]);
 const injectedHolds = new Map();
@@ -1506,37 +1509,40 @@ const findHandleById = (id) => {
   return null;
 };
 const ensureMidiInjectSub = () => {
-  if (midiInjectSubscribed || !client || !client.rpc || !client.rpc.sharedState) return;
-  midiInjectSubscribed = true;
-  const expectedPageId = pageId;
-  client.rpc.sharedState.get("unworklet:page-midi-inject").then((shared) => {
-    if (!ready || pageId !== expectedPageId) return;
-    const onInject = (state) => {
+  if (!client || !client.rpc || !client.rpc.sharedState) return;
+  for (const queue of Object.values(injectQueues)) {
+    if (queue.subscribed) continue;
+    queue.subscribed = true;
+    const expectedPageId = pageId;
+    client.rpc.sharedState.get(queue.key).then((shared) => {
       if (!ready || pageId !== expectedPageId) return;
-      const cmds = (state && state.commands) || [];
-      const drained = drainInjects(cmds, lastInjectSeq);
-      lastInjectSeq = drained.lastSeq;
-      for (const c of drained.fresh) {
-        if (c.pageId !== pageId) continue;
-        const h = findHandleById(c.nodeId);
-        if (!h || !(h.midiPorts || []).some((p) => p.name === c.port && p.direction === "in")) continue;
-        const port = (h.node.midi || {})[c.port];
-        if (!port || typeof port.send !== "function") continue;
-        // Panel events arrive RPC-serialized (sysex data = number[]); convert
-        // to the Uint8Array shape send() expects, refusing malformed bytes
-        // rather than letting Uint8Array.from wrap them into a different message.
-        const sendable = toSendableMidiEvent(c.event);
-        if (!sendable) { console.warn("unworklet devtools: dropped malformed MIDI inject", c.event); continue; }
-        try {
-          port.send(sendable);
-          trackInjectedMidi(port, sendable);
-          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: toLoggableMidiEvent(sendable) }, MIDI_LOG_MAX);
-        } catch (err) { /* dev only */ }
-      }
-    };
-    onInject(shared.value());
-    offInject = shared.on("updated", onInject);
-  }).catch(() => { if (pageId === expectedPageId) midiInjectSubscribed = false; });
+      const onInject = (state) => {
+        if (!ready || pageId !== expectedPageId) return;
+        const cmds = (state && state.commands) || [];
+        const drained = drainInjects(cmds, queue.lastSeq);
+        queue.lastSeq = drained.lastSeq;
+        for (const c of drained.fresh) {
+          if (queue.scoped && c.pageId !== pageId) continue;
+          const h = findHandleById(c.nodeId);
+          if (!h || (queue.scoped && !(h.midiPorts || []).some((p) => p.name === c.port && p.direction === "in"))) continue;
+          const port = (h.node.midi || {})[c.port];
+          if (!port || typeof port.send !== "function") continue;
+          // Panel events arrive RPC-serialized (sysex data = number[]); convert
+          // to the Uint8Array shape send() expects, refusing malformed bytes
+          // rather than letting Uint8Array.from wrap them into a different message.
+          const sendable = toSendableMidiEvent(c.event);
+          if (!sendable) { console.warn("unworklet devtools: dropped malformed MIDI inject", c.event); continue; }
+          try {
+            port.send(sendable);
+            trackInjectedMidi(port, sendable);
+            midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: toLoggableMidiEvent(sendable) }, MIDI_LOG_MAX);
+          } catch (err) { /* dev only */ }
+        }
+      };
+      onInject(shared.value());
+      queue.off = shared.on("updated", onInject);
+    }).catch(() => { if (pageId === expectedPageId) queue.subscribed = false; });
+  }
 };
 const pollMidi = () => {
   if (!ready) return;

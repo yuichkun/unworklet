@@ -246,7 +246,7 @@ test("unscoped keys and update RPCs preserve raw latest-snapshot compatibility",
   }
 });
 
-test("unscoped MIDI preserves raw publication and broadcasts only its own calls to live pages", async () => {
+test("unscoped MIDI preserves raw publication without entering the scoped queue", async () => {
   const s = await server();
   const cmd = { nodeId: "n0", port: "in", event: command("a").event };
   try {
@@ -261,19 +261,19 @@ test("unscoped MIDI preserves raw publication and broadcasts only its own calls 
     expect(s.read("midi-inject").commands).toEqual([]);
     await s.call("unworklet:midi-inject", cmd);
     expect(s.raw("midi-inject").commands.at(-1)).toEqual({ ...cmd, seq: 3 });
-    expect(s.read("midi-inject").commands).toEqual([{ ...cmd, seq: 1, pageId: "a" }]);
+    expect(s.read("midi-inject").commands).toEqual([]);
     await s.call("page-open", page("b"), s.b);
     await s.call("page-midi-update", { pageId: "b", data: midi }, s.b);
     expect(s.raw("midi-inject").commands).toHaveLength(3);
     await s.call("unworklet:page-midi-inject", command("a"));
     expect(s.raw("midi-inject").commands).toHaveLength(3);
-    expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["a", "a"]);
+    expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["a"]);
     await s.call("unworklet:midi-inject", cmd);
     expect(s.raw("midi-inject").commands.at(-1)).toEqual({ ...cmd, seq: 4 });
-    expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["a", "a", "a", "b"]);
+    expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["a"]);
     s.peers.delete(s.a.peer);
     await s.call("unworklet:midi-inject", cmd);
-    expect(s.read("midi-inject").commands.at(-1).pageId).toBe("b");
+    expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["a"]);
     for (let i = 0; i < 70; i++) await s.call("unworklet:midi-inject", cmd);
     expect(s.raw("midi-inject").commands).toHaveLength(64);
     await s.call("page-close", { pageId: "b" }, s.b);

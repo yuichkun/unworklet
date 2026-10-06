@@ -215,7 +215,6 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
     rawInject.mutate((draft) => {
       draft.commands = [...draft.commands, { ...command, seq: ++unscopedSeq }].slice(-64);
     });
-    for (const pageId of owners.keys()) enqueue({ ...command, pageId });
   });
   return () => {
     disposed = true;
