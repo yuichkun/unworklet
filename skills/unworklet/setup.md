@@ -23,7 +23,7 @@ npm install -D @unworklet/unplugin @unworklet/lang
 npm install -D @unworklet/offline @unworklet/test
 ```
 
-(`README.md` L33-34)
+[cite: README.md :: `## Quick start`]
 
 | package               | install as      | for                                                                                                                                                                        |
 | --------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -33,13 +33,13 @@ npm install -D @unworklet/offline @unworklet/test
 | `@unworklet/offline`  | `devDependency` | pure-JS offline renderer (Node / Bun / Deno) — headless render of a processor to PCM. See testing.md.                                                                      |
 | `@unworklet/test`     | `devDependency` | Vitest matchers (wraps `@unworklet/offline`) — audio / event / MIDI / state assertions. See testing.md.                                                                    |
 
-(descriptions: `packages/{core,unplugin,lang,offline,test}/package.json`)
+(descriptions: `packages/core/package.json`, `packages/unplugin/package.json`, `packages/lang/package.json`, `packages/offline/package.json`, `packages/test/package.json`)
 
 - **Why install `@unworklet/lang` directly** even though `@unworklet/unplugin`
   already depends on it (`packages/unplugin/package.json` → `dependencies`): build-time
   lowering resolves it transitively, but the editor plugin
   `@unworklet/lang/typescript-plugin` and the `unworklet-tsc` bin
-  (`packages/lang/package.json` L21-23) must resolve from _your_ project.
+  [cite: packages/lang/package.json :: `"unworklet-tsc": "./dist/unworklet-tsc.mjs"`] must resolve from _your_ project.
 - `vite` (`^6 || ^7 || ^8`) and `@unworklet/core` are `@unworklet/unplugin` peer
   deps — your app already brings both. (`packages/unplugin/package.json` →
   `peerDependencies`)
@@ -54,7 +54,7 @@ import unworklet from "@unworklet/unplugin";
 export default { plugins: [unworklet()] };
 ```
 
-(`README.md` L37-42)
+[cite: README.md :: `export default { plugins: [unworklet()] };`]
 
 With the DevTools dock — install the `@vitejs/devtools` host and its 5 kit / adapter packages at `0.4.x` (Vite 8 compatible; the 0.3 line was Vite 6/7 only), and gate the host to `command === "serve" && !process.env.VITEST`:
 
@@ -93,7 +93,7 @@ export default defineConfig(({ command }) => ({
   extending pattern and add `"node"` to `types` so `process.env` type-checks in
   the config file too: `"types": ["@unworklet/unplugin/client", "node"]`.
 
-(Auto-dock hook: `packages/unplugin/src/index.ts:1686-1696`.)
+(Auto-dock hook: [cite: packages/unplugin/src/index.ts :: `devtools: { setup: (ctx) => {`].)
 
 ## 3. TypeScript — extend the generated tsconfig
 
@@ -110,7 +110,7 @@ are typed and `.uwk.ts` sugar type-checks with **no `@ts-nocheck`**:
 
 (The plugin seeds `.unworklet/` synchronously in `configResolved`, and
 `unworklet-tsc` self-seeds it too — see `packages/lang/src/seed-unworklet-dir.ts`
-for the exact `GENERATED_TSCONFIG` and `packages/unplugin/src/index.ts:903` for
+for the exact `GENERATED_TSCONFIG` and [cite: packages/unplugin/src/index.ts :: `seedUnworkletDir(projectRoot);`] for
 where it's called on Vite's side.)
 
 - Add `.unworklet/` to `.gitignore` — it is a generated artifact.
@@ -217,7 +217,7 @@ packages you already rely on (e.g. `"node"`), since `types` disables automatic
 | `.processor.ts` | secondary, explicit alternative — `defineProcessor(() => ({ process }))` with the `@unworklet/core` method API (`.at(i)`, `.mul()`, `.write()`) and explicit imports.                                                                                                                                                              |
 
 Both compile to the same `CompiledProcessor` and both load identically via
-`?worklet`. (`packages/unplugin/src/client-types.test.ts` L136-138) Authoring
+`?worklet`. [cite: packages/unplugin/src/client-types.test.ts :: `has no exported member 'stereoGain'`] Authoring
 detail (sugar, the core method API, subgraphs) → dsl.md §1-4; the `?worklet` import +
 `createNode` → dsl.md §5.
 
@@ -225,7 +225,7 @@ detail (sugar, the core method API, subgraphs) → dsl.md §1-4; the `?worklet` 
 
 A `?worklet` import bakes rate-dependent WASM coefficients at **48 kHz** by
 default (`bakedSampleRate = DEFAULT_SAMPLE_RATE = 48000`;
-`packages/core/src/compile/index.ts` L54, L60). `createNode` **throws** when the
+[cite: packages/core/src/compile/index.ts :: `const DEFAULT_SAMPLE_RATE = 48000;`] [cite: packages/core/src/compile/index.ts :: `const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;`]). `createNode` **throws** when the
 `AudioContext` rate differs from the baked rate, so create the context at 48000 Hz:
 
 ```ts
@@ -233,8 +233,8 @@ const ctx = new AudioContext({ sampleRate: 48000 });
 // headless: new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate: 48000 });
 ```
 
-(rate gate `packages/core/src/client.ts` L350-364; rationale
-`packages/core/src/types.ts` L697-706) The full load sequence and the
+(rate gate [cite: packages/core/src/client.ts :: `contextSampleRate !== bakedSampleRate`]; rationale
+[cite: packages/core/src/types.ts :: `bakedSampleRate?: number;`]) The full load sequence and the
 `UnworkletNode` surface (`params` / `state` / `events` / `midi` / `inputs` /
 `outputs`) → dsl.md §5.
 

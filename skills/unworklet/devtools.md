@@ -3,14 +3,14 @@
 A 4-panel **Vite DevTools** dock that X-rays the audio thread. Values are read
 bit-exact from WASM memory. Dev-only: the plugin's `define` block sets
 `__UNWORKLET_DEVTOOLS__` to `"true"` in `serve` and `"false"` in `build`
-(`packages/unplugin/src/index.ts` L864-873); the client-side gate that
-tree-shakes the dev traffic is at `packages/core/src/client.ts:1810`. Panels
+[cite: packages/unplugin/src/index.ts :: `__UNWORKLET_DEVTOOLS__: env.command === "serve" ? "true" : "false"`]; the client-side gate that
+tree-shakes the dev traffic is at [cite: packages/core/src/client.ts :: `if (typeof __UNWORKLET_DEVTOOLS__ !== "undefined" && __UNWORKLET_DEVTOOLS__ === true)`]. Panels
 add zero runtime weight in production.
 
 Panels visualize any processor imported via `?worklet` (the loading path — see
 setup.md), authored in `.uwk.ts` (primary, recommended form) or `.processor.ts`
 (explicit core-method alternative). Both authoring forms render identically; see
-dsl.md. (`README.md` L341)
+dsl.md. [cite: README.md :: `## DevTools`]
 
 ## Enable (3 steps)
 
@@ -56,13 +56,13 @@ export default defineConfig(({ command }) => ({
 - Activation fires only when the `@vitejs/devtools` host is in the config (via the
   plugin's `devtools.setup` hook).
 
-(`packages/unplugin/src/index.ts` L1686-1696 for the `devtools.setup` hook that
+([cite: packages/unplugin/src/index.ts :: `devtools: { setup: (ctx) => {`] for the `devtools.setup` hook that
 runs only when the `@vitejs/devtools` host is present.)
 
 ### 3. View it
 
 Run the dev server → open the Vite DevTools overlay → pick the **unworklet** dock.
-(`README.md` L298-314)
+[cite: README.md :: `Run your dev server, open the Vite DevTools overlay, and pick the **unworklet** dock.`]
 
 ## The 4 panels (Vue 3 SPA, hash router)
 
@@ -73,8 +73,7 @@ Run the dev server → open the Vite DevTools overlay → pick the **unworklet**
 | `/signals`     | **Signals & performance** | per-output waveform / spectrum / RMS / peak + `AudioContext` latencies |
 | `/midi`        | **MIDI**                  | event log + a virtual keyboard to inject notes                         |
 
-`/` redirects to `/audio-graph`. (`README.md` L271-274;
-`packages/unplugin/devtools-ui/src/router.ts`)
+`/` redirects to `/audio-graph`. [cite: packages/unplugin/devtools-ui/src/router.ts :: `redirect: "/audio-graph"`]
 
 Live state renders signed buffers around a zero baseline. For `i64` buffers,
 List preserves exact decimal integers; Bar chart and Waveform are labeled
@@ -107,12 +106,12 @@ to the 0.4 major, marked optional (`packages/unplugin/package.json`):
   anonymous RPC scope whose prefix is coupled to the DevTools major
   (`devframe:anonymous:` on the current line). A mismatched-major host silently
   rejects every push (DTK0013) and panels stay empty.
-  (`packages/unplugin/src/index.ts` L708-719)
+  [cite: packages/unplugin/src/index.ts :: `export const ANONYMOUS_RPC_PREFIX = "anonymous:";`]
 - **Must be a direct dep:** the panel's page bridge imports
   `@vitejs/devtools-kit/client`, which must resolve from the app — a transitive
   copy is not enough. (The `import` sits in an injected page-bridge module
-  string at `packages/unplugin/src/index.ts:1098`; the rationale note is at
-  `L1692` on the `devtools.setup` hook.)
+  string at [cite: packages/unplugin/src/index.ts :: `import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";`]; the rationale note is at
+  [cite: packages/unplugin/src/index.ts :: `devtools: { setup: (ctx) => {`] on the `devtools.setup` hook.)
 
 ## Cross-origin isolation (`crossOriginIsolation`, default `true`)
 
@@ -126,8 +125,8 @@ app's own COOP/COEP. Production headers stay the app server's job.
 
 `credentialless` (not `require-corp`) is least-breaking AND lets the DevTools
 iframe embed; `require-corp` would block it. (Default header injection is
-in the `config` hook at `packages/unplugin/src/index.ts:L864-893`; the
-DevTools iframe COEP mirror lives in `configureServer` at `L946-967`.)
+in the `config` hook at [cite: packages/unplugin/src/index.ts :: `headers["Cross-Origin-Embedder-Policy"] = "credentialless";`]; the
+DevTools iframe COEP mirror lives in `configureServer` at [cite: packages/unplugin/src/index.ts :: `res.setHeader("Cross-Origin-Embedder-Policy", coep);`].)
 
 Opt out:
 
@@ -136,8 +135,8 @@ unworklet({ crossOriginIsolation: false });
 ```
 
 unworklet then uses the postMessage transport in dev. (Opt-out branch:
-`packages/unplugin/src/index.ts:874`; client-side SAB→postMessage switch:
-`packages/core/src/client.ts:387`.)
+[cite: packages/unplugin/src/index.ts :: `if (!crossOriginIsolation) return { define };`]; client-side SAB→postMessage switch:
+[cite: packages/core/src/client.ts :: `const transportMode: "sab" | "postMessage" = sabAvailable ? "sab" : "postMessage";`].)
 
 ## Plugin options (full surface)
 
@@ -150,9 +149,9 @@ export type UnworkletPluginOptions = {
 
 There is no devtools-enable option; the panel auto-docks when the
 `@vitejs/devtools` host is in the config. (`UnworkletPluginOptions` type
-declaration: `packages/unplugin/src/index.ts:392-409`.)
+declaration: [cite: packages/unplugin/src/index.ts :: `export type UnworkletPluginOptions =`].)
 
 ## Notes
 
 - Cannot be deployed as a static demo — the host is a dev-time server. Clone the
-  repo and start an example locally to try the panels live. (`README.md` L333-334)
+  repo and start an example locally to try the panels live. [cite: README.md :: `The panels can't be deployed as a static demo: the host is a dev-time server`]
