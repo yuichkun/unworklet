@@ -328,3 +328,110 @@ test("duplicate test names remain a multiset during reference comparison", () =>
   reference.numPassedTests++;
   assert.throws(() => validateReports(shards, root, tests, reference), /multiset/);
 });
+
+function implicitElseCoverage() {
+  const map = coverage();
+  const branch = map[`${root}/${source}`].branchMap[0];
+  branch.type = "if";
+  branch.loc.end.column = null;
+  branch.locations = [structuredClone(branch.loc), { start: {}, end: {} }];
+  return map;
+}
+test("preserves native implicit-else and explicit end-of-line branch identities", () => {
+  const map = canonical(implicitElseCoverage());
+  const branch = JSON.parse(map[0].branches[0].key);
+  assert.equal(branch.loc.end.column, "end-of-line");
+  assert.equal(branch.locations[0].end.column, "end-of-line");
+  assert.deepEqual(branch.locations[1], { implicitElse: true });
+  assert.deepEqual(map[0].branches[0].covered, [true, false]);
+  const finite = implicitElseCoverage();
+  finite[`${root}/${source}`].branchMap[0].loc.end.column = 10;
+  assert.throws(() => compareCoverage(map, canonical(finite)), /coverage/);
+});
+test("preserves explicit end-of-line on ordinary ternary alternatives", () => {
+  const map = coverage();
+  map[`${root}/${source}`].branchMap[0].locations[1].end.column = null;
+  const branch = JSON.parse(canonical(map)[0].branches[0].key);
+  assert.equal(branch.locations[1].end.column, "end-of-line");
+});
+for (const [label, mutate] of [
+  [
+    "null start column",
+    (branch) => {
+      branch.loc.start.column = null;
+    },
+  ],
+  [
+    "missing end column",
+    (branch) => {
+      delete branch.loc.end.column;
+    },
+  ],
+  [
+    "missing end line",
+    (branch) => {
+      delete branch.loc.end.line;
+    },
+  ],
+  [
+    "partial implicit start",
+    (branch) => {
+      branch.locations[1].start.line = 1;
+    },
+  ],
+  [
+    "partial implicit end",
+    (branch) => {
+      branch.locations[1].end.column = null;
+    },
+  ],
+  [
+    "missing implicit endpoint",
+    (branch) => {
+      delete branch.locations[1].end;
+    },
+  ],
+  [
+    "array implicit endpoint",
+    (branch) => {
+      branch.locations[1].end = [];
+    },
+  ],
+  [
+    "extra implicit field",
+    (branch) => {
+      branch.locations[1].extra = true;
+    },
+  ],
+  [
+    "implicit first alternative",
+    (branch) => {
+      branch.locations.reverse();
+    },
+  ],
+  [
+    "implicit non-if alternative",
+    (branch) => {
+      branch.type = "cond-expr";
+    },
+  ],
+  [
+    "implicit third alternative",
+    (branch) => {
+      branch.locations.unshift(structuredClone(branch.loc));
+    },
+  ],
+  [
+    "string end column",
+    (branch) => {
+      branch.loc.end.column = "end-of-line";
+    },
+  ],
+])
+  test(`rejects malformed native location: ${String(label)}`, () => {
+    const map = implicitElseCoverage();
+    mutate(map[`${root}/${source}`].branchMap[0]);
+    if (map[`${root}/${source}`].branchMap[0].locations.length === 3)
+      map[`${root}/${source}`].b[0].push(0);
+    assert.throws(() => canonical(map));
+  });

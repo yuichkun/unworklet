@@ -29,14 +29,44 @@ function location(value) {
   for (const key of ["start", "end"]) {
     assert(Number.isInteger(value?.[key]?.line) && value[key].line >= 1, "invalid branch location");
     assert(
-      Number.isInteger(value[key].column) && value[key].column >= 0,
+      (Number.isInteger(value[key].column) && value[key].column >= 0) ||
+        (key === "end" && value[key].column === null),
       "invalid branch location",
     );
   }
   return {
     start: { line: value.start.line, column: value.start.column },
-    end: { line: value.end.line, column: value.end.column },
+    // The provider serializes its Infinity end column as JSON null.
+    end: {
+      line: value.end.line,
+      column: value.end.column === null ? "end-of-line" : value.end.column,
+    },
   };
+}
+function emptyObject(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 0
+  );
+}
+function alternativeLocation(branch, value, index) {
+  // A missing else still contributes an alternative to the native denominator.
+  if (
+    branch.type === "if" &&
+    branch.locations.length === 2 &&
+    index === 1 &&
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === 2 &&
+    emptyObject(value.start) &&
+    emptyObject(value.end)
+  ) {
+    return { implicitElse: true };
+  }
+  return location(value);
 }
 export function canonicalCoverage(map, root, sources) {
   assert(map && typeof map === "object" && !Array.isArray(map), "missing coverage map");
@@ -73,7 +103,9 @@ export function canonicalCoverage(map, root, sources) {
           const key = JSON.stringify({
             type: branch.type,
             loc: location(branch.loc),
-            locations: branch.locations.map(location),
+            locations: branch.locations.map((value, index) =>
+              alternativeLocation(branch, value, index),
+            ),
           });
           return { key, covered: counts.map((count) => count > 0) };
         })

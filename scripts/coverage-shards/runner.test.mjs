@@ -65,7 +65,7 @@ export default defineConfig({ test: { include: ['src/**/*.test.ts'], globalSetup
       );
       write(
         "src/subject.ts",
-        "export function subject(value: boolean) { return value ? 1 : 2; }\n",
+        "export function subject(value: boolean) {\n  if (value) return 1;\n  return 2;\n}\nexport const ternary = (value: boolean) => value ? 3 : 4;\n",
       );
       for (const [name, input, output] of [
         ["a", true, 1],
@@ -73,7 +73,7 @@ export default defineConfig({ test: { include: ['src/**/*.test.ts'], globalSetup
       ])
         write(
           `src/${name}.test.ts`,
-          `import { test, expect } from 'vite-plus/test'; import { subject } from './subject'; import { appendFileSync } from 'node:fs'; test('${name}', () => { appendFileSync('executed.log', '${name}\\n'); expect(subject(${input})).toBe(${output}); });`,
+          `import { test, expect } from 'vite-plus/test'; import { subject, ternary } from './subject'; import { appendFileSync } from 'node:fs'; test('${name}', () => { appendFileSync('executed.log', '${name}\\n'); expect(subject(${input})).toBe(${output}); expect(ternary(${input})).toBe(${output + 2}); });`,
         );
       mkdirSync(resolve(repository, "scripts/coverage-shards"), { recursive: true });
       mkdirSync(resolve(repository, ".github/workflows"), { recursive: true });
@@ -183,6 +183,16 @@ export default defineConfig({ test: { include: ['src/**/*.test.ts'], globalSetup
       const union = combineCoverage(
         [1, 2].map((shard) => map(`complete-${shard}`, ["src/subject.ts"])),
       );
+      const nativeBranches = Object.values(
+        read("reference/coverage/coverage-final.json")[`${root}/src/subject.ts`].branchMap,
+      );
+      const implicit = nativeBranches.find((branch) => branch.type === "if");
+      assert.deepEqual(implicit.locations[1], { start: {}, end: {} });
+      assert.equal(implicit.loc.end.column, null);
+      assert.equal(
+        nativeBranches.find((branch) => branch.type === "cond-expr").locations[1].end.column,
+        null,
+      );
       compareCoverage(union, map("reference", ["src/subject.ts"]));
       compareCoverage(union, map("complete-merged", ["src/subject.ts"]));
       validateReports(
@@ -231,7 +241,7 @@ export default defineConfig({ test: { include: ['src/**/*.test.ts'], globalSetup
       verify("compare", "inputs", 0);
       write(
         "src/untested.ts",
-        "export function untested(value: boolean) { return value ? 3 : 4; }\n",
+        "export function untested(value: boolean) {\n  if (value) return 3;\n  return 4;\n}\nexport const untouched = (value: boolean) => value ? 5 : 6;\n",
       );
       for (const shard of [1, 2]) measure(`untested-${shard}`, shard);
       merge("untested", 1);
