@@ -642,6 +642,62 @@ test.each(erasedReferences)("ignores an erased container reference in a %s", (_,
   );
 });
 
+const templateKeys = [
+  ["object read", "const values={left:VALUE};", "values[`left`]"],
+  ["computed property", "const values={[`left`]:VALUE};", "values.left"],
+  ["destructuring", "const {[`left`]:left}={left:VALUE};", "left"],
+  ["array read", "const values=[VALUE];", "values[`0`]"],
+  ["nested read", "const values={inner:[{left:VALUE}]};", "values[`inner`][`0`][`left`]"],
+  ["empty key", "const values={[``]:VALUE};", "values[``]"],
+  ["cooked escape", "const values={left:VALUE};", "values[`\\u006ceft`]"],
+  ["numeric string", "const values={[`1e2`]:VALUE,100:3};", "values[`1e2`]"],
+] as const;
+
+test.each(templateKeys)(
+  "resolves a no-substitution template key for %s",
+  (_, declarations, value) => {
+    expect(literalOrigin(`${declarations}const result=${value};`)).toBe("VALUE");
+  },
+);
+
+test.each(templateKeys)(
+  "renders DSP with a no-substitution template key for %s",
+  async (_, declarations, value) => {
+    const actual = await renderLowered(
+      processor(`${declarations.replaceAll("VALUE", "f32(0.5)*2")}out.ch(0)[i]=${value}*2;`),
+      config,
+    );
+    expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(2));
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
+
+test.each([
+  ["const values={left:VALUE,[`left`]:3};", "values.left", "3"],
+  ["const values={[`left`]:3,left:VALUE};", "values[`left`]", "VALUE"],
+  ["const values={[`1e2`]:VALUE};", "values[100]", undefined],
+  ["const values={left:VALUE};", 'values[`le${"ft"}`]', undefined],
+  ["const values={left:VALUE};const key=`left`;", "values[key]", undefined],
+  ["const values={[`__proto__`]:VALUE};", "values[`__proto__`]", undefined],
+] as const)("keeps template key boundaries: %s %s", (declarations, value, expected) => {
+  expect(literalOrigin(`${declarations}const result=${value};`)).toBe(expected);
+});
+
+test.each([
+  ["write", "values[`left`]=3;"],
+  ["escape", "function reset(v:{left:number}){v.left=3;}reset(values);"],
+  ["method receiver", "values[`reset`]();"],
+])("preserves mutation with a template key after %s", async (_, mutation) => {
+  const actual = await renderLowered(
+    processor(
+      `const values={left:f32(0.5)*2,reset:function(){this.left=3;}};${mutation}out.ch(0)[i]=Math.max(0,values[\`left\`]*2);`,
+    ),
+    config,
+  );
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(6));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
 test.each(erasedReferences)(
   "renders DSP with an erased container reference in a %s",
   async (_, reference) => {

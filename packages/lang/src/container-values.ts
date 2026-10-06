@@ -34,7 +34,7 @@ export function isConstDeclaration(node: ts.Node): node is ts.VariableDeclaratio
 
 function literalKey(node: ts.Node): string | undefined {
   node = unwrapValue(node);
-  if (ts.isStringLiteral(node)) return node.text;
+  if (ts.isStringLiteralLike(node)) return node.text;
   if (ts.isNumericLiteral(node)) return String(Number(node.text));
   if (
     ts.isPrefixUnaryExpression(node) &&
