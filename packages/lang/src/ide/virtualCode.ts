@@ -10,8 +10,8 @@
  * `state.read()`), everything else byte-for-byte verbatim.
  *
  * Unlike {@link lower}, the output is NOT wrapped in `defineProcessor` and injects
- * no import: the file keeps its ambient shape (`process(() => {...})`, module-level
- * declarations) and resolves `audioInput` / `state` / `process` / `input` / `out` /
+ * no runtime import: the file keeps its ambient shape (`process(() => {...})`,
+ * module-level declarations) and resolves `audioInput` / `state` / `process` / `input` / `out` /
  * `$prev` against the shipped ambient `.d.ts` (the same `AMBIENT_DTS` the lowering's
  * type queries use). The editor only needs the source to *type-check* and to map
  * positions back — it does not need a runnable module.
@@ -31,6 +31,7 @@
 import type { CodeInformation, CodeMapping } from "@volar/language-core/lib/types.js";
 import ts from "typescript";
 
+import { authoredBindingNames } from "../bindings.ts";
 import { argIsInjectable, calledMethod, optionsHaveName, rootCallee } from "../passes/autoName.ts";
 import { classify, isDspExpr, isSugarBinaryOperator } from "../classify.ts";
 import { readsAsBareState } from "../passes/bareState.ts";
@@ -208,6 +209,28 @@ export function generateVirtualCode(
   b.raw(MODULE_PREFIX);
   let cursor = 0;
 
+  const bound = authoredBindingNames(sourceFile);
+  const occupied = new Set<string>();
+  const collectIdentifiers = (node: ts.Node): void => {
+    if (ts.isIdentifier(node)) occupied.add(node.text);
+    ts.forEachChild(node, collectIdentifiers);
+  };
+  collectIdentifiers(sourceFile);
+  const helperAliases = new Map<string, string>();
+  const helper = (name: string): string => {
+    if (!bound.has(name)) return name;
+    let alias = helperAliases.get(name);
+    if (alias === undefined) {
+      const base = `__uwk_${name}`;
+      alias = base;
+      let suffix = 1;
+      while (occupied.has(alias)) alias = `${base}_${suffix++}`;
+      occupied.add(alias);
+      helperAliases.set(name, alias);
+    }
+    return alias;
+  };
+
   // `$prev` sites (by source offset) → the slot scalar the lowering would assign.
   const prevScalars = prevSlotScalars(checker, sourceFile);
 
@@ -280,7 +303,9 @@ export function generateVirtualCode(
       flushTo(node.getStart(sourceFile));
       const negated = NEGATED_EQ.has(node.operatorToken.kind);
       b.synth(
-        negated ? "not(eq(" : `${BINARY_FN[node.operatorToken.kind]!}(`,
+        negated
+          ? `${helper("not")}(${helper("eq")}(`
+          : `${helper(BINARY_FN[node.operatorToken.kind]!)}(`,
         node.getStart(sourceFile),
       );
       operandValue(node.left);
@@ -350,7 +375,7 @@ export function generateVirtualCode(
     ) {
       flushTo(node.getStart(sourceFile));
       b.synth(
-        node.operator === ts.SyntaxKind.MinusToken ? "neg(" : "not(",
+        `${helper(node.operator === ts.SyntaxKind.MinusToken ? "neg" : "not")}(`,
         node.getStart(sourceFile),
       );
       cursor = node.operand.getStart(sourceFile);
@@ -363,7 +388,7 @@ export function generateVirtualCode(
     // Ternary `c ? t : e` → `select(c, t, e)` (DSP condition only).
     if (ts.isConditionalExpression(node) && isDspExpr(checker, node.condition)) {
       flushTo(node.getStart(sourceFile));
-      b.synth("select(", node.getStart(sourceFile));
+      b.synth(`${helper("select")}(`, node.getStart(sourceFile));
       operandValue(node.condition);
       b.synth(", ", node.condition.getEnd());
       cursor = node.whenTrue.getStart(sourceFile);
@@ -432,6 +457,9 @@ export function generateVirtualCode(
 
   walk(sourceFile);
   flushTo(text.length);
+  for (const [name, alias] of helperAliases) {
+    b.raw(`\ndeclare const ${alias}: typeof import("@unworklet/core").${name};`);
+  }
   b.raw(MODULE_SUFFIX);
 
   return { code: b.toString(), mappings: b.mappings };
