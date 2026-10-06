@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { join, relative } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { Plugin } from "vite-plus";
 
 const packages = ["core", "unplugin", "offline", "test", "lang"];
@@ -70,6 +71,19 @@ export function prepareDemoBuild(
   const version = versions[0];
   if (!/^\d+\.\d+\.\d+$/.test(version) || versions.some((value) => value !== version)) {
     throw new Error("Workspace package versions are invalid or inconsistent");
+  }
+  if (env.VERCEL_ENV === "preview" && env.VERCEL_GIT_COMMIT_SHA) {
+    const committed = execFileSync("git", ["show", "HEAD:vercel.json"], { cwd: root });
+    const actual = readFileSync(join(root, "vercel.json"));
+    console.info("[unworklet/build-identity] vercel.json byte equality:", actual.equals(committed));
+    try {
+      console.info(
+        "[unworklet/build-identity] vercel.json JSON equality:",
+        isDeepStrictEqual(JSON.parse(actual.toString()), JSON.parse(committed.toString())),
+      );
+    } catch {
+      console.info("[unworklet/build-identity] vercel.json JSON comparison valid:", false);
+    }
   }
   const source = sourceDigest(root);
   const dirty = git(root, ["status", "--porcelain"]).length > 0;
