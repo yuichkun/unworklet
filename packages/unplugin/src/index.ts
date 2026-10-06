@@ -26,6 +26,7 @@ import {
   setupDevtoolsPages,
   type DevPageSnapshots,
   type DevPages,
+  type PageMidiInject,
 } from "./devtools-pages.ts";
 import { withExtensionHint } from "./native-import-hint.ts";
 import { preserveNativeCommonJs } from "./native-commonjs.ts";
@@ -185,7 +186,6 @@ export type DevMidiLogEntry = {
 };
 export type DevMidiState = { ports: DevMidiPort[]; log: DevMidiLogEntry[] };
 export type DevMidiInjectCommand = {
-  pageId: string;
   seq: number;
   nodeId: string;
   port: string;
@@ -200,7 +200,7 @@ declare module "@vitejs/devtools-kit" {
     "unworklet:state": DevPageSnapshots<DevLiveState>;
     "unworklet:signals": DevPageSnapshots<DevSignalsState>;
     "unworklet:midi": DevPageSnapshots<DevMidiState>;
-    "unworklet:midi-inject": DevMidiInject;
+    "unworklet:midi-inject": PageMidiInject;
   }
 }
 

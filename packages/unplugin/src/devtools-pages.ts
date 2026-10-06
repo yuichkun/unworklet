@@ -2,7 +2,6 @@ import type { ViteDevToolsNodeContext } from "@vitejs/devtools-kit";
 import type {
   DevAudioGraph,
   DevLiveState,
-  DevMidiInject,
   DevMidiInjectCommand,
   DevMidiState,
   DevSignalsState,
@@ -19,6 +18,9 @@ import type {
  * panel breakage.
  */
 export const ANONYMOUS_RPC_PREFIX = "anonymous:";
+
+export type PageMidiInjectCommand = DevMidiInjectCommand & { pageId: string };
+export type PageMidiInject = { commands: PageMidiInjectCommand[] };
 
 export type DevPage = { id: string; title: string; url: string };
 export type DevPages = { pages: DevPage[] };
@@ -45,7 +47,7 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
     initialValue: { pages: {} } as DevPageSnapshots<DevMidiState>,
   });
   const inject = await ctx.rpc.sharedState.get("unworklet:midi-inject", {
-    initialValue: { commands: [] } as DevMidiInject,
+    initialValue: { commands: [] } as PageMidiInject,
   });
   const owners = new Map<string, Session>();
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -145,7 +147,7 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
         });
     },
   );
-  register<Omit<DevMidiInjectCommand, "seq">>("unworklet:midi-inject", (cmd) => {
+  register<Omit<PageMidiInjectCommand, "seq">>("unworklet:midi-inject", (cmd) => {
     const owner = owners.get(cmd.pageId);
     if (!owner || !connected(owner)) return;
     const ports = midi.value().pages[cmd.pageId]?.ports ?? [];
