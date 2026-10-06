@@ -8,7 +8,7 @@
  * the read-wrap fire in the wrong place (or not fire at all).
  *
  * Two oracles:
- *  - `expectSameLowering(sugar, explicit)` proves the sugar lowers to the SAME
+ *  - `expectSameLowering` / `expectSameLoweredText` prove the sugar lowers to the SAME
  *    compiled processor as a hand-written chain-DSL form that already spells the
  *    `.read()` (structural ground truth — NO operator / index / bare-state / if
  *    sugar in the explicit side).
@@ -22,7 +22,13 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { expectSameLowering, renderLowered } from "../goldenHarness.ts";
+import {
+  expectSameLoweredText,
+  expectSameLowering,
+  lower,
+  renderLowered,
+  renderLoweredText,
+} from "../goldenHarness.ts";
 
 const SR = 48000;
 const N = 128;
@@ -50,6 +56,11 @@ async function render1(uwk: string): Promise<number[]> {
 /** Render and return the very first output sample. */
 async function first(uwk: string): Promise<number> {
   return (await render1(uwk))[0]!;
+}
+
+async function firstLowered(lowered: string): Promise<number> {
+  const result = await renderLoweredText(lowered, { sampleRate: SR, duration: N / SR });
+  return result.outputs.main![0]![0]!;
 }
 
 // ── reference helpers ────────────────────────────────────────────────────────
@@ -80,29 +91,23 @@ test("f32: bare state sole value — behavioral, default 0.5 flows out", async (
 
 test("f64: bare f64 state read stored to f32 port (default 0.1 → fround)", async () => {
   const decls = "const g = state.f64(0.1).named('g');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(g));"),
-    mono(decls, "out.ch(0).at(i).write(f32(g.read()));"),
-  );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(g));"))).toBe(fr(0.1));
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(g));"));
+  await expectSameLoweredText(lowered, lower(mono(decls, "out.ch(0).at(i).write(f32(g.read()));")));
+  expect(await firstLowered(lowered)).toBe(fr(0.1));
 });
 
 test("i32: bare i32 state through f32() reads (m → f32(m.read()))", async () => {
   const decls = "const m = state.i32(7).named('m');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(m));"),
-    mono(decls, "out.ch(0).at(i).write(f32(m.read()));"),
-  );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(m));"))).toBe(i32f(7));
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(m));"));
+  await expectSameLoweredText(lowered, lower(mono(decls, "out.ch(0).at(i).write(f32(m.read()));")));
+  expect(await firstLowered(lowered)).toBe(i32f(7));
 });
 
 test("i64: bare i64 state through f32() reads (m → f32(m.read()))", async () => {
   const decls = "const m = state.i64(7n).named('m');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(m));"),
-    mono(decls, "out.ch(0).at(i).write(f32(m.read()));"),
-  );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(m));"))).toBe(i64f(7n));
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(m));"));
+  await expectSameLoweredText(lowered, lower(mono(decls, "out.ch(0).at(i).write(f32(m.read()));")));
+  expect(await firstLowered(lowered)).toBe(i64f(7n));
 });
 
 test("bool: bare bool state in user-written select cond reads (c → c.read())", async () => {
@@ -136,50 +141,52 @@ test("bool: bare bool state select cond behavioral — true → 1, false → 0",
 
 test("f32: bare state in abs() reads (abs(g) → abs(g.read()))", async () => {
   const decls = "const g = state.f32(-0.5).named('g');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(abs(g));"),
-    mono(decls, "out.ch(0).at(i).write(abs(g.read()));"),
-  );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(abs(g));"))).toBe(fr(0.5));
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(abs(g));"));
+  await expectSameLoweredText(lowered, lower(mono(decls, "out.ch(0).at(i).write(abs(g.read()));")));
+  expect(await firstLowered(lowered)).toBe(fr(0.5));
 });
 
 test("f32: bare states in min/max read both args", async () => {
   const decls = "const a = state.f32(0.3).named('a');\nconst b = state.f32(0.7).named('b');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(max(a, b));"),
-    mono(decls, "out.ch(0).at(i).write(max(a.read(), b.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(max(a, b));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(max(a.read(), b.read()));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(max(a, b));"))).toBe(fr(0.7));
+  expect(await firstLowered(lowered)).toBe(fr(0.7));
   expect(await first(mono(decls, "out.ch(0).at(i).write(min(a, b));"))).toBe(fr(0.3));
 });
 
 test("f32: bare states in clamp() read all three args", async () => {
   const decls =
     "const g = state.f32(2).named('g');\nconst lo = state.f32(0).named('lo');\nconst hi = state.f32(1).named('hi');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(clamp(g, lo, hi));"),
-    mono(decls, "out.ch(0).at(i).write(clamp(g.read(), lo.read(), hi.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(clamp(g, lo, hi));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(clamp(g.read(), lo.read(), hi.read()));")),
   );
   // 2 clamped to [0,1] → 1
-  expect(await first(mono(decls, "out.ch(0).at(i).write(clamp(g, lo, hi));"))).toBe(1);
+  expect(await firstLowered(lowered)).toBe(1);
 });
 
 test("f32: bare state in transcendental sin() reads", async () => {
   const decls = "const ph = state.f32(0).named('ph');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(sin(ph));"),
-    mono(decls, "out.ch(0).at(i).write(sin(ph.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(sin(ph));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(sin(ph.read()));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(sin(ph));"))).toBe(fr(Math.sin(0)));
+  expect(await firstLowered(lowered)).toBe(fr(Math.sin(0)));
 });
 
 test("f32: nested math fns — sqrt(abs(g)) reads the innermost state once", async () => {
   const decls = "const g = state.f32(-4).named('g');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(sqrt(abs(g)));"),
-    mono(decls, "out.ch(0).at(i).write(sqrt(abs(g.read())));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(sqrt(abs(g)));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(sqrt(abs(g.read())));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(sqrt(abs(g)));"))).toBe(fr(Math.sqrt(4)));
+  expect(await firstLowered(lowered)).toBe(fr(Math.sqrt(4)));
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -188,66 +195,70 @@ test("f32: nested math fns — sqrt(abs(g)) reads the innermost state once", asy
 
 test("f32: bare state + literal — a + 0.25 reads a (add(a.read(), 0.25))", async () => {
   const decls = "const a = state.f32(0.5).named('a');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(a + 0.25);"),
-    mono(decls, "out.ch(0).at(i).write(add(a.read(), 0.25));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(a + 0.25);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(add(a.read(), 0.25));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(a + 0.25);"))).toBe(fr(0.75));
+  expect(await firstLowered(lowered)).toBe(fr(0.75));
 });
 
 test("f32: literal + bare state on LEFT — 0.25 + a reads a", async () => {
   const decls = "const a = state.f32(0.5).named('a');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(0.25 + a);"),
-    mono(decls, "out.ch(0).at(i).write(add(0.25, a.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(0.25 + a);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(add(0.25, a.read()));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(0.25 + a);"))).toBe(fr(0.75));
+  expect(await firstLowered(lowered)).toBe(fr(0.75));
 });
 
 test("f32: bare state on BOTH sides — a * b reads both", async () => {
   const decls = "const a = state.f32(0.5).named('a');\nconst b = state.f32(0.6).named('b');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(a * b);"),
-    mono(decls, "out.ch(0).at(i).write(mul(a.read(), b.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(a * b);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(mul(a.read(), b.read()));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(a * b);"))).toBe(fr(0.3));
+  expect(await firstLowered(lowered)).toBe(fr(0.3));
 });
 
 test("f32: same bare state used twice — a + a reads a on both operands", async () => {
   const decls = "const a = state.f32(0.4).named('a');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(a + a);"),
-    mono(decls, "out.ch(0).at(i).write(add(a.read(), a.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(a + a);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(add(a.read(), a.read()));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(a + a);"))).toBe(fr(0.8));
+  expect(await firstLowered(lowered)).toBe(fr(0.8));
 });
 
 test("f32: unary neg on bare state — -a reads then negates (neg(a.read()))", async () => {
   const decls = "const a = state.f32(0.5).named('a');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(-a);"),
-    mono(decls, "out.ch(0).at(i).write(neg(a.read()));"),
-  );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(-a);"))).toBe(fr(-0.5));
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(-a);"));
+  await expectSameLoweredText(lowered, lower(mono(decls, "out.ch(0).at(i).write(neg(a.read()));")));
+  expect(await firstLowered(lowered)).toBe(fr(-0.5));
 });
 
 test("bool: not on a bare bool state — !c reads then negates (not(c.read()))", async () => {
   const decls = "const c = state.bool(false).named('c');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(select(!c, f32(1), f32(0)));"),
-    mono(decls, "out.ch(0).at(i).write(select(not(c.read()), f32(1), f32(0)));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(select(!c, f32(1), f32(0)));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(select(not(c.read()), f32(1), f32(0)));")),
   );
   // c false → !c true → 1
-  expect(await first(mono(decls, "out.ch(0).at(i).write(select(!c, f32(1), f32(0)));"))).toBe(1);
+  expect(await firstLowered(lowered)).toBe(1);
 });
 
 test("bool: comparison producing a bool from a bare state — a > b reads both", async () => {
   const decls = "const a = state.f32(0.7).named('a');\nconst b = state.f32(0.3).named('b');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(select(a > b, f32(1), f32(0)));"),
-    mono(decls, "out.ch(0).at(i).write(select(gt(a.read(), b.read()), f32(1), f32(0)));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(select(a > b, f32(1), f32(0)));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(select(gt(a.read(), b.read()), f32(1), f32(0)));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(select(a > b, f32(1), f32(0)));"))).toBe(1);
+  expect(await firstLowered(lowered)).toBe(1);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -257,63 +268,60 @@ test("bool: comparison producing a bool from a bare state — a > b reads both",
 test("f32: precedence — a + b * c reads each once, mul binds tighter", async () => {
   const decls =
     "const a = state.f32(0.1).named('a');\nconst b = state.f32(0.2).named('b');\nconst c = state.f32(0.5).named('c');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(a + b * c);"),
-    mono(decls, "out.ch(0).at(i).write(add(a.read(), mul(b.read(), c.read())));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(a + b * c);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(add(a.read(), mul(b.read(), c.read())));")),
   );
   // f32 states fr(0.1),fr(0.2),fr(0.5); each op rounds in f32 width.
-  expect(await first(mono(decls, "out.ch(0).at(i).write(a + b * c);"))).toBe(
-    fr(fr(0.1) + fr(fr(0.2) * fr(0.5))),
-  );
+  expect(await firstLowered(lowered)).toBe(fr(fr(0.1) + fr(fr(0.2) * fr(0.5))));
 });
 
 test("f32: parens override precedence — (a + b) * c reads each once", async () => {
   const decls =
     "const a = state.f32(0.1).named('a');\nconst b = state.f32(0.2).named('b');\nconst c = state.f32(0.5).named('c');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write((a + b) * c);"),
-    mono(decls, "out.ch(0).at(i).write(mul(add(a.read(), b.read()), c.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write((a + b) * c);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(mul(add(a.read(), b.read()), c.read()));")),
   );
   // f32 states fr(0.1),fr(0.2),fr(0.5); each op rounds in f32 width.
-  expect(await first(mono(decls, "out.ch(0).at(i).write((a + b) * c);"))).toBe(
-    fr(fr(fr(0.1) + fr(0.2)) * fr(0.5)),
-  );
+  expect(await firstLowered(lowered)).toBe(fr(fr(fr(0.1) + fr(0.2)) * fr(0.5)));
 });
 
 test("f32: left-assoc subtraction on bare states — a - b - c == (a-b)-c", async () => {
   const decls =
     "const a = state.f32(0.9).named('a');\nconst b = state.f32(0.3).named('b');\nconst c = state.f32(0.2).named('c');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(a - b - c);"),
-    mono(decls, "out.ch(0).at(i).write(sub(sub(a.read(), b.read()), c.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(a - b - c);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(sub(sub(a.read(), b.read()), c.read()));")),
   );
   // f32 states hold fr(0.9), fr(0.3), fr(0.2); each sub rounds in f32 width.
-  expect(await first(mono(decls, "out.ch(0).at(i).write(a - b - c);"))).toBe(
-    fr(fr(fr(0.9) - fr(0.3)) - fr(0.2)),
-  );
+  expect(await firstLowered(lowered)).toBe(fr(fr(fr(0.9) - fr(0.3)) - fr(0.2)));
 });
 
 test("f32: deep nesting — abs(a) + max(b, c) reads each state once", async () => {
   const decls =
     "const a = state.f32(-0.4).named('a');\nconst b = state.f32(0.2).named('b');\nconst c = state.f32(0.6).named('c');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(abs(a) + max(b, c));"),
-    mono(decls, "out.ch(0).at(i).write(add(abs(a.read()), max(b.read(), c.read())));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(abs(a) + max(b, c));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(add(abs(a.read()), max(b.read(), c.read())));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(abs(a) + max(b, c));"))).toBe(
-    fr(fr(0.4) + fr(0.6)),
-  );
+  expect(await firstLowered(lowered)).toBe(fr(fr(0.4) + fr(0.6)));
 });
 
 test("f32: ternary with bare-state cond + bare-state branches reads all three", async () => {
   const decls =
     "const c = state.f32(1).named('c');\nconst x = state.f32(0.8).named('x');\nconst y = state.f32(0.2).named('y');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(c > f32(0) ? x : y);"),
-    mono(decls, "out.ch(0).at(i).write(select(gt(c.read(), f32(0)), x.read(), y.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(c > f32(0) ? x : y);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(select(gt(c.read(), f32(0)), x.read(), y.read()));")),
   );
   // c=1 > 0 → x = 0.8
-  expect(await first(mono(decls, "out.ch(0).at(i).write(c > f32(0) ? x : y);"))).toBe(fr(0.8));
+  expect(await firstLowered(lowered)).toBe(fr(0.8));
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -322,11 +330,12 @@ test("f32: ternary with bare-state cond + bare-state branches reads all three", 
 
 test("write target stays a handle — s.write(otherState) reads the value, not the target", async () => {
   const decls = "const a = state.f32(3).named('a');\nconst b = state.f32(9).named('b');";
-  await expectSameLowering(
-    mono(decls, "a.write(b);\nout.ch(0).at(i).write(a);"),
-    mono(decls, "a.write(b.read());\nout.ch(0).at(i).write(a.read());"),
+  const lowered = lower(mono(decls, "a.write(b);\nout.ch(0).at(i).write(a);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "a.write(b.read());\nout.ch(0).at(i).write(a.read());")),
   );
-  expect(await first(mono(decls, "a.write(b);\nout.ch(0).at(i).write(a);"))).toBe(fr(9));
+  expect(await firstLowered(lowered)).toBe(fr(9));
 });
 
 test("self-update through operator — s.write(s + literal) reads only the value side", async () => {
@@ -353,20 +362,22 @@ test("counter behavioral — c.write(c + i32(1)) increments per sample (1,2,3,�
 
 test("i64: bare state + i64(literal) reads (add(m.read(), i64(2n)))", async () => {
   const decls = "const m = state.i64(5n).named('m');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(m + i64(2n)));"),
-    mono(decls, "out.ch(0).at(i).write(f32(add(m.read(), i64(2n))));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(m + i64(2n)));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(f32(add(m.read(), i64(2n))));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(m + i64(2n)));"))).toBe(i64f(7n));
+  expect(await firstLowered(lowered)).toBe(i64f(7n));
 });
 
 test("i64: bare state on both sides — m * n reads both (BigInt mul)", async () => {
   const decls = "const m = state.i64(6n).named('m');\nconst n = state.i64(7n).named('n');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(m * n));"),
-    mono(decls, "out.ch(0).at(i).write(f32(mul(m.read(), n.read())));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(m * n));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(f32(mul(m.read(), n.read())));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(m * n));"))).toBe(i64f(42n));
+  expect(await firstLowered(lowered)).toBe(i64f(42n));
 });
 
 test("i64: bare-state counter accumulates by 2n per sample (2,4,6,…)", async () => {
@@ -381,13 +392,12 @@ test("i64: bare-state counter accumulates by 2n per sample (2,4,6,…)", async (
 
 test("i64: 64-bit value beyond i32 range survives — m / i64(2n) on bare state", async () => {
   const decls = "const m = state.i64(5000000000n).named('m');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(m / i64(2n)));"),
-    mono(decls, "out.ch(0).at(i).write(f32(div(m.read(), i64(2n))));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(m / i64(2n)));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(f32(div(m.read(), i64(2n))));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(m / i64(2n)));"))).toBe(
-    i64f(5000000000n / 2n),
-  );
+  expect(await firstLowered(lowered)).toBe(i64f(5000000000n / 2n));
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -396,20 +406,22 @@ test("i64: 64-bit value beyond i32 range survives — m / i64(2n) on bare state"
 
 test("i32: bare state truncating division — a / b reads both (7/2 = 3)", async () => {
   const decls = "const a = state.i32(7).named('a');\nconst b = state.i32(2).named('b');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(a / b));"),
-    mono(decls, "out.ch(0).at(i).write(f32(div(a.read(), b.read())));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(a / b));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(f32(div(a.read(), b.read())));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(a / b));"))).toBe(3);
+  expect(await firstLowered(lowered)).toBe(3);
 });
 
 test("i32: bare state rem_s follows dividend sign — a % b (-7 % 3 = -1)", async () => {
   const decls = "const a = state.i32(-7).named('a');\nconst b = state.i32(3).named('b');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(a % b));"),
-    mono(decls, "out.ch(0).at(i).write(f32(mod(a.read(), b.read())));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(a % b));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(f32(mod(a.read(), b.read())));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(a % b));"))).toBe((-7 % 3) | 0);
+  expect(await firstLowered(lowered)).toBe((-7 % 3) | 0);
 });
 
 test("i32: literal lifts to the bare-state's i32 type — a * 2.5 truncates to a*2", async () => {
@@ -433,27 +445,29 @@ test("i32: bare-state 32-bit wraparound — large value wraps (structural)", asy
 
 test("f64: bare-state real division — a / b is NOT truncating (7.0/2.0 = 3.5)", async () => {
   const decls = "const a = state.f64(7).named('a');\nconst b = state.f64(2).named('b');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(a / b));"),
-    mono(decls, "out.ch(0).at(i).write(f32(div(a.read(), b.read())));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(a / b));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(f32(div(a.read(), b.read())));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(a / b));"))).toBe(fr(3.5));
+  expect(await firstLowered(lowered)).toBe(fr(3.5));
 });
 
 test("f64: bare-state precedence + nesting — (a + b) / c - d reads each once", async () => {
   const decls =
     "const a = state.f64(1.5).named('a');\nconst b = state.f64(2.5).named('b');\n" +
     "const c = state.f64(2).named('c');\nconst d = state.f64(0.25).named('d');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32((a + b) / c - d));"),
-    mono(
-      decls,
-      "out.ch(0).at(i).write(f32(sub(div(add(a.read(), b.read()), c.read()), d.read())));",
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32((a + b) / c - d));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(
+      mono(
+        decls,
+        "out.ch(0).at(i).write(f32(sub(div(add(a.read(), b.read()), c.read()), d.read())));",
+      ),
     ),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32((a + b) / c - d));"))).toBe(
-    fr((1.5 + 2.5) / 2 - 0.25),
-  );
+  expect(await firstLowered(lowered)).toBe(fr((1.5 + 2.5) / 2 - 0.25));
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -462,11 +476,12 @@ test("f64: bare-state precedence + nesting — (a + b) / c - d reads each once",
 
 test("mix: bare state * channel sample — gain * input reads gain, keeps channel .at(i)", async () => {
   const decls = "const gain = state.f32(0.5).named('gain');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(gain * input.ch(0).at(i));"),
-    mono(decls, "out.ch(0).at(i).write(mul(gain.read(), input.ch(0).at(i)));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(gain * input.ch(0).at(i));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(mul(gain.read(), input.ch(0).at(i)));")),
   );
-  const r = await renderLowered(mono(decls, "out.ch(0).at(i).write(gain * input.ch(0).at(i));"), {
+  const r = await renderLoweredText(lowered, {
     sampleRate: SR,
     duration: N / SR,
     inputs: { main: [new Float32Array(N).fill(0.4)] },
@@ -476,26 +491,24 @@ test("mix: bare state * channel sample — gain * input reads gain, keeps channe
 
 test("mix: bare state in select VALUE position (not cond) reads — select(cond, g, 0)", async () => {
   const decls = "const g = state.f32(0.6).named('g');\nconst t = state.f32(1).named('t');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(select(t > f32(0), g, f32(0)));"),
-    mono(decls, "out.ch(0).at(i).write(select(gt(t.read(), f32(0)), g.read(), f32(0)));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(select(t > f32(0), g, f32(0)));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(select(gt(t.read(), f32(0)), g.read(), f32(0)));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(select(t > f32(0), g, f32(0)));"))).toBe(
-    fr(0.6),
-  );
+  expect(await firstLowered(lowered)).toBe(fr(0.6));
 });
 
 test("mix: two bare states in both branch positions — select(cond, x, y)", async () => {
   const decls =
     "const x = state.f32(0.9).named('x');\nconst y = state.f32(0.1).named('y');\nconst t = state.f32(0).named('t');";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(select(t < f32(1), x, y));"),
-    mono(decls, "out.ch(0).at(i).write(select(lt(t.read(), f32(1)), x.read(), y.read()));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(select(t < f32(1), x, y));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(select(lt(t.read(), f32(1)), x.read(), y.read()));")),
   );
   // t=0 < 1 → x = 0.9
-  expect(await first(mono(decls, "out.ch(0).at(i).write(select(t < f32(1), x, y));"))).toBe(
-    fr(0.9),
-  );
+  expect(await firstLowered(lowered)).toBe(fr(0.9));
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -504,18 +517,20 @@ test("mix: two bare states in both branch positions — select(cond, x, y)", asy
 
 test("adversarial: const N (plain number) is build-time JS — a * N stays a single mul", async () => {
   const decls = "const a = state.f32(0.5).named('a');\nconst K = 4;";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(a * K);"),
-    mono(decls, "out.ch(0).at(i).write(mul(a.read(), 4));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(a * K);"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(mul(a.read(), 4));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(a * K);"))).toBe(fr(0.5 * 4));
+  expect(await firstLowered(lowered)).toBe(fr(0.5 * 4));
 });
 
 test("adversarial: number op number folds, bare state stays read — a + (K * 2)", async () => {
   const decls = "const a = state.i32(1).named('a');\nconst K = 64;";
-  await expectSameLowering(
-    mono(decls, "out.ch(0).at(i).write(f32(a + K * 2));"),
-    mono(decls, "out.ch(0).at(i).write(f32(add(a.read(), 128)));"),
+  const lowered = lower(mono(decls, "out.ch(0).at(i).write(f32(a + K * 2));"));
+  await expectSameLoweredText(
+    lowered,
+    lower(mono(decls, "out.ch(0).at(i).write(f32(add(a.read(), 128)));")),
   );
-  expect(await first(mono(decls, "out.ch(0).at(i).write(f32(a + K * 2));"))).toBe(i32f(1 + 128));
+  expect(await firstLowered(lowered)).toBe(i32f(1 + 128));
 });
