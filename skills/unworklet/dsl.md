@@ -123,6 +123,7 @@ the same name. For example, a local `mul` does not affect DSP `a * b`; an explic
 authored names in nested scopes too.
 The editor plugin and `unworklet-tsc` use the same helper bindings and preserve
 diagnostics on authored calls and operands.
+Type-only imports keep their type roles when a generated helper uses the same name.
 
 Closed operator set: `classify.ts:120` (`isSugarBinaryOperator`). Method chains
 interoperate with operators in the same body (core `Node` methods classify as
