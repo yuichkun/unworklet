@@ -300,10 +300,86 @@ function statementBoundNames(statements: readonly ts.Statement[]): Set<string> {
   return names;
 }
 
-function makeCoreImport(names: readonly string[], coreModule: string): ts.ImportDeclaration {
+function generatedHelperBindings(
+  sourceFile: ts.SourceFile,
+  aliases: Map<string, ts.Identifier>,
+): ts.TransformerFactory<ts.SourceFile> {
+  const bound = importBoundNames(sourceFile.statements.filter(ts.isImportDeclaration));
+  const collect = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
+      collectBindingNames(node.name, bound);
+    } else if (
+      (ts.isDeclarationStatement(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isClassExpression(node)) &&
+      node.name !== undefined &&
+      ts.isIdentifier(node.name)
+    ) {
+      bound.add(node.name.text);
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(sourceFile);
+
+  return (context) => {
+    const reference = (expression: ts.Expression): ts.Expression => {
+      if (
+        !ts.isIdentifier(expression) ||
+        expression.pos >= 0 ||
+        !CORE_AUTHORING_EXPORTS.has(expression.text) ||
+        !bound.has(expression.text)
+      ) {
+        return expression;
+      }
+      let alias = aliases.get(expression.text);
+      if (alias === undefined) {
+        alias = ts.factory.createUniqueName(
+          `__uwk_${expression.text}`,
+          ts.GeneratedIdentifierFlags.Optimistic |
+            ts.GeneratedIdentifierFlags.ReservedInNestedScopes,
+        );
+        aliases.set(expression.text, alias);
+      }
+      return alias;
+    };
+    const visit: ts.Visitor = (node) => {
+      const visited = ts.visitEachChild(node, visit, context);
+      // Only synthesized value references belong to the compiler. Authored calls,
+      // property names, and binding patterns must keep their lexical meaning.
+      if (ts.isCallExpression(visited)) {
+        return ts.factory.updateCallExpression(
+          visited,
+          reference(visited.expression),
+          visited.typeArguments,
+          visited.arguments,
+        );
+      }
+      if (ts.isPropertyAccessExpression(visited)) {
+        return ts.factory.updatePropertyAccessExpression(
+          visited,
+          reference(visited.expression),
+          visited.name,
+        );
+      }
+      return visited;
+    };
+    return (sf) => ts.visitNode(sf, visit) as ts.SourceFile;
+  };
+}
+
+function makeCoreImport(
+  names: readonly string[],
+  coreModule: string,
+  aliases: ReadonlyMap<string, ts.Identifier>,
+): ts.ImportDeclaration {
   const specifiers = names.map((name) =>
     ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(name)),
   );
+  for (const [name, alias] of aliases) {
+    specifiers.push(
+      ts.factory.createImportSpecifier(false, ts.factory.createIdentifier(name), alias),
+    );
+  }
   return ts.factory.createImportDeclaration(
     undefined,
     ts.factory.createImportClause(false, undefined, ts.factory.createNamedImports(specifiers)),
@@ -444,7 +520,11 @@ export function lower(source: string, options: LowerOptions = {}): string {
     record: options.captureInto,
     sourcePath: options.sourcePath,
   });
-  const sf = ts.transform(sourceFile, [sugarTransformer(checker)]).transformed[0] as ts.SourceFile;
+  const generatedAliases = new Map<string, ts.Identifier>();
+  const sf = ts.transform(sourceFile, [
+    sugarTransformer(checker),
+    generatedHelperBindings(sourceFile, generatedAliases),
+  ]).transformed[0] as ts.SourceFile;
 
   let processBody: ts.Statement[] | undefined;
   let processCount = 0;
@@ -512,7 +592,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
     const used = collectUsedCoreExports(sf);
     for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
     for (const name of statementBoundNames(declarations)) used.delete(name);
-    const importDecl = makeCoreImport([...used].sort(), coreModule);
+    const importDecl = makeCoreImport([...used].sort(), coreModule, generatedAliases);
     const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, ...declarations]);
     const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
     return printer.printFile(lowered);
@@ -629,7 +709,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
   for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
   // A declaration inside the wrapper shadows the import for the whole body.
   for (const name of statementBoundNames(declarations)) used.delete(name);
-  const importDecl = makeCoreImport([...used].sort(), coreModule);
+  const importDecl = makeCoreImport([...used].sort(), coreModule, generatedAliases);
   const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
   const exported = makeDefineProcessor(
     allDeclarations,

@@ -117,6 +117,11 @@ build-time JS. Operands recurse bottom-up, so JS precedence is preserved.
 | `a && b` `a \|\| b` (both bool)         | `and(a, b)` `or(a, b)`                 |
 | `cond ? x : y` (cond is DSP)            | `select(cond, x, y)`                   |
 
+Generated sugar calls use the core helpers even when an authored binding has
+the same name. For example, a local `mul` does not affect DSP `a * b`; an explicit
+`mul(a, b)` still calls the authored binding. Generated import aliases avoid
+authored names in nested scopes too.
+
 Closed operator set: `classify.ts:120` (`isSugarBinaryOperator`). Method chains
 interoperate with operators in the same body (core `Node` methods classify as
 DSP): `raw.mul(I32_SCALE).tanh()`, `shaped.sub(dcPrev * DC_POLE)`.
