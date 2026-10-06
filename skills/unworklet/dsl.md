@@ -174,6 +174,11 @@ throws `uwk-unsupported-if` (rewrite to `select(...)`). The error’s optional
 | `if (c) s.write(a) else s.write(b)` (same target) | `s.write(select(c, a, b))`                |
 | `if (c) port.emit(p)` (block of emits)            | `port.emitIf(c, p)` (each)                |
 
+Buffer indices in these writes accept the same arithmetic, index-access, and
+bare-state sugar as unconditional writes, including `buf[i + 1] = value` and
+`buf.write(i + 1, value)`. A symmetric buffer `if`/`else` must use the same buffer
+and index expression in both branches.
+
 — `ifSugar.ts:149,155,159,164`
 
 **Multi-statement bodies with the same `Node<'bool'>` guard**: an `if (c) { s1.write(a); s2.write(b); port.emit(payload) }` isn't one of the 3 shapes. Write each side as its own guarded statement — the sugar lowers each individually and the pass optimizer coalesces them, so the runtime cost is identical:
