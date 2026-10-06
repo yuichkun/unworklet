@@ -1,5 +1,5 @@
 name: Test
-run-name: "Issue 145 temporary guard validation 2: shard-failure"
+run-name: "Issue 145 temporary guard validation 3: shard-timeout"
 
 # Diagnostic branch only. Never merge this workflow into the product branch.
 on:
@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ISSUE145_GATE_SCENARIO: "shard-failure"
+  ISSUE145_GATE_SCENARIO: "shard-timeout"
 
 jobs:
   coverage:
@@ -35,7 +35,7 @@ jobs:
   lang-coverage-shards:
     name: Lang coverage candidate (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 1
     strategy:
       fail-fast: false
       max-parallel: 2
