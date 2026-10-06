@@ -23,9 +23,13 @@ results must match both their union and the unsharded reference. Incompatible or
 ambiguous branch structures fail closed rather than being reconciled by guess.
 
 A partial rerun cannot reuse an earlier attempt's counterpart artifacts. Use
-**Re-run all jobs**. Failed, cancelled or skipped producer jobs explicitly fail
-the candidate merger through a job-level `always()` condition and status checks.
-A cancelled workflow is never evidence of a passing gate.
+**Re-run all jobs**. While the workflow is active, the merger runs even after
+producer failure or skipping, and its status guard rejects unsuccessful producers
+before downloading artifacts. The job-level `!cancelled()` condition lets
+cancellation stop a running merger. Cancellation before the merger starts can
+leave it skipped; a skipped job is not equivalence proof and can satisfy a GitHub
+required-check setting. Keep the unsharded gate and require whole-workflow success.
+A cancelled workflow is never evidence of passing validation.
 
 Run the small contract checks with:
 

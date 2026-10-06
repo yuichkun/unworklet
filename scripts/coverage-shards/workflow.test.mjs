@@ -16,7 +16,6 @@ void test("validation retains the unsharded named package gate and all other job
 });
 void test("candidate merger rejects failed, skipped and cancelled producers before downloading", () => {
   assert(candidate.includes("needs: [coverage, lang-coverage-shards]"));
-  assert(candidate.includes("if: ${{ always() }}"));
   assert(
     candidate.includes(
       'run: test "$REFERENCE_RESULT" = success && test "$SHARDS_RESULT" = success',
@@ -24,6 +23,10 @@ void test("candidate merger rejects failed, skipped and cancelled producers befo
   );
   assert(candidate.indexOf("Reject unsuccessful") < candidate.indexOf("actions/checkout"));
   assert(!candidate.includes("continue-on-error"));
+});
+void test("candidate merger remains cancellation-aware after producers succeed", () => {
+  const header = candidate.slice(0, candidate.indexOf("    steps:"));
+  assert.deepEqual(header.match(/^    if:.*$/gm), ["    if: ${{ !cancelled() }}"]);
 });
 void test("merge downloads exact current-attempt artifacts separately before verification", () => {
   for (const suffix of ["reference", "1-of-2", "2-of-2"])

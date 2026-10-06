@@ -148,7 +148,7 @@ jobs:
   lang-coverage-equivalence:
     name: Lang coverage shard equivalence (candidate)
     needs: [coverage, lang-coverage-shards]
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
