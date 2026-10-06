@@ -5,7 +5,7 @@ import { createServer as createNetServer, type AddressInfo } from "node:net";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseRemoteConnection } from "@vitejs/devtools-kit/client";
-import type { ViteDevToolsNodeContext } from "@vitejs/devtools-kit";
+import { defineRpcFunction, type ViteDevToolsNodeContext } from "@vitejs/devtools-kit";
 import { chromium } from "playwright";
 import { createServer, type Plugin } from "vite-plus";
 import { expect, test } from "vite-plus/test";
@@ -44,6 +44,9 @@ export const thru = defineProcessor(() => {
     keys.onEvent("noteOn", ({ channel, note, velocity, atSample }) => {
       sent.emitIf(true, { type: "noteOn", channel, note, velocity, atSample });
     });
+    keys.onEvent("noteOff", ({ channel, note, velocity, atSample }) => {
+      sent.emitIf(true, { type: "noteOff", channel, note, velocity, atSample });
+    });
   } };
 }, { id: ${JSON.stringify(id)} });
 `;
@@ -51,17 +54,20 @@ const main = `
 import { createNode } from "@unworklet/core";
 import { getDevToolsClientContext } from "@vitejs/devtools-kit/client";
 globalThis.devtoolsStatus = () => getDevToolsClientContext()?.rpc.status;
+globalThis.captureConnection = () => getDevToolsClientContext().rpc.call("anonymous:fixture-capture-connection");
 import processor from "./thru.processor.mjs?worklet";
 const context = new AudioContext({ sampleRate: 48000 });
 await context.resume();
 let node;
 globalThis.received = [];
+globalThis.released = [];
 globalThis.generation = 0;
 const start = async (processor) => {
   node?.dispose();
   node = await createNode(context, processor);
   node.outputs.audio.connect(context.destination);
   node.midi.out.onEvent("noteOn", e => globalThis.received.push(e.note));
+  node.midi.out.onEvent("noteOff", e => globalThis.released.push(e.note));
   globalThis.generation++;
 };
 if (import.meta.hot) import.meta.hot.accept("./thru.processor.mjs?worklet", updated => start(updated.default));
@@ -90,11 +96,24 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
   const processorPath = path.join(root, "thru.processor.mjs");
   await writeFile(processorPath, source("first"));
   let ctx!: ViteDevToolsNodeContext;
+  let disconnectPage!: () => void;
   const capture = {
     name: "capture-devtools-test-context",
     devtools: {
       setup(value: ViteDevToolsNodeContext) {
         ctx = value;
+        ctx.rpc.register(
+          defineRpcFunction({
+            name: "anonymous:fixture-capture-connection",
+            type: "action",
+            setup: () => ({
+              handler: () => {
+                const peer = ctx.rpc.getCurrentRpcSession()!.meta.peer!;
+                disconnectPage = () => peer.close(1012, "connection lifecycle regression");
+              },
+            }),
+          }) as Parameters<typeof ctx.rpc.register>[0],
+        );
       },
     },
   } as Plugin;
@@ -225,6 +244,26 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     expect(await b.evaluate("globalThis.received")).toEqual([67]);
     const queue = await ctx.rpc.sharedState.get<PageMidiInject>("unworklet:page-midi-inject");
     expect(queue.value().commands.every((c) => c.pageId === reloadedId)).toBe(true);
+    await b.waitForFunction("globalThis.released.includes(67)");
+    await b.evaluate("globalThis.captureConnection()");
+    const held = await panel.locator(".key-white").nth(5).boundingBox();
+    if (!held) throw new Error("Piano key is not visible");
+    await panel.mouse.move(held.x + held.width / 2, held.y + held.height - 8);
+    await panel.mouse.down();
+    await b.waitForFunction("globalThis.received.includes(69)");
+    await inject(reloadedId, input(reloadedId)!.nodeId, 69);
+    await inject(reloadedId, input(reloadedId)!.nodeId, 69);
+    await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 3");
+    disconnectPage();
+    await b.waitForFunction("globalThis.released.filter(note => note === 69).length === 3");
+    await expect
+      .poll(() => pages.value().pages.length === 1 && pages.value().pages[0]!.id !== reloadedId, {
+        timeout: 5000,
+      })
+      .toBe(true);
+    expect(await selector.inputValue()).toBe(reloadedId);
+    await panel.mouse.up();
+    expect(await b.evaluate("globalThis.released")).toEqual([67, 69, 69, 69]);
   } finally {
     await browser?.close();
     await closeHmrServer(server);

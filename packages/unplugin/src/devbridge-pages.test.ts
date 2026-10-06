@@ -179,8 +179,9 @@ for (const lifecycle of ["reconnect", "pagehide"] as const) {
     if (lifecycle === "reconnect")
       page.events.get("connection:status")!("disconnected", "connected");
     else page.windowEvents.get("pagehide")!();
+    expect(page.send).toHaveBeenLastCalledWith({ ...note, type: "noteOff", velocity: 0 });
     page.inject([injectCommand(oldId, 2)]);
-    expect(page.send).toHaveBeenCalledTimes(1);
+    expect(page.send).toHaveBeenCalledTimes(2);
     if (lifecycle === "reconnect")
       page.events.get("connection:status")!("connected", "disconnected");
     else page.windowEvents.get("pageshow")!();
@@ -191,7 +192,7 @@ for (const lifecycle of ["reconnect", "pagehide"] as const) {
     expect(nextId).not.toBe(oldId);
     page.inject([injectCommand(oldId, 2), injectCommand(nextId, 3)]);
     page.inject([injectCommand(nextId, 3)]);
-    expect(page.send).toHaveBeenCalledTimes(2);
+    expect(page.send).toHaveBeenCalledTimes(3);
     expect(page.calls.filter((c) => c.name.endsWith("graph-update")).at(-1)!.arg.pageId).toBe(
       nextId,
     );
@@ -295,4 +296,136 @@ test("generated bridge registers on development origins without crypto.randomUUI
   await flush();
   page.inject([injectCommand(pageId(page))]);
   expect(page.send).toHaveBeenCalledTimes(1);
+});
+
+for (const lifecycle of ["disconnect", "pagehide", "HMR"] as const) {
+  test(`generated bridge ${lifecycle} releases held injections on their original ports once`, async () => {
+    const page = createPage(await pageBridge());
+    const otherSend = vi.fn();
+    Object.assign(page.handles[0]!.node.midi, { second: { send: otherSend } });
+    page.handles[0]!.midiPorts.push({ name: "second", direction: "in" });
+    await flush();
+    await page.timers.get(150)!();
+    await flush();
+    const id = pageId(page);
+    page.inject([
+      injectCommand(id, 1),
+      { ...injectCommand(id, 2), event: { ...note, channel: 4, note: 63 } },
+      { ...injectCommand(id, 3), port: "second", event: { ...note, note: 65 } },
+    ]);
+    const replacement = vi.fn();
+    page.handles[0]!.node.midi.in = { send: replacement };
+    const end = () => {
+      if (lifecycle === "disconnect") page.events.get("connection:status")!("disconnected");
+      else if (lifecycle === "pagehide") page.windowEvents.get("pagehide")!();
+      else page.dispose();
+    };
+    end();
+    if (lifecycle !== "HMR") end();
+    expect(page.send.mock.calls.slice(2)).toEqual([
+      [{ ...note, type: "noteOff", velocity: 0 }],
+      [{ ...note, type: "noteOff", velocity: 0, channel: 4, note: 63 }],
+    ]);
+    expect(otherSend.mock.calls.slice(1)).toEqual([
+      [{ ...note, type: "noteOff", velocity: 0, note: 65 }],
+    ]);
+    expect(replacement).not.toHaveBeenCalled();
+  });
+}
+
+test("generated bridge cleanup releases only held notes and continues after a port send fails", async () => {
+  const page = createPage(await pageBridge());
+  await flush();
+  await page.timers.get(150)!();
+  await flush();
+  const id = pageId(page);
+  let seq = 0;
+  const send = (event: object) => page.inject([{ ...injectCommand(id, ++seq), event }]);
+  send(note);
+  send({ ...note, type: "noteOff", velocity: 0 });
+  send({ ...note, note: 61 });
+  send({ ...note, note: 61, velocity: 0 });
+  send({ ...note, note: 62 });
+  send({ type: "cc", channel: 0, controller: 123, value: 0 });
+  send({ ...note, channel: 1, note: 63 });
+  send({ type: "cc", channel: 1, controller: 120, value: 0 });
+  page.send.mockImplementationOnce(() => {
+    throw new Error("send failed");
+  });
+  send({ ...note, note: 64 });
+  send({ ...note, note: 65 });
+  send({ ...note, channel: 2, note: 66 });
+  send({ type: "cc", channel: 3, controller: 123, value: 0 });
+  send({ type: "cc", channel: 0, controller: 1, value: 64 });
+  send({ ...note, note: 67 });
+  page.send.mockImplementationOnce(() => {
+    throw new Error("noteOff failed");
+  });
+  send({ ...note, type: "noteOff", note: 67, velocity: 0 });
+  page.send.mockClear();
+  page.send.mockImplementationOnce(() => {
+    throw new Error("port closed");
+  });
+  page.events.get("connection:status")!("disconnected");
+  expect(page.send.mock.calls).toEqual([
+    [{ ...note, type: "noteOff", velocity: 0, note: 65 }],
+    [{ ...note, type: "noteOff", velocity: 0, channel: 2, note: 66 }],
+    [{ ...note, type: "noteOff", velocity: 0, note: 67 }],
+  ]);
+  page.events.get("connection:status")!("disconnected");
+  expect(page.send).toHaveBeenCalledTimes(4);
+  expect(page.send).toHaveBeenLastCalledWith({ ...note, type: "noteOff", velocity: 0, note: 65 });
+});
+
+test("generated bridge releases a replaced input through the retired port and drops its tracking", async () => {
+  const page = createPage(await pageBridge());
+  await flush();
+  await page.timers.get(150)!();
+  await flush();
+  page.inject([injectCommand(pageId(page))]);
+  const replacement = vi.fn();
+  page.handles[0]!.node.midi.in = { send: replacement };
+  await page.timers.get(150)!();
+  expect(page.send).toHaveBeenLastCalledWith({ ...note, type: "noteOff", velocity: 0 });
+  page.dispose();
+  expect(page.send).toHaveBeenCalledTimes(2);
+  expect(replacement).not.toHaveBeenCalled();
+});
+
+test("generated bridge balances repeated noteOn injections with one release per unmatched send", async () => {
+  const page = createPage(await pageBridge());
+  await flush();
+  await page.timers.get(150)!();
+  await flush();
+  const id = pageId(page);
+  let seq = 0;
+  const send = (event: object) => page.inject([{ ...injectCommand(id, ++seq), event }]);
+  send(note);
+  send(note);
+  send(note);
+  send({ ...note, type: "noteOff", velocity: 0 });
+  send({ ...note, note: 61 });
+  send({ ...note, note: 61 });
+  send({ ...note, note: 61, velocity: 0 });
+  for (const channel of [4, 5]) {
+    send({ ...note, channel });
+    send({ ...note, channel });
+    send({ type: "cc", channel, controller: channel === 4 ? 123 : 120, value: 0 });
+  }
+  send({ ...note, note: 65 });
+  send({ ...note, note: 65 });
+  page.send.mockImplementationOnce(() => {
+    throw new Error("noteOff failed");
+  });
+  send({ ...note, note: 65, type: "noteOff", velocity: 0 });
+  page.send.mockClear();
+  page.events.get("connection:status")!("disconnected");
+  page.events.get("connection:status")!("disconnected");
+  expect(page.send.mock.calls).toEqual([
+    [{ ...note, type: "noteOff", velocity: 0 }],
+    [{ ...note, type: "noteOff", velocity: 0 }],
+    [{ ...note, type: "noteOff", velocity: 0, note: 61 }],
+    [{ ...note, type: "noteOff", velocity: 0, note: 65 }],
+    [{ ...note, type: "noteOff", velocity: 0, note: 65 }],
+  ]);
 });

@@ -1234,6 +1234,7 @@ const push = () => {
 };
 
 const endSession = () => {
+  releaseInjectedNotes();
   if (pageId) {
     try { Promise.resolve(client.rpc.call(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-close")}, { pageId })).catch(() => {}); } catch (e) { /* dev only */ }
   }
@@ -1420,6 +1421,40 @@ const midiTapped = new Map();
 let lastInjectSeq = 0;
 let midiInjectSubscribed = false;
 let offInject;
+const injectedNotes = new Map();
+const trackInjectedNote = (port, event) => {
+  let notes = injectedNotes.get(port);
+  const key = event.channel + ":" + event.note;
+  if (event.type === "noteOn" && event.velocity > 0) {
+    if (!notes) { notes = new Map(); injectedNotes.set(port, notes); }
+    notes.set(key, { channel: event.channel, note: event.note, count: (notes.get(key)?.count || 0) + 1 });
+  } else if (notes) {
+    if (event.type === "noteOff" || (event.type === "noteOn" && event.velocity === 0)) {
+      const held = notes.get(key);
+      if (held && --held.count === 0) notes.delete(key);
+    } else if (event.type === "cc" && (event.controller === 120 || event.controller === 123)) {
+      for (const [key, note] of notes) if (note.channel === event.channel) notes.delete(key);
+    }
+    if (notes.size === 0) injectedNotes.delete(port);
+  }
+};
+const releaseInjectedNotes = (livePorts) => {
+  for (const [port, notes] of injectedNotes) {
+    if (livePorts?.has(port)) continue;
+    // Keep the exact port reference: a replacement node or page must never receive cleanup.
+    for (const [key, held] of notes) {
+      const count = held.count;
+      for (let i = 0; i < count; i++) {
+        try {
+          port.send({ type: "noteOff", channel: held.channel, note: held.note, velocity: 0 });
+          held.count--;
+        } catch (e) { /* dev only */ }
+      }
+      if (held.count === 0) notes.delete(key);
+    }
+    if (notes.size === 0) injectedNotes.delete(port);
+  }
+};
 const tapMidiOut = (h) => {
   const awn = h.node.node;
   if (midiTapped.has(awn)) return;
@@ -1469,6 +1504,7 @@ const ensureMidiInjectSub = () => {
         if (!sendable) { console.warn("unworklet devtools: dropped malformed MIDI inject", c.event); continue; }
         try {
           port.send(sendable);
+          trackInjectedNote(port, sendable);
           midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: toLoggableMidiEvent(sendable) }, MIDI_LOG_MAX);
         } catch (err) { /* dev only */ }
       }
@@ -1482,17 +1518,20 @@ const pollMidi = () => {
   ensureMidiInjectSub();
   const ports = [];
   const liveNodes = new Set();
+  const liveInputs = new Set();
   for (const h of getDevNodes()) {
     liveNodes.add(h.node.node);
     tapMidiOut(h);
     const id = idOf(h.node.node);
     const midi = h.node.midi || {};
     for (const pm of h.midiPorts || []) {
+      if (pm.direction === "in" && midi[pm.name]) liveInputs.add(midi[pm.name]);
       let overflow = 0;
       try { const p = midi[pm.name]; if (p && p.diagnostics) overflow = p.diagnostics.overflowCount() || 0; } catch (e) { /* dev only */ }
       ports.push({ nodeId: id, node: h.displayName || h.processorName, name: pm.name, direction: pm.direction, overflow });
     }
   }
+  releaseInjectedNotes(liveInputs);
   for (const [node, subscriptions] of midiTapped) {
     if (!liveNodes.has(node)) { for (const off of subscriptions) off(); midiTapped.delete(node); }
   }

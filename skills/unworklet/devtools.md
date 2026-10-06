@@ -86,7 +86,10 @@ Reloading or reconnecting creates a fresh, temporary page session. A disconnecte
 selection stays empty until you explicitly choose a live page; it does not switch
 the keyboard to another tab. Page data and pending injections are removed on page
 exit or when the server observes its connection closing. Background tabs are not
-expired for being idle.
+expired for being idle. Session cleanup sends matching `noteOff` events for
+held DevTools injections through their original local input ports, even if the
+DevTools connection has closed. `MidiPortSurface.send()` has no delivery
+acknowledgment; this cleanup uses the same bounded transport as other MIDI sends.
 
 Live state renders signed buffers around a zero baseline. For `i64` buffers,
 List preserves exact decimal integers; Bar chart and Waveform are labeled
