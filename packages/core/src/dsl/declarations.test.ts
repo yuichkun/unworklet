@@ -1251,7 +1251,7 @@ test("`emitIf` inside `forSample` appends to the loop body (not to top-level sta
 // + user override
 // ─────────────────────────────────────────────────────────────────────────
 
-test("omitting atSample inside `forSample` lifts the loopCounter as the default", () => {
+test("omitting atSample inside `forSample` lifts its depth-qualified loopCounter", () => {
   const ctx = newCaptureContext();
   runCapture(ctx, () => {
     const evt = event<{ level: number }>({ to: "main", name: "peak" });
@@ -1263,9 +1263,104 @@ test("omitting atSample inside `forSample` lifts the loopCounter as the default"
   if (fs?.kind !== "forSample") throw new Error("expected forSample");
   expect(fs.body[0]).toMatchObject({
     kind: "eventEmitIf",
-    atSample: { kind: "loopCounter" },
+    atSample: { kind: "loopCounter", depth: 0 },
   });
 });
+
+for (const kind of ["event", "MIDI"] as const) {
+  const makeImplicitEmit = () => {
+    if (kind === "event") {
+      const output = event<{ value: number }>({ to: "main", name: "output" });
+      return () => output.emitIf(true, { value: 1 });
+    }
+    const output = event.midi({ to: "main", name: "output" });
+    return () => {
+      // Exercise the runtime fallback without making MIDI atSample optional in TypeScript.
+      // @ts-expect-error -- MIDI callers must supply atSample.
+      output.emitIf(true, { type: "noteOn", channel: 0, note: 60, velocity: 100 });
+    };
+  };
+
+  test(`${kind} implicit atSample follows the innermost loop and restores each enclosing scope`, () => {
+    const ctx = newCaptureContext();
+    runCapture(ctx, () => {
+      const emit = makeImplicitEmit();
+      forSample(() => {
+        forSample(() => {
+          forSample(emit);
+          emit();
+        });
+        emit();
+      });
+      emit();
+    });
+    expect(ctx.statements).toMatchObject([
+      {
+        kind: "forSample",
+        body: [
+          {
+            kind: "forSample",
+            body: [
+              { kind: "forSample", body: [{ atSample: { kind: "loopCounter", depth: 2 } }] },
+              { atSample: { kind: "loopCounter", depth: 1 } },
+            ],
+          },
+          { atSample: { kind: "loopCounter", depth: 0 } },
+        ],
+      },
+      { atSample: { kind: "literal", type: "i32", value: 0 } },
+    ]);
+  });
+
+  test(`${kind} implicit atSample keeps the active loop inside everyNSamples`, () => {
+    const ctx = newCaptureContext();
+    runCapture(ctx, () => {
+      const emit = makeImplicitEmit();
+      forSample(() => {
+        forSample.byN(4, (_i, everyNSamples) => everyNSamples(8, emit));
+      });
+    });
+    expect(ctx.statements).toMatchObject([
+      {
+        kind: "forSample",
+        body: [
+          {
+            kind: "forSample",
+            body: [
+              { kind: "everyNSamples", body: [{ atSample: { kind: "loopCounter", depth: 1 } }] },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  for (const handler of ["message", "MIDI"] as const) {
+    test(`${kind} implicit atSample is zero in a ${handler} handler after a completed loop`, () => {
+      const ctx = newCaptureContext();
+      runCapture(ctx, () => {
+        const emit = makeImplicitEmit();
+        const body = () => {
+          forSample(() => {});
+          emit();
+        };
+        if (handler === "message") {
+          event<void>({ from: "main", name: "input" }).onReceive(body);
+        } else {
+          event.midi({ from: "main", name: "input" }).onEvent("noteOn", body);
+        }
+      });
+      const statement = ctx.statements[0];
+      if (statement?.kind !== "messageOnReceive" && statement?.kind !== "midiOnEvent") {
+        throw new Error("expected handler");
+      }
+      expect(statement.body.slice(-2)).toMatchObject([
+        { kind: "forSample" },
+        { atSample: { kind: "literal", type: "i32", value: 0 } },
+      ]);
+    });
+  }
+}
 
 test("omitting atSample at per-block top level lifts literal 0 as the default", () => {
   const ctx = newCaptureContext();
