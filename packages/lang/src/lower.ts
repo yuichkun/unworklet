@@ -538,17 +538,36 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // argument is attached outside it, so such a reference would be out of scope at
   // module evaluation. (Reported by @codex on #12.)
   const bodyBindings = statementBoundNames(declarations);
-  const optionRefs = (expr: ts.Expression | undefined): string[] => {
+  for (const stmt of declarations) {
+    if (!ts.isFunctionLike(stmt)) collectFunctionScopedVars(stmt, bodyBindings);
+  }
+  const bodySymbols = new Set(
+    checker
+      .getSymbolsInScope(sourceFile, ts.SymbolFlags.Value | ts.SymbolFlags.Alias)
+      .filter((symbol) => bodyBindings.has(symbol.getName())),
+  );
+  // Symbol queries belong to the pristine AST; sugar can synthesize references
+  // without checker bindings. Only the final call of each macro is emitted.
+  const originalMacros = sourceFile.statements.map(topLevelMacroCall);
+  const optionRefs = (name: string): string[] => {
+    const expr = originalMacros.findLast((macro) => macro?.name === name)?.call.arguments[0];
     if (expr === undefined) return [];
     const hits = new Set<string>();
     const visit = (n: ts.Node): void => {
-      if (ts.isIdentifier(n) && bodyBindings.has(n.text)) hits.add(n.text);
+      if (ts.isPartOfTypeNode(n)) return;
+      if (ts.isIdentifier(n)) {
+        const symbol =
+          ts.isShorthandPropertyAssignment(n.parent) && n.parent.name === n
+            ? checker.getShorthandAssignmentValueSymbol(n.parent)
+            : checker.getSymbolAtLocation(n);
+        if (symbol !== undefined && bodySymbols.has(symbol)) hits.add(n.text);
+      }
       ts.forEachChild(n, visit);
     };
     visit(expr);
     return [...hits];
   };
-  const referenced = [...new Set([...optionRefs(migrationsArg), ...optionRefs(optionsObject)])];
+  const referenced = [...new Set([...optionRefs(MIGRATIONS_MACRO), ...optionRefs(OPTIONS_MACRO)])];
   if (referenced.length > 0) {
     throw new LowerError(
       "uwk-options-binding",
