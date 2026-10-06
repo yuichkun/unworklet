@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 import { createServer, type Plugin } from "vite-plus";
 import { expect, test } from "vite-plus/test";
 
+import { closeHmrServer } from "./hmr-fixture.ts";
 import unworklet from "./index.ts";
 
 const repo = path.resolve(import.meta.dirname, "../../..");
@@ -166,7 +167,7 @@ test.each([
       expect(errors).toEqual([]);
     } finally {
       await browser?.close();
-      await server.close();
+      await closeHmrServer(server);
       await rm(root, { recursive: true, force: true });
     }
   },
