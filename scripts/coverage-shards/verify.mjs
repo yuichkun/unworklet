@@ -273,7 +273,7 @@ async function context(repository, inventory) {
       ".github/workflows/test.yml",
       "scripts/coverage-shards/verify.mjs",
     ]
-      .map((file) => `${file}\0${readFileSync(resolve(repository, file))}`)
+      .map((file) => `${file}\0${readFileSync(resolve(repository, file), "utf8")}`)
       .join("\0"),
   );
   const sha = git("rev-parse", "HEAD");

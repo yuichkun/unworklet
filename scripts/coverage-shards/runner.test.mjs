@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { canonicalCoverage, combineCoverage, compareCoverage, validateReports } from "./verify.mjs";
 
-test(
+void test(
   "installed runner preserves complete branch unions and rejects an untested denominator",
   { timeout: 90_000 },
   () => {

@@ -6,7 +6,7 @@ const candidate = workflow.slice(
   workflow.indexOf("  lang-coverage-equivalence:"),
   workflow.indexOf("  devtools-coverage:"),
 );
-test("validation retains the unsharded named package gate and all other jobs", () => {
+void test("validation retains the unsharded named package gate and all other jobs", () => {
   assert(workflow.includes("name: Branch coverage (${{ matrix.package }})"));
   assert(workflow.includes("package: [core, lang, offline, test, unplugin]"));
   assert.equal((workflow.match(/--coverage.thresholds.branches=0/g) ?? []).length, 1);
@@ -14,7 +14,7 @@ test("validation retains the unsharded named package gate and all other jobs", (
   assert(workflow.includes("name: Branch coverage (DevTools UI)"));
   assert(workflow.includes("name: Packaging (publint + arethetypeswrong)"));
 });
-test("candidate merger rejects failed, skipped and cancelled producers before downloading", () => {
+void test("candidate merger rejects failed, skipped and cancelled producers before downloading", () => {
   assert(candidate.includes("needs: [coverage, lang-coverage-shards]"));
   assert(candidate.includes("if: ${{ always() }}"));
   assert(
@@ -25,7 +25,7 @@ test("candidate merger rejects failed, skipped and cancelled producers before do
   assert(candidate.indexOf("Reject unsuccessful") < candidate.indexOf("actions/checkout"));
   assert(!candidate.includes("continue-on-error"));
 });
-test("merge downloads exact current-attempt artifacts separately before verification", () => {
+void test("merge downloads exact current-attempt artifacts separately before verification", () => {
   for (const suffix of ["reference", "1-of-2", "2-of-2"])
     assert(
       candidate.includes(
