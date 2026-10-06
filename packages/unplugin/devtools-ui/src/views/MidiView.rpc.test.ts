@@ -89,48 +89,51 @@ test("MIDI routing changes and route exit send balanced note events through the 
   }
 });
 
-test("page switching releases sustain through the view's captured page and input", async () => {
-  const shared = createSharedState({
-    initialValue: {
-      ports: [{ nodeId: "n1", node: "synth", name: "in", direction: "in", overflow: 0 }],
-      log: [],
-    },
-  });
-  const call = vi.fn();
-  vi.mocked(getPanelRpc).mockResolvedValue({
-    sharedState: { get: async () => forPage(shared) },
-    call,
-  } as unknown as PanelRpc);
-  const root = document.createElement("div");
-  const selected = ref("page-a");
-  const app = createApp(MidiView);
-  app.provide("unworklet:page-id", selected);
-  app.mount(root);
-  try {
-    for (let i = 0; i < 5; i++) await Promise.resolve();
-    await nextTick();
-    const controller = root.querySelector<HTMLInputElement>(".ctrl-row-aux input")!;
-    controller.value = "64";
-    controller.dispatchEvent(new Event("input"));
-    await nextTick();
-    const slider = root.querySelectorAll<HTMLElement>(".range-slider")[1]!;
-    vi.spyOn(slider, "getBoundingClientRect").mockReturnValue({ left: 0, width: 127 } as DOMRect);
-    slider.dispatchEvent(new PointerEvent("pointerdown", { button: 0, clientX: 127 }));
-    await nextTick();
-    selected.value = "page-b";
-    app.unmount();
-    expect(call.mock.calls).toEqual(
-      [127, 0].map((value) => [
-        "unworklet:page-midi-inject",
-        {
-          pageId: "page-a",
-          nodeId: "n1",
-          port: "in",
-          event: { type: "cc", channel: 0, controller: 64, value },
-        },
-      ]),
-    );
-  } finally {
-    if (root.hasChildNodes()) app.unmount();
-  }
-});
+test.each([64, 66, 69])(
+  "page switching releases CC%s through the view's captured page and input",
+  async (controllerNumber) => {
+    const shared = createSharedState({
+      initialValue: {
+        ports: [{ nodeId: "n1", node: "synth", name: "in", direction: "in", overflow: 0 }],
+        log: [],
+      },
+    });
+    const call = vi.fn();
+    vi.mocked(getPanelRpc).mockResolvedValue({
+      sharedState: { get: async () => forPage(shared) },
+      call,
+    } as unknown as PanelRpc);
+    const root = document.createElement("div");
+    const selected = ref("page-a");
+    const app = createApp(MidiView);
+    app.provide("unworklet:page-id", selected);
+    app.mount(root);
+    try {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      await nextTick();
+      const controller = root.querySelector<HTMLInputElement>(".ctrl-row-aux input")!;
+      controller.value = String(controllerNumber);
+      controller.dispatchEvent(new Event("input"));
+      await nextTick();
+      const slider = root.querySelectorAll<HTMLElement>(".range-slider")[1]!;
+      vi.spyOn(slider, "getBoundingClientRect").mockReturnValue({ left: 0, width: 127 } as DOMRect);
+      slider.dispatchEvent(new PointerEvent("pointerdown", { button: 0, clientX: 127 }));
+      await nextTick();
+      selected.value = "page-b";
+      app.unmount();
+      expect(call.mock.calls).toEqual(
+        [127, 0].map((value) => [
+          "unworklet:page-midi-inject",
+          {
+            pageId: "page-a",
+            nodeId: "n1",
+            port: "in",
+            event: { type: "cc", channel: 0, controller: controllerNumber, value },
+          },
+        ]),
+      );
+    } finally {
+      if (root.hasChildNodes()) app.unmount();
+    }
+  },
+);

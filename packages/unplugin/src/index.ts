@@ -1422,17 +1422,21 @@ let lastInjectSeq = 0;
 let midiInjectSubscribed = false;
 let offInject;
 const injectedNotes = new Map();
-const injectedSustain = new Map();
+const NOTE_HOLD_CONTROLLERS = new Set([64, 66, 69]);
+const injectedHolds = new Map();
 const trackInjectedMidi = (port, event) => {
   if (event.type === "cc") {
-    let channels = injectedSustain.get(port);
-    if (event.controller === 64 && event.value >= 64) {
-      if (!channels) { channels = new Set(); injectedSustain.set(port, channels); }
-      channels.add(event.channel);
-    } else if (channels && (event.controller === 64 || event.controller === 121)) {
-      channels.delete(event.channel);
-      if (channels.size === 0) injectedSustain.delete(port);
+    let holds = injectedHolds.get(port);
+    const key = event.channel + ":" + event.controller;
+    if (NOTE_HOLD_CONTROLLERS.has(event.controller)) {
+      if (event.value >= 64) {
+        if (!holds) { holds = new Map(); injectedHolds.set(port, holds); }
+        holds.set(key, { channel: event.channel, controller: event.controller });
+      } else holds?.delete(key);
+    } else if (holds && event.controller === 121) {
+      for (const [key, hold] of holds) if (hold.channel === event.channel) holds.delete(key);
     }
+    if (holds?.size === 0) injectedHolds.delete(port);
   }
   let notes = injectedNotes.get(port);
   const key = event.channel + ":" + event.note;
@@ -1465,15 +1469,15 @@ const releaseInjectedMidi = (livePorts) => {
     }
     if (notes.size === 0) injectedNotes.delete(port);
   }
-  for (const [port, channels] of injectedSustain) {
+  for (const [port, holds] of injectedHolds) {
     if (livePorts?.has(port)) continue;
-    for (const channel of channels) {
+    for (const [key, { channel, controller }] of holds) {
       try {
-        port.send({ type: "cc", channel, controller: 64, value: 0 });
-        channels.delete(channel);
+        port.send({ type: "cc", channel, controller, value: 0 });
+        holds.delete(key);
       } catch (e) { /* dev only */ }
     }
-    if (channels.size === 0) injectedSustain.delete(port);
+    if (holds.size === 0) injectedHolds.delete(port);
   }
 };
 const tapMidiOut = (h) => {

@@ -68,17 +68,26 @@ const program = ref(0);
 const pressure = ref(0);
 
 const pressedKeys = ref(new Map<number, { port: string; channel: number }>());
-const sustainOrigins = new Map<string, { port: string; channel: number }>();
+const NOTE_HOLD_CONTROLLERS = new Set([64, 66, 69]);
+const holdOrigins = new Map<number, { port: string; channel: number; controller: number }>();
 
 const sendEvent = (event: MidiEventInput): void => {
   const port = targetPortKey.value;
   if (!port) return;
   injectMidi(port, event);
   if (event.type === "cc") {
-    const key = `${port}:${event.channel}`;
-    if (event.controller === 64 && event.value >= 64)
-      sustainOrigins.set(key, { port, channel: event.channel });
-    else if (event.controller === 64 || event.controller === 121) sustainOrigins.delete(key);
+    if (NOTE_HOLD_CONTROLLERS.has(event.controller)) {
+      if (event.value >= 64)
+        holdOrigins.set(event.controller, {
+          port,
+          channel: event.channel,
+          controller: event.controller,
+        });
+      else holdOrigins.delete(event.controller);
+    } else if (event.controller === 121) {
+      // Routing changes clear these origins before another port or channel can send.
+      holdOrigins.clear();
+    }
   }
 };
 
@@ -163,9 +172,9 @@ const releaseNotes = (): void => {
 
 const releaseRoute = (): void => {
   releaseNotes();
-  for (const { port, channel } of sustainOrigins.values())
-    injectMidi(port, { type: "cc", channel, controller: 64, value: 0 });
-  sustainOrigins.clear();
+  for (const { port, channel, controller } of holdOrigins.values())
+    injectMidi(port, { type: "cc", channel, controller, value: 0 });
+  holdOrigins.clear();
 };
 
 watch([targetPortKey, channel], releaseRoute, { flush: "sync" });

@@ -536,7 +536,16 @@ test("custom unscoped consumers and generated scoped bridges deliver once withou
 function sustainConsumer() {
   const down = new Set<string>();
   const sounding = new Set<string>();
-  const pedals = new Set<number>();
+  const pedals = new Set<string>();
+  const captured = new Set<string>();
+  const held = (key: string) => {
+    const channel = key.split(":")[0];
+    return (
+      pedals.has(`${channel}:64`) ||
+      pedals.has(`${channel}:69`) ||
+      (pedals.has(`${channel}:66`) && captured.has(key))
+    );
+  };
   const send = vi.fn((event: any) => {
     const key = `${event.channel}:${event.note}`;
     if (event.type === "noteOn" && event.velocity > 0) {
@@ -544,49 +553,66 @@ function sustainConsumer() {
       sounding.add(key);
     } else if (event.type === "noteOff" || (event.type === "noteOn" && event.velocity === 0)) {
       down.delete(key);
-      if (!pedals.has(event.channel)) sounding.delete(key);
-    } else if (event.type === "cc" && (event.controller === 64 || event.controller === 121)) {
-      if (event.controller === 64 && event.value >= 64) pedals.add(event.channel);
-      else {
-        pedals.delete(event.channel);
+      if (!held(key)) sounding.delete(key);
+    } else if (
+      event.type === "cc" &&
+      ([64, 66, 69].includes(event.controller) || event.controller === 121)
+    ) {
+      const pedal = `${event.channel}:${event.controller}`;
+      if (event.controller !== 121 && event.value >= 64) {
+        if (event.controller === 66 && !pedals.has(pedal)) {
+          for (const note of sounding) if (note.startsWith(`${event.channel}:`)) captured.add(note);
+        }
+        pedals.add(pedal);
+      } else {
+        if (event.controller === 121) {
+          for (const pedal of pedals)
+            if (pedal.startsWith(`${event.channel}:`)) pedals.delete(pedal);
+        } else pedals.delete(pedal);
+        if (event.controller === 66 || event.controller === 121)
+          for (const note of captured)
+            if (note.startsWith(`${event.channel}:`)) captured.delete(note);
         for (const note of sounding)
-          if (note.startsWith(`${event.channel}:`) && !down.has(note)) sounding.delete(note);
+          if (note.startsWith(`${event.channel}:`) && !down.has(note) && !held(note))
+            sounding.delete(note);
       }
     }
   });
   return { send, sounding };
 }
 
-for (const lifecycle of ["disconnect", "pagehide", "HMR", "retired input"] as const) {
-  test(`generated bridge ${lifecycle} releases its sustain after the key was already released`, async () => {
-    const page = createPage(await pageBridge());
-    const synth = sustainConsumer();
-    page.handles[0]!.node.midi.in = { send: synth.send };
-    await flush();
-    await page.timers.get(150)!();
-    await flush();
-    const id = pageId(page);
-    page.inject([
-      injectCommand(id, 1),
-      { ...injectCommand(id, 2), event: { type: "cc", channel: 0, controller: 64, value: 64 } },
-      { ...injectCommand(id, 3), event: { ...note, type: "noteOff", velocity: 0 } },
-    ]);
-    expect([...synth.sounding]).toEqual(["0:60"]);
-    if (lifecycle === "disconnect") page.events.get("connection:status")!("disconnected");
-    else if (lifecycle === "pagehide") page.windowEvents.get("pagehide")!();
-    else if (lifecycle === "HMR") page.dispose();
-    else {
-      page.handles.splice(0);
+for (const controller of [64, 66, 69]) {
+  for (const lifecycle of ["disconnect", "pagehide", "HMR", "retired input"] as const) {
+    test(`generated bridge ${lifecycle} releases CC${controller} after the key was already released`, async () => {
+      const page = createPage(await pageBridge());
+      const synth = sustainConsumer();
+      page.handles[0]!.node.midi.in = { send: synth.send };
+      await flush();
       await page.timers.get(150)!();
-    }
-    expect([...synth.sounding]).toEqual([]);
-    expect(synth.send).toHaveBeenLastCalledWith({
-      type: "cc",
-      channel: 0,
-      controller: 64,
-      value: 0,
+      await flush();
+      const id = pageId(page);
+      page.inject([
+        injectCommand(id, 1),
+        { ...injectCommand(id, 2), event: { type: "cc", channel: 0, controller, value: 64 } },
+        { ...injectCommand(id, 3), event: { ...note, type: "noteOff", velocity: 0 } },
+      ]);
+      expect([...synth.sounding]).toEqual(["0:60"]);
+      if (lifecycle === "disconnect") page.events.get("connection:status")!("disconnected");
+      else if (lifecycle === "pagehide") page.windowEvents.get("pagehide")!();
+      else if (lifecycle === "HMR") page.dispose();
+      else {
+        page.handles.splice(0);
+        await page.timers.get(150)!();
+      }
+      expect([...synth.sounding]).toEqual([]);
+      expect(synth.send).toHaveBeenLastCalledWith({
+        type: "cc",
+        channel: 0,
+        controller,
+        value: 0,
+      });
     });
-  });
+  }
 }
 
 test("sustain cleanup respects thresholds, repeated changes, failed sends and exact port/channel ownership", async () => {
@@ -646,61 +672,112 @@ test("sustain cleanup respects thresholds, repeated changes, failed sends and ex
   expect(second.send.mock.calls).toEqual([[pedal(4, 0)]]);
 });
 
-test("session cleanup silences a sustain-aware processor's rendered PCM after noteOff", async () => {
-  const processor = defineProcessor(() => {
-    const keys = event.midi({ from: "main", name: "keys" });
-    const out = audioOutput({ channels: 1, name: "audio" });
-    const pedal = state.bool(false);
-    const keyDown = state.bool(false);
-    const sounding = state.bool(false);
-    return {
-      process: () => {
-        keys.onEvent("noteOn", () => {
-          keyDown.write(true);
-          sounding.write(true);
-        });
-        keys.onEvent("noteOff", () => {
-          keyDown.write(false);
-          sounding.write(pedal.read());
-        });
-        keys.onEvent("cc", ({ controller, value }) => {
-          pedal.write(select(controller.eq(64), value.gte(64), pedal.read()));
-          sounding.write(
-            select(
-              controller.eq(64).and(value.lt(64)).and(keyDown.read().not()),
-              false,
-              sounding.read(),
-            ),
+test.each([[64], [66], [69], [64, 66, 69]].map((controllers) => ({ controllers })))(
+  "session cleanup silences rendered PCM held by $controllers after noteOff",
+  async ({ controllers }) => {
+    const processor = defineProcessor(() => {
+      const keys = event.midi({ from: "main", name: "keys" });
+      const out = audioOutput({ channels: 1, name: "audio" });
+      const pedals = controllers.map(() => state.bool(false));
+      const held = () => pedals.map((pedal) => pedal.read()).reduce((a, b) => a.or(b));
+      const keyDown = state.bool(false);
+      const sounding = state.bool(false);
+      return {
+        process: () => {
+          keys.onEvent("noteOn", () => {
+            keyDown.write(true);
+            sounding.write(true);
+          });
+          keys.onEvent("noteOff", () => {
+            keyDown.write(false);
+            sounding.write(held());
+          });
+          keys.onEvent("cc", ({ controller, value }) => {
+            for (const [i, number] of controllers.entries())
+              pedals[i]!.write(select(controller.eq(number), value.gte(64), pedals[i]!.read()));
+            sounding.write(select(held().not().and(keyDown.read().not()), false, sounding.read()));
+          });
+          forSample((i) =>
+            out
+              .ch(0)
+              .at(i)
+              .write(select(sounding.read(), 0.125, 0)),
           );
-        });
-        forSample((i) =>
-          out
-            .ch(0)
-            .at(i)
-            .write(select(sounding.read(), 0.125, 0)),
-        );
+        },
+      };
+    });
+    const page = createPage(await pageBridge());
+    await flush();
+    await page.timers.get(150)!();
+    await flush();
+    const id = pageId(page);
+    page.inject([
+      injectCommand(id, 1),
+      ...controllers.map((controller, i) => ({
+        ...injectCommand(id, i + 2),
+        event: { type: "cc", channel: 0, controller, value: 127 },
+      })),
+      {
+        ...injectCommand(id, controllers.length + 2),
+        event: { ...note, type: "noteOff", velocity: 0 },
       },
-    };
-  });
+    ]);
+    const render = async () =>
+      (
+        await renderOffline(processor, {
+          sampleRate: 48000,
+          duration: 128 / 48000,
+          events: page.send.mock.calls.map(([payload]) => ({ name: "keys", atSample: 0, payload })),
+        })
+      ).outputs.audio![0]!;
+    expect([...new Set(await render())]).toEqual([0.125]);
+    page.events.get("connection:status")!("disconnected");
+    expect([...new Set(await render())]).toEqual([0]);
+  },
+);
+
+test("Sostenuto captures notes sounding before engagement without recapturing later notes", async () => {
   const page = createPage(await pageBridge());
+  const synth = sustainConsumer();
+  page.handles[0]!.node.midi.in = { send: synth.send };
   await flush();
   await page.timers.get(150)!();
   await flush();
   const id = pageId(page);
   page.inject([
     injectCommand(id, 1),
-    { ...injectCommand(id, 2), event: { type: "cc", channel: 0, controller: 64, value: 127 } },
-    { ...injectCommand(id, 3), event: { ...note, type: "noteOff", velocity: 0 } },
+    { ...injectCommand(id, 2), event: { type: "cc", channel: 0, controller: 66, value: 64 } },
+    { ...injectCommand(id, 3), event: { ...note, note: 62 } },
+    { ...injectCommand(id, 4), event: { type: "cc", channel: 0, controller: 66, value: 127 } },
+    { ...injectCommand(id, 5), event: { ...note, type: "noteOff", velocity: 0 } },
+    { ...injectCommand(id, 6), event: { ...note, note: 62, type: "noteOff", velocity: 0 } },
   ]);
-  const render = async () =>
-    (
-      await renderOffline(processor, {
-        sampleRate: 48000,
-        duration: 128 / 48000,
-        events: page.send.mock.calls.map(([payload]) => ({ name: "keys", atSample: 0, payload })),
-      })
-    ).outputs.audio![0]!;
-  expect([...new Set(await render())]).toEqual([0.125]);
+  expect([...synth.sounding]).toEqual(["0:60"]);
   page.events.get("connection:status")!("disconnected");
-  expect([...new Set(await render())]).toEqual([0]);
+  expect([...synth.sounding]).toEqual([]);
+});
+
+test("combined holding pedals release independently and CC121 clears only its channel", async () => {
+  const page = createPage(await pageBridge());
+  const synth = sustainConsumer();
+  page.handles[0]!.node.midi.in = { send: synth.send };
+  await flush();
+  await page.timers.get(150)!();
+  await flush();
+  let seq = 0;
+  const send = (event: object) => page.inject([{ ...injectCommand(pageId(page), ++seq), event }]);
+  for (const channel of [0, 1]) {
+    send({ ...note, channel });
+    for (const controller of [64, 66, 69]) send({ type: "cc", channel, controller, value: 127 });
+    send({ ...note, channel, type: "noteOff", velocity: 0 });
+  }
+  send({ type: "cc", channel: 0, controller: 64, value: 63 });
+  send({ type: "cc", channel: 1, controller: 121, value: 0 });
+  expect([...synth.sounding]).toEqual(["0:60"]);
+  synth.send.mockClear();
+  page.dispose();
+  expect([...synth.sounding]).toEqual([]);
+  expect(synth.send.mock.calls).toEqual(
+    [66, 69].map((controller) => [{ type: "cc", channel: 0, controller, value: 0 }]),
+  );
 });

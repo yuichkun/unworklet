@@ -16,7 +16,7 @@ import type {
   PageMidiInject,
   PageMidiInjectCommand,
 } from "./devtools-pages.ts";
-import unworklet, { type DevMidiState } from "./index.ts";
+import unworklet, { type DevMidiEvent, type DevMidiState } from "./index.ts";
 
 const repo = path.resolve(import.meta.dirname, "../../..");
 const demoRequire = createRequire(path.join(repo, "examples/demo/package.json"));
@@ -39,7 +39,9 @@ export const thru = defineProcessor(() => {
   const keys = event.midi({ from: "main", name: "in" });
   const sent = event.midi({ to: "main", name: "out" });
   const out = audioOutput({ channels: 1, name: "audio" });
-  const pedal = state.bool(false);
+  const controllers = [64, 66, 69];
+  const pedals = controllers.map(() => state.bool(false));
+  const held = () => pedals.map(pedal => pedal.read()).reduce((a, b) => a.or(b));
   const keyDown = state.bool(false);
   const sounding = state.bool(false);
   return { process: () => {
@@ -49,12 +51,13 @@ export const thru = defineProcessor(() => {
       sent.emitIf(true, { type: "noteOn", channel, note, velocity, atSample });
     });
     keys.onEvent("noteOff", ({ channel, note, velocity, atSample }) => {
-      keyDown.write(false); sounding.write(pedal.read());
+      keyDown.write(false); sounding.write(held());
       sent.emitIf(true, { type: "noteOff", channel, note, velocity, atSample });
     });
     keys.onEvent("cc", ({ controller, value }) => {
-      pedal.write(select(controller.eq(64), value.gte(64), pedal.read()));
-      sounding.write(select(controller.eq(64).and(value.lt(64)).and(keyDown.read().not()), false, sounding.read()));
+      for (const [i, number] of controllers.entries())
+        pedals[i].write(select(controller.eq(number), value.gte(64), pedals[i].read()));
+      sounding.write(select(held().not().and(keyDown.read().not()), false, sounding.read()));
     });
   } };
 }, { id: ${JSON.stringify(id)} });
@@ -198,7 +201,7 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     const input = (id: string) => midi.value().pages[id]?.ports.find((p) => p.direction === "in");
     await expect.poll(() => input(aId)?.nodeId).toBe("n0");
     await expect.poll(() => input(bId)?.nodeId).toBe("n0");
-    const inject = (pageId: string, nodeId: string, note: number) =>
+    const injectEvent = (pageId: string, nodeId: string, event: DevMidiEvent) =>
       (
         ctx.rpc.invokeLocal as (
           name: string,
@@ -208,8 +211,10 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
         pageId,
         nodeId,
         port: "in",
-        event: { type: "noteOn", channel: 0, note, velocity: 100 },
+        event,
       });
+    const inject = (pageId: string, nodeId: string, note: number) =>
+      injectEvent(pageId, nodeId, { type: "noteOn", channel: 0, note, velocity: 100 });
     await selector.selectOption(aId);
     await panel.locator(".fade-leave-active").waitFor({ state: "detached" });
     await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
@@ -274,6 +279,13 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await panel.mouse.move(held.x + held.width / 2, held.y + held.height - 8);
     await panel.mouse.down();
     await b.waitForFunction("globalThis.received.includes(69)");
+    for (const controller of [66, 69])
+      await injectEvent(reloadedId, input(reloadedId)!.nodeId, {
+        type: "cc",
+        channel: 0,
+        controller,
+        value: 127,
+      });
     await inject(reloadedId, input(reloadedId)!.nodeId, 69);
     await inject(reloadedId, input(reloadedId)!.nodeId, 69);
     await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 3");

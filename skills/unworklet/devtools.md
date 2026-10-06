@@ -88,10 +88,12 @@ the keyboard to another tab. Page data and pending injections are removed on pag
 exit or when the server observes its connection closing. Background tabs are not
 expired for being idle. Session cleanup sends matching `noteOff` events for
 held DevTools injections through their original local input ports, even if the
-DevTools connection has closed. Cleanup also sends CC64=0 for sustain enabled
-by DevTools (CC64 values at least 64) on those same ports/channels, including when
-the keys were already released. Changing the MIDI target/channel or closing its
-view sends the same release for sustain enabled by that view. `MidiPortSurface.send()` has no delivery
+DevTools connection has closed. Cleanup also sends value 0 for holding pedals
+engaged by DevTools on those same ports/channels, including when the keys were
+already released. This covers Sustain (CC64), Sostenuto (CC66), and Hold 2 (CC69),
+using the [MIDI on/off threshold](https://midi.org/midi-1-0-control-change-messages)
+of 64. Changing the MIDI target/channel or closing its view sends the same
+releases for holding pedals engaged by that view. `MidiPortSurface.send()` has no delivery
 acknowledgment; this cleanup uses the same bounded transport as other MIDI sends.
 The 0.4 host does not automatically reopen a closed DevTools socket. Reload the
 application page to reconnect; its replacement session must be selected explicitly.
