@@ -5,15 +5,17 @@
  * `Buffer<"u8">` / `Param` / `InputChannelView<"f32">` / `OutputChannelView<"f32">`.
  *
  * The hard part is that operator sugar is a TS error until lowered (`Node * 2`
- * types as `number`), so stock TS mis-types three DSP-producing shapes as
+ * types as `number`), so stock TS mis-types DSP-producing shapes as
  * `number` / `any`: an index read (`buf[i]`), a `const` bound to a sugar
- * expression (`const x = a * 2`), and a call to a sugar-bodied helper
- * (`double(x)`). `isDspExpr` / `classify` recover all three structurally, so an
- * operator over them still lowers. All queries run against the PRISTINE source
+ * expression (`const x = a * 2`), a call to a sugar-bodied helper
+ * (`double(x)`), and values stored in literal containers. `isDspExpr` /
+ * `classify` recover these structurally, so an operator over them still lowers. All queries run against the PRISTINE source
  * (a visitor receives original, never factory, nodes).
  */
 
 import ts from "typescript";
+
+import { containerValueOrigin, isConstDeclaration, unwrapValue } from "./container-values.ts";
 
 export function typeString(checker: ts.TypeChecker, node: ts.Node): string {
   return checker.typeToString(checker.getTypeAtLocation(node));
@@ -71,6 +73,8 @@ function computeClassify(checker: ts.TypeChecker, node: ts.Node): ValueClass {
   // Fallback: a `const x = <sugar expr>` is mis-typed `number` / `any`, so a
   // binding whose initializer is itself a DSP expression is a DSP value.
   if (ts.isIdentifier(node) && isDspBoundLocal(checker, node)) return "node";
+  const origin = containerValueOrigin(checker, node);
+  if (origin !== undefined && isLoweredNodeValue(checker, origin)) return "node";
   return "other";
 }
 
@@ -91,6 +95,8 @@ function computeClassify(checker: ts.TypeChecker, node: ts.Node): ValueClass {
  * states.
  */
 function typedFromOperands(checker: ts.TypeChecker, node: ts.Node): boolean {
+  const origin = containerValueOrigin(checker, node);
+  if (origin !== undefined && isLoweredNodeValue(checker, origin)) return true;
   if (ts.isParenthesizedExpression(node)) return typedFromOperands(checker, node.expression);
   if (ts.isConditionalExpression(node)) return isDspExpr(checker, node.condition);
   if (ts.isBinaryExpression(node)) {
@@ -121,6 +127,51 @@ function typedFromOperands(checker: ts.TypeChecker, node: ts.Node): boolean {
     }
   }
   return false;
+}
+
+/** Proven emitted Nodes, rather than a possibly mixed helper's return type. */
+function isLoweredNodeValue(checker: ts.TypeChecker, node: ts.Node): boolean {
+  node = unwrapValue(node);
+  if (ts.isBinaryExpression(node) && isSugarBinaryOperator(node.operatorToken.kind)) {
+    return isDspExpr(checker, node.left) || isDspExpr(checker, node.right);
+  }
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    (node.operator === ts.SyntaxKind.MinusToken || node.operator === ts.SyntaxKind.ExclamationToken)
+  ) {
+    return isDspExpr(checker, node.operand);
+  }
+  if (ts.isConditionalExpression(node)) return isDspExpr(checker, node.condition);
+  if (ts.isElementAccessExpression(node)) {
+    const object = classify(checker, node.expression);
+    if (
+      object === "buffer" ||
+      object === "param" ||
+      object === "inputChannel" ||
+      object === "outputChannel"
+    )
+      return true;
+  }
+  if (recursiveQuery(node)) return false;
+  inFlight.add(node);
+  try {
+    if (ts.isIdentifier(node)) {
+      const declaration = ts.isShorthandPropertyAssignment(node.parent)
+        ? checker.getShorthandAssignmentValueSymbol(node.parent)?.valueDeclaration
+        : checker.getSymbolAtLocation(node)?.valueDeclaration;
+      if (
+        declaration !== undefined &&
+        isConstDeclaration(declaration) &&
+        declaration.initializer !== undefined
+      ) {
+        return isLoweredNodeValue(checker, declaration.initializer);
+      }
+    }
+    const origin = containerValueOrigin(checker, node);
+    return origin !== undefined && isLoweredNodeValue(checker, origin);
+  } finally {
+    inFlight.delete(node);
+  }
 }
 
 /** A local `const X = <DSP expr>` binding (stock TS mis-types it `number`/`any`). */

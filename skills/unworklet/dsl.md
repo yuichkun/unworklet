@@ -136,6 +136,18 @@ keep an expression out of the graph, do not write it — restructure so the
 dangerous operand is always safe (clamp the divisor, hoist the read), rather than
 expecting a conditional to skip it.
 
+### Local container values
+
+DSP operator results and indexed DSP reads can be stored in local `const`
+array/object literals and read with literal keys (`values[0]`, `values.left`),
+or bound through `const` destructuring of a literal. Nested literal paths and
+numeric sibling fields keep their DSP and build-time meanings respectively.
+
+This inference requires direct, read-only references to the container. It does
+not infer through aliases, mutation, escapes, dynamic keys, or ambiguous helper
+return values. Explicit core operations such as `mul(x, 2)` preserve the `Node`
+type of stored DSP values for ordinary TypeScript inference.
+
 ### Index / element-access (`packages/lang/src/passes/index.ts`)
 
 Rewritten by the **object's** type:

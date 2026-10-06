@@ -1,0 +1,542 @@
+import ts from "typescript";
+import { expect, test } from "vite-plus/test";
+
+import { classify } from "./classify.ts";
+import { containerValueOrigin, isConstDeclaration } from "./container-values.ts";
+import { renderLowered } from "./goldenHarness.ts";
+import { buildProgram } from "./program.ts";
+
+const shapes = [
+  ["array member", "const values = [VALUE];", "values[0]"],
+  ["object member", "const values = { left: VALUE };", "values.left"],
+  ["object index", "const values = { left: VALUE };", 'values["left"]'],
+  ["array binding", "const [value] = [VALUE];", "value"],
+  ["object binding", "const { left } = { left: VALUE };", "left"],
+  ["renamed binding", "const { left: value } = { left: VALUE };", "value"],
+  ["nested member", "const values = { channels: [{ left: VALUE }] };", "values.channels[0].left"],
+  ["nested binding", "const { channels: [{ left }] } = { channels: [{ left: VALUE }] };", "left"],
+  ["array offset", "const [, value] = [3, VALUE];", "value"],
+  ["const assertion", "const values = [VALUE] as const;", "values[0]"],
+  ["computed key", 'const values = { ["left"]: VALUE };', "values.left"],
+  ["scalar alias", "const value = VALUE; const values = { value };", "values.value"],
+] as const;
+
+const config = { sampleRate: 48000, duration: 128 / 48000 };
+const processor = (body: string, declarations = ""): string => `
+const out = audioOutput({ channels: 1, name: "main" });
+${declarations}
+process(() => { forSample(i => { ${body} }); });
+`;
+
+test.each(shapes)("renders DSP arithmetic through a stable %s", async (_, declaration, value) => {
+  const actual = await renderLowered(
+    processor(`${declaration.replaceAll("VALUE", "f32(0.5) * 2")} out.ch(0)[i] = ${value} * 2;`),
+    config,
+  );
+  const explicit = await renderLowered(
+    processor(
+      `${declaration.replaceAll("VALUE", "mul(f32(0.5), 2)")} out.ch(0).at(i).write(mul(${value}, 2));`,
+    ),
+    config,
+  );
+  expect(explicit.outputs.main[0]).toEqual(new Float32Array(128).fill(2));
+  expect(actual.outputs).toEqual(explicit.outputs);
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test.each(shapes)(
+  "does not read a lowered boolean Node through a stable %s",
+  async (_, declaration, value) => {
+    const actual = await renderLowered(
+      processor(
+        `${declaration.replaceAll("VALUE", "a && b")} out.ch(0)[i] = ${value} ? 2 : 1;`,
+        'const a = state.bool(true).named("a"); const b = state.bool(false).named("b");',
+      ),
+      config,
+    );
+    expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(1));
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
+
+test.each([
+  ["i32", "i32(7) / 2", "div(i32(7), 2)", "value / 2", "div(value, 2)"],
+  ["i64", "i64(7n) / i64(2n)", "div(i64(7n), i64(2n))", "value / i64(2n)", "div(value, i64(2n))"],
+  ["f64", "f64(16777217) - 0", "sub(f64(16777217), 0)", "value - 16777216", "sub(value, 16777216)"],
+] as const)(
+  "preserves %s arithmetic through destructuring",
+  async (_, initial, explicitInitial, expression, explicitExpression) => {
+    const actual = await renderLowered(
+      processor(`const { value } = { value: ${initial} }; out.ch(0)[i] = f32(${expression});`),
+      config,
+    );
+    const explicit = await renderLowered(
+      processor(
+        `const { value } = { value: ${explicitInitial} }; out.ch(0).at(i).write(f32(${explicitExpression}));`,
+      ),
+      config,
+    );
+    expect(explicit.outputs.main[0]).toEqual(new Float32Array(128).fill(1));
+    expect(actual.outputs).toEqual(explicit.outputs);
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
+
+const mutable = [
+  ["direct object write", "const values = { left: f32(0.5) * 2 }; values.left = 3;", "values.left"],
+  ["direct array write", "const values = [f32(0.5) * 2]; values[0] = 3;", "values[0]"],
+  [
+    "alias write",
+    "const values = { left: f32(0.5) * 2 }; const alias = values; alias.left = 3;",
+    "values.left",
+  ],
+  [
+    "original write",
+    "const values = { left: f32(0.5) * 2 }; const alias = values; values.left = 3;",
+    "alias.left",
+  ],
+  [
+    "nested alias write",
+    "const values = { inner: { left: f32(0.5) * 2 } }; const { inner } = values; inner.left = 3;",
+    "values.inner.left",
+  ],
+  [
+    "mutator escape",
+    "const values = [f32(0.5) * 2]; function reset(items: number[]) { items[0] = 3; } reset(values);",
+    "values[0]",
+  ],
+  ["array mutator", "const values = [f32(0.5) * 2]; values.fill(3);", "values[0]"],
+  ["binding reassignment", "let { value } = { value: f32(0.5) * 2 }; value = 3;", "value"],
+  [
+    "direct nested binding alias",
+    "const { inner } = { inner: { left: f32(0.5) * 2 } }; inner.left = 3;",
+    "inner.left",
+  ],
+  [
+    "parenthesized method receiver",
+    "const values = { left: f32(0.5) * 2, reset: function () { this.left = 3; } }; (values.reset)();",
+    "values.left",
+  ],
+  [
+    "stale scalar",
+    "let value = f32(0.5) * 2; value = 3; const values = { value };",
+    "values.value",
+  ],
+] as const;
+
+test.each(mutable)("preserves build-time arithmetic after %s", async (_, declarations, value) => {
+  const actual = await renderLowered(
+    processor(`${declarations} out.ch(0)[i] = Math.max(0, ${value} * 2);`),
+    config,
+  );
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(6));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test.each([
+  ["numeric sibling", "const values = { left: f32(0.5) * 2, gain: 3 };", "values.gain", "other"],
+  ["array length", "const values = [f32(0.5) * 2];", "values.length", "other"],
+  ["numeric element", "const values = [f32(0.5) * 2, 3];", "values[1]", "other"],
+  ["bare container", "const values = { left: f32(0.5) * 2 };", "values", "other"],
+  ["numeric binding", "const { gain } = { left: f32(0.5) * 2, gain: 3 };", "gain", "other"],
+  ["real State", "const values = { left: a };", "values.left", "state"],
+  [
+    "mixed dynamic State",
+    "const values = [a && b, a]; const index = Math.floor(1);",
+    "values[index]",
+    "state",
+  ],
+  [
+    "mixed numeric index",
+    "const values = [f32(0.5) * 2, 3]; const index = Math.floor(1);",
+    "values[index]",
+    "other",
+  ],
+  [
+    "later spread",
+    "const values = { left: f32(0.5) * 2, ...{ left: 3 } };",
+    "values.left",
+    "other",
+  ],
+  ["earlier array spread", "const values = [...[2, 3], f32(0.5) * 2];", "values[1]", "other"],
+  ["duplicate property", "const values = { left: f32(0.5) * 2, left: 3 };", "values.left", "other"],
+  [
+    "getter replacement",
+    "const values = { left: f32(0.5) * 2, get left() { return 3; } };",
+    "values.left",
+    "other",
+  ],
+  [
+    "unknown key",
+    'const key: string = "left"; const values = { left: f32(0.5) * 2, [key]: 3 };',
+    "values.left",
+    "other",
+  ],
+  ["default", "const { left = f32(0.5) * 2 } = { left: 3 };", "left", "other"],
+  ["rest", "const [left, ...rest] = [f32(0.5) * 2, 3];", "rest[0]", "other"],
+  [
+    "mixed helper result",
+    "function get(flag: boolean) { if (flag) return f32(1) * 2; return 3; } const values = { left: get(false) };",
+    "values.left",
+    "other",
+  ],
+] as const)("keeps existing classification for %s", (_, declarations, value, expected) => {
+  const { checker, sourceFile } = buildProgram(
+    `const a = state.bool(true); const b = state.bool(false); ${declarations} const result = ${value};`,
+  );
+  const statement = sourceFile.statements.at(-1)! as ts.VariableStatement;
+  expect(classify(checker, statement.declarationList.declarations[0]!.initializer!)).toBe(expected);
+});
+
+test("reads an actual State selected from a mixed dynamic array", async () => {
+  const actual = await renderLowered(
+    processor(
+      "const values = [a && b, a]; const index = Math.floor(1); out.ch(0)[i] = values[index] ? 1 : 0;",
+      'const a = state.bool(true).named("a"); const b = state.bool(false).named("b");',
+    ),
+    config,
+  );
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(1));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test.each([
+  [
+    "array length sibling",
+    "const values = [f32(1) * 2]; const count = values.length;",
+    "values[0]",
+    "node",
+  ],
+  [
+    "numeric sibling use",
+    "const values = { left: f32(1) * 2, gain: 3 }; const gain = Math.max(values.gain, 0);",
+    "values.left",
+    "node",
+  ],
+  [
+    "unrelated shadow",
+    "const values = [f32(1) * 2]; function shadow() { const values = [3]; values[0] = 4; }",
+    "values[0]",
+    "node",
+  ],
+  ["parenthesized container", "const values = { left: f32(1) * 2 };", "(values).left", "node"],
+  [
+    "asserted container",
+    "const values = { left: f32(1) * 2 };",
+    "(values as {left:number}).left",
+    "node",
+  ],
+  [
+    "type assertion",
+    "const values = { left: f32(1) * 2 };",
+    "(<{left:number}>values).left",
+    "node",
+  ],
+  [
+    "satisfies container",
+    "const values = { left: f32(1) * 2 };",
+    "(values satisfies {left:number}).left",
+    "node",
+  ],
+  ["non-null container", "const values = { left: f32(1) * 2 };", "values!.left", "node"],
+  ["inline member", "", "({left:f32(1)*2}).left", "node"],
+  ["numeric property", "const values = { 0: f32(1) * 2 };", "values[0]", "node"],
+  [
+    "earlier object spread",
+    "const values = { ...{ left: 3 }, left: f32(1) * 2 };",
+    "values.left",
+    "node",
+  ],
+  ["later array spread", "const values = [f32(1) * 2, ...[3]];", "values[0]", "node"],
+  ["unary value", "const values = {left: -f32(1)};", "values.left", "node"],
+  ["conditional value", "const values = {left: a ? 2 : 1};", "values.left", "node"],
+  ["build-time conditional", "const values = {left: true ? a : b};", "values.left", "state"],
+  ["nullish State", "const values = {left: a ?? b};", "values.left", "state"],
+  ["missing field", "const values = {left:f32(1)*2};", "values.missing", "other"],
+  ["missing element", "const values = [f32(1)*2];", "values[1]", "other"],
+  ["omitted element", "const values = [,f32(1)*2];", "values[0]", "other"],
+  [
+    "shorthand escape",
+    "const values = {left:f32(1)*2}; const escaped = {values};",
+    "values.left",
+    "other",
+  ],
+  [
+    "unknown binding key",
+    'const key:string="left"; const {[key]:value} = {left:f32(1)*2};',
+    "value",
+    "other",
+  ],
+  ["compound write", "const values = {left:f32(1)*2}; values.left += 3;", "values.left", "other"],
+  ["prefix write", "const values = {left:f32(1)*2}; ++values.left;", "values.left", "other"],
+  ["postfix write", "const values = {left:f32(1)*2}; values.left--;", "values.left", "other"],
+  ["delete", "const values = {left:f32(1)*2}; delete values.left;", "values.left", "other"],
+  [
+    "for-of write",
+    "const values = {left:f32(1)*2}; for (values.left of [3]) {}",
+    "values.left",
+    "other",
+  ],
+  [
+    "for-in write",
+    "const values = {left:f32(1)*2}; for (values.left in {key:3}) {}",
+    "values.left",
+    "other",
+  ],
+  [
+    "object target",
+    "const values = {left:f32(1)*2}; ({left:values.left}={left:3});",
+    "values.left",
+    "other",
+  ],
+  ["array target", "const values = {left:f32(1)*2}; [values.left]=[3];", "values.left", "other"],
+  ["mutable container", "let values = {left:f32(1)*2}; values = {left:3};", "values.left", "other"],
+  ["cyclic scalar", "const x=y; const y=x; const values = {left:x};", "values.left", "other"],
+] as const)("checks source-local provenance for %s", (_, declarations, value, expected) => {
+  const { checker, sourceFile } = buildProgram(
+    `const a = state.bool(true); const b = state.bool(false); ${declarations} const result = ${value};`,
+  );
+  const statement = sourceFile.statements.at(-1)! as ts.VariableStatement;
+  expect(classify(checker, statement.declarationList.declarations[0]!.initializer!)).toBe(expected);
+});
+
+test("preserves build-time arithmetic after a direct eval mutation", async () => {
+  const actual = await renderLowered(
+    processor(
+      'const values = { left: f32(0.5) * 2 }; eval("values.left = 3"); out.ch(0)[i] = Math.max(0, values.left * 2);',
+    ),
+    config,
+  );
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(6));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test("preserves indexed DSP reads inside containers", async () => {
+  const actual = await renderLowered(
+    processor(
+      "storage[0] = f32(1); const values = [storage[0]]; out.ch(0)[i] = values[0] * 2;",
+      'const storage = state.buffer.f32({size:1}).named("storage");',
+    ),
+    config,
+  );
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(2));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test.each(["values.reset?.()", "values.reset``", "(values.reset)``"] as const)(
+  "preserves a container mutated through %s",
+  async (call) => {
+    const actual = await renderLowered(
+      processor(
+        `const values = { left: f32(0.5) * 2, reset: function () { this.left = 3; } }; ${call}; out.ch(0)[i] = Math.max(0, values.left * 2);`,
+      ),
+      config,
+    );
+    expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(6));
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
+
+test.each([
+  ["const values = {__proto__:f32(1)*2};", "values.__proto__", "other"],
+  ["const values = {__proto__:{left:f32(1)*2}};", "values.left", "other"],
+  ['const values = {["__proto__"]:f32(1)*2};', 'values["__proto__"]', "other"],
+  ["const values = {left:3,left:f32(1)*2};", "values.left", "node"],
+  ['const key:string="left"; const values = {[key]:3,left:f32(1)*2};', "values.left", "node"],
+] as const)(
+  "respects object property definition semantics: %s",
+  (declarations, value, expected) => {
+    const { checker, sourceFile } = buildProgram(`${declarations} const result = ${value};`);
+    const statement = sourceFile.statements.at(-1)! as ts.VariableStatement;
+    expect(classify(checker, statement.declarationList.declarations[0]!.initializer!)).toBe(
+      expected,
+    );
+  },
+);
+
+test.each(mutable)("rejects stale provenance after %s", (_, declarations, value) => {
+  const { checker, sourceFile } = buildProgram(`${declarations} const result = ${value};`);
+  const statement = sourceFile.statements.at(-1)! as ts.VariableStatement;
+  expect(classify(checker, statement.declarationList.declarations[0]!.initializer!)).toBe("other");
+});
+
+function literalOrigin(source: string): string | undefined {
+  const file = ts.createSourceFile("/fixture.ts", source, ts.ScriptTarget.Latest, true);
+  const program = ts.createProgram(
+    [file.fileName],
+    { noLib: true, noResolve: true },
+    {
+      getSourceFile: (name) => (name === file.fileName ? file : undefined),
+      getDefaultLibFileName: () => "",
+      writeFile: () => {},
+      getCurrentDirectory: () => "/",
+      getDirectories: () => [],
+      fileExists: (name) => name === file.fileName,
+      readFile: (name) => (name === file.fileName ? source : undefined),
+      useCaseSensitiveFileNames: () => true,
+      getCanonicalFileName: (name) => name,
+      getNewLine: () => "\n",
+    },
+  );
+  const statement = file.statements.at(-1)! as ts.VariableStatement;
+  const expression = statement.declarationList.declarations[0]!.initializer!;
+  return containerValueOrigin(program.getTypeChecker(), expression)?.getText();
+}
+
+test.each(shapes)("resolves the literal origin of %s", (name, declarations, value) => {
+  expect(literalOrigin(`${declarations} const result = ${value};`)).toBe(
+    name === "scalar alias" ? "value" : "VALUE",
+  );
+});
+
+test.each([
+  ["const values={left:VALUE,other:3};", "values.left", "VALUE"],
+  ["const values={left:VALUE};", "((values as {left:number})!).left", "VALUE"],
+  ["const values={left:VALUE};", "(<{left:number}>values).left", "VALUE"],
+  ["const values={left:VALUE};", "(values satisfies {left:number}).left", "VALUE"],
+  ["const values=[VALUE];const count=values.length;", "values[0]", "VALUE"],
+  ["const values=[VALUE];", "values.length", undefined],
+  ["const values={left:VALUE}; const alias=values;", "values.left", undefined],
+  ["const values={left:VALUE}; const escaped={values};", "values.left", undefined],
+  ["const values={left:VALUE}; values.left=3;", "values.left", undefined],
+  ["const values=[VALUE]; values[0]=3;", "values[0]", undefined],
+  ["const values={left:VALUE}; values.left+=3;", "values.left", undefined],
+  ["const values={left:VALUE}; ++values.left;", "values.left", undefined],
+  ["const values={left:VALUE}; values.left--;", "values.left", undefined],
+  ["const values={left:VALUE}; delete values.left;", "values.left", undefined],
+  ["const values={left:VALUE}; for(values.left of [3]){}", "values.left", undefined],
+  ["const values={left:VALUE}; for(values.left in {key:3}){}", "values.left", undefined],
+  ["const values={left:VALUE}; ({left:values.left}={left:3});", "values.left", undefined],
+  ["const values={left:VALUE}; [values.left]=[3];", "values.left", undefined],
+  ["const values={left:VALUE}; (values.left)=3;", "values.left", undefined],
+  ["const values={left:VALUE}; values.left.deep=3;", "values.left", undefined],
+  ["const values={left:VALUE}; values.left[0]=3;", "values.left", undefined],
+  ["const values={left:VALUE}; reset(values);", "values.left", undefined],
+  ["const values={left:VALUE}; const x=values.missing;", "values.left", undefined],
+  ["const values={left:VALUE}; (eval)('values.left=3');", "values.left", undefined],
+  [
+    "const values={left:VALUE,reset:function(){this.left=3}}; values.reset();",
+    "values.left",
+    undefined,
+  ],
+  [
+    "const values={left:VALUE,reset:function(){this.left=3}}; (values.reset)();",
+    "values.left",
+    undefined,
+  ],
+  [
+    "const values={left:VALUE,reset:function(){this.left=3}}; values.reset?.();",
+    "values.left",
+    undefined,
+  ],
+  [
+    "const values={left:VALUE,reset:function(){this.left=3}}; values.reset``;",
+    "values.left",
+    undefined,
+  ],
+  [
+    "const values={left:VALUE,reset:function(){this.left=3}}; (values.reset)``;",
+    "values.left",
+    undefined,
+  ],
+  ["const values={left:VALUE,reset:function(){}}; use(values.reset);", "values.left", "VALUE"],
+  [
+    "const values={left:VALUE}; function shadow(){const values={left:3};values.left=4}",
+    "values.left",
+    "VALUE",
+  ],
+  ["const values={left:VALUE};", "values.missing", undefined],
+  ["const values=[VALUE];", "values[1]", undefined],
+  ["const values=[,VALUE];", "values[0]", undefined],
+  ["const values={left:VALUE}; const key:string='left';", "values[key]", undefined],
+  ["const values={left:VALUE,left:3};", "values.left", "3"],
+  ["const values={left:3,left:VALUE};", "values.left", "VALUE"],
+  ["const values={left:VALUE,get left(){return 3}};", "values.left", undefined],
+  ["const values={left:VALUE,set left(value:number){}};", "values.left", undefined],
+  ["const values={left:VALUE,left(){return 3}};", "values.left", undefined],
+  ["const key:string='left';const values={left:VALUE,[key]:3};", "values.left", undefined],
+  ["const key:string='left';const values={[key]:3,left:VALUE};", "values.left", "VALUE"],
+  ["const values={left:VALUE,...{left:3}};", "values.left", undefined],
+  ["const values={...{left:3},left:VALUE};", "values.left", "VALUE"],
+  ["const values=[...[3],VALUE];", "values[1]", undefined],
+  ["const values=[VALUE,...[3]];", "values[0]", "VALUE"],
+  ["const values={__proto__:VALUE};", "values.__proto__", undefined],
+  ["const values={__proto__:{left:VALUE}};", "values.left", undefined],
+  ["const values={['__proto__']:VALUE};", "values['__proto__']", undefined],
+  ["const [left,...rest]=[VALUE,3];", "rest[0]", undefined],
+  ["const {left,...rest}={left:VALUE,right:3};", "rest", undefined],
+  ["const {left=VALUE}={left:3};", "left", undefined],
+  ["const key:string='left';const {[key]:left}={left:VALUE};", "left", undefined],
+  ["const {inner}={inner:{left:VALUE}};inner.left=3;", "inner.left", undefined],
+  ["let values={left:VALUE};", "values.left", undefined],
+  ["declare const values:{left:number};", "values.left", undefined],
+  ["const values=foreign;", "values.left", undefined],
+  ["", "foreign.left", undefined],
+  ["", "({left:VALUE}).left", "VALUE"],
+  ["", "{left:VALUE}", undefined],
+  ["", "(3).missing", undefined],
+] as const)("checks a literal provenance boundary: %s %s", (declarations, value, expected) => {
+  expect(literalOrigin(`${declarations} const result=${value};`)).toBe(expected);
+});
+
+test("a catch binding is not an immutable declaration", () => {
+  const file = ts.createSourceFile(
+    "/fixture.ts",
+    "try {} catch (value) {}",
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const statement = file.statements[0]! as ts.TryStatement;
+  expect(isConstDeclaration(statement.catchClause!.variableDeclaration!)).toBe(false);
+});
+
+test.each([
+  [
+    "forward",
+    false,
+    'function scale(x:Node<"f32">, again:boolean) { if(again) return scale(x,false)*2; return x*1; }',
+  ],
+  [
+    "preceding",
+    true,
+    'function scale(x:Node<"f32">, again:boolean) { if(again) return scale(x,false)*2; return x*1; }',
+  ],
+  [
+    "container return",
+    false,
+    'function scale(x:Node<"f32">, again:boolean) { if(again) {const values=[scale(x,false)*2]; return values[0];} return x*1; }',
+  ],
+  [
+    "mutual",
+    false,
+    'function scale(x:Node<"f32">, again:boolean) { if(again) return finish(x)*2; return x*1; } function finish(x:Node<"f32">) {return scale(x,false);}',
+  ],
+] as const)(
+  "preserves finite %s recursive helper values in a literal",
+  async (_, before, helper) => {
+    const wrap = (declarations: string, body: string): string => `
+    const out=audioOutput({channels:1,name:"main"});
+    ${before ? declarations : ""}
+    process(()=>{forSample(i=>{${body}})});
+    ${before ? "" : declarations}
+  `;
+    const actual = await renderLowered(
+      wrap(helper, "const values={left:scale(f32(0.5),true)*2}; out.ch(0)[i]=values.left*2;"),
+      config,
+    );
+    const explicitHelper = helper
+      .replaceAll("scale(x,false)*2", "mul(scale(x,false),2)")
+      .replaceAll("finish(x)*2", "mul(finish(x),2)")
+      .replaceAll("x*1", "mul(x,1)");
+    const explicit = await renderLowered(
+      wrap(
+        explicitHelper,
+        "const values={left:mul(scale(f32(0.5),true),2)}; out.ch(0).at(i).write(mul(values.left,2));",
+      ),
+      config,
+    );
+    expect(explicit.outputs.main[0]).toEqual(new Float32Array(128).fill(4));
+    expect(actual.outputs).toEqual(explicit.outputs);
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
