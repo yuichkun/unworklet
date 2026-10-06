@@ -112,6 +112,71 @@ test.each(["lower.ts", "src/client.ts"])(
   },
 );
 
+const proseContainers: [string, (content: string) => string][] = [
+  ["paragraph", (content) => content],
+  ["heading", (content) => `## ${content}`],
+  ["list", (content) => `- ${content}`],
+  ["nested list", (content) => `- Evidence\n  - ${content}`],
+  ["blockquote", (content) => `> ${content}`],
+  ["table header", (content) => `| ${content} |\n| --- |\n| setting |`],
+  ["table body", (content) => `| Evidence |\n| --- |\n| ${content} |`],
+];
+test.each([
+  `[line 12](${file})`,
+  `[lines 12-34](${file})`,
+  `[L12-L34](${file})`,
+  `[\`L12\`](${file})`,
+  `[**lines 12-34**](${file})`,
+  `[lines \`12-34\`][compiler]\n\n[compiler]: ${file}`,
+  `[compiler at line 12](${file})`,
+  `[line 12](${file}#definition)`,
+  `[lines 12-34](${file}?plain=1#definition)`,
+  `[L12](${file}?plain=1)`,
+])("explicit line labels are bound to their parsed source destination: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+});
+
+test.each([
+  `[compiler source](${file})`,
+  `[compiler definition](${file}#definition)`,
+  `[compiler source](${file}?plain=1#definition)`,
+  `[issue 12](${file})`,
+  `[#12](${file})`,
+  `[12](${file})`,
+  `[12 lines per block](${file})`,
+  `[L1 cache](${file})`,
+  "[line 12](src/check.uwk.ts)",
+  "[lines 12-34][app]\n\n[app]: src/check.uwk.ts",
+])("descriptive, numeric, and consumer link labels are not source locations: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
+test.each(
+  proseContainers.flatMap(([name, render]) =>
+    [
+      `[source](${file}) at line 12`,
+      "**[source][compiler]** at lines `12-34`",
+      `\`${file}\` at line 12`,
+    ].map((content) => [name, `${render(content)}\n\n[compiler]: ${file}`]),
+  ),
+)("numeric source evidence is checked within each Markdown prose container: %s", (_, markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+});
+
+test.each([
+  `| Source | Diagnostic |\n| --- | --- |\n| [source](${file}) | \`check.uwk.ts:12\` |`,
+  `| Source | Label |\n| --- | --- |\n| [source](${file}) | at \`L12\` |`,
+  `| Evidence |\n| --- |\n| [source](${file}) processes 12 lines per block |`,
+  "| Consumer |\n| --- |\n| [app](src/check.uwk.ts) at line 12 |",
+  `\`\`\`text\n| Evidence |\n| --- |\n| [source](${file}) at line 12 |\n\`\`\``,
+])("table cells retain consumer and code controls without cross-cell inference: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
 test.each([
   "Edit `./src/synth.uwk.ts` and `../shared/voice.ts` in your app.",
   "Your `vite.config.ts` and `vite-env.d.ts` configure the app.",
@@ -229,6 +294,9 @@ test("a full source path in a link still checks numeric fragments", () => {
 
 test.each([
   `[source](${file}) at line 12`,
+  `[source](${file}#definition) at line 12`,
+  `[source](${file}?plain=1#definition) at lines 12-34`,
+  `[source](${file}?plain=1) (\`L12-L34\`)`,
   `[source](${file}) lines 12-34`,
   `[source](${file}) (\`L12-L34\`)`,
   `[source](<${file}>) at line 12`,

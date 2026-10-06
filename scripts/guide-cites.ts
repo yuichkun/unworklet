@@ -82,7 +82,7 @@ export function validateGuideCitations(
   const linkDestinations = (tokens: Token[]): string =>
     tokens
       .map((token) => {
-        if (token.type === "link") return token.href;
+        if (token.type === "link") return token.href.replace(/[?#].*$/, "");
         if ("tokens" in token && token.tokens) return linkDestinations(token.tokens);
         return token.raw;
       })
@@ -97,7 +97,26 @@ export function validateGuideCitations(
       inspectProse(token.text);
       if ("tokens" in token && token.tokens) inspectProse(linkDestinations(token.tokens));
     }
-    if (token.type === "link") inspectProse(token.href);
+    if (token.type === "link") {
+      inspectProse(token.href);
+      if (token.tokens && token.href.match(repositoryFile)) {
+        const label = normalize(linkDestinations(token.tokens).replaceAll("`", ""));
+        const location =
+          /\blines?\s+L?\d+(?:\s*[-–]\s*L?\d+|\s+to\s+L?\d+)?\b|^L\d+(?:\s*[-–]\s*L?\d+)?$/i.exec(
+            label,
+          );
+        if (location)
+          errors.push(
+            `numeric source location: ${token.href} ${location[0]}; use a content-anchored [cite:]`,
+          );
+      }
+    }
+    if (token.type === "table") {
+      for (const cell of [...token.header, ...token.rows.flat()]) {
+        inspectProse(cell.text);
+        inspectProse(linkDestinations(cell.tokens));
+      }
+    }
   });
 
   return [...new Set(errors)];
