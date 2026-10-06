@@ -118,3 +118,21 @@ process(() => { forSample(i => {
   const result = await renderOffline(lowerToProcessor(source), config);
   expect([...result.outputs.main[0]!]).toEqual(Array(128).fill(11));
 });
+
+test("merged global helper symbols preserve authored declarations and type references", () => {
+  const source = `import type { Node as mul } from "@unworklet/core";
+declare global {
+  interface mul { marker: number }
+  interface Container { value: mul; helper: typeof mul; helperCall: typeof mul.call }
+}
+export const gain = defineSubgraph(() => ({ tick: (value: mul<"f32">) => value * f32(2) }));`;
+  expect(diagnostics(source.replace("value * f32(2)", "value.mul(f32(2))"))).toEqual([]);
+  const lowered = lower(source);
+  expect(lowered).toContain("interface mul {");
+  expect(lowered).toContain("value: mul;");
+  const alias = lowered.match(/mul as (\w+)/)?.[1];
+  expect(alias).toBeDefined();
+  expect(lowered).toContain(`helper: typeof ${alias};`);
+  expect(lowered).toContain(`helperCall: typeof ${alias}.call;`);
+  expect(diagnostics(lowered)).toEqual([]);
+});

@@ -300,10 +300,21 @@ function generatedHelperBindings(
   const ambientReferences = new Set<ts.Identifier>();
   const collectAmbientReferences = (node: ts.Node): void => {
     if (ts.isIdentifier(node) && typeOnlyNames.has(node.text)) {
-      const symbol =
-        ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
-          ? checker.resolveName(node.text, node, ts.SymbolFlags.Value, false)
-          : checker.getSymbolAtLocation(node);
+      const parent = node.parent;
+      const shorthand = ts.isShorthandPropertyAssignment(parent) && parent.name === node;
+      // Declaration merging can share a symbol across value and type names.
+      // Only value references follow the alias, never declarations or property keys.
+      if (
+        (!shorthand && "name" in parent && parent.name === node) ||
+        ("propertyName" in parent && parent.propertyName === node) ||
+        (ts.isQualifiedName(parent) && parent.right === node) ||
+        ts.isPartOfTypeNode(node)
+      ) {
+        return;
+      }
+      const symbol = shorthand
+        ? checker.resolveName(node.text, node, ts.SymbolFlags.Value, false)
+        : checker.getSymbolAtLocation(node);
       if (
         symbol !== undefined &&
         symbol === checker.resolveName(node.text, undefined, ts.SymbolFlags.Value, false)
