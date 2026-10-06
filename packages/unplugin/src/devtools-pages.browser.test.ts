@@ -274,11 +274,17 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await b.waitForFunction("globalThis.released.includes(67)");
     await b.waitForFunction("globalThis.audioLevel() > 0.1");
     await b.evaluate("globalThis.captureConnection()");
-    const held = await panel.locator(".key-white").nth(5).boundingBox();
-    if (!held) throw new Error("Piano key is not visible");
-    await panel.mouse.move(held.x + held.width / 2, held.y + held.height - 8);
-    await panel.mouse.down();
-    await b.waitForFunction("globalThis.received.includes(69)");
+    await playKey(5);
+    await b.waitForFunction(
+      "globalThis.received.filter(note => note === 69).length === 1 && globalThis.released.filter(note => note === 69).length === 1",
+    );
+    expect(
+      await panel
+        .locator('input:focus, textarea:focus, select:focus, [contenteditable="true"]:focus')
+        .count(),
+    ).toBe(0);
+    await panel.keyboard.down("h");
+    await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 2");
     for (const controller of [66, 69])
       await injectEvent(reloadedId, input(reloadedId)!.nodeId, {
         type: "cc",
@@ -288,15 +294,16 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
       });
     await inject(reloadedId, input(reloadedId)!.nodeId, 69);
     await inject(reloadedId, input(reloadedId)!.nodeId, 69);
-    await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 3");
+    await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 4");
+    expect(await b.evaluate("globalThis.released.filter(note => note === 69).length")).toBe(1);
     disconnectPage();
-    await b.waitForFunction("globalThis.released.filter(note => note === 69).length === 3");
+    await b.waitForFunction("globalThis.released.filter(note => note === 69).length === 4");
     await b.waitForFunction("globalThis.audioLevel() < 0.001");
     await b.waitForFunction("globalThis.devtoolsStatus() === 'disconnected'");
     await expect.poll(() => pages.value().pages.length, { timeout: 5000 }).toBe(0);
     expect(await selector.inputValue()).toBe(reloadedId);
-    await panel.mouse.up();
-    expect(await b.evaluate("globalThis.released")).toEqual([67, 69, 69, 69]);
+    await panel.keyboard.up("h");
+    expect(await b.evaluate("globalThis.released")).toEqual([67, 69, 69, 69, 69]);
     await b.reload();
     await b.waitForFunction("globalThis.generation === 1");
     await b.waitForFunction("globalThis.devtoolsStatus() === 'connected'");

@@ -109,6 +109,13 @@ Off on every channel of the selected input.
 
 ## Shared-state and RPC consumers
 
+Custom TypeScript integrations opt into the client RPC and shared-state types
+with `import type {} from "@unworklet/unplugin/devtools"`. This type-only entry
+augments the DevTools client's interfaces. Ordinary plugin consumers do not
+need this entry. `devframe` is an explicit dependency
+so the opt-in declarations resolve under strict package-manager layouts. The
+plugin adds no runtime import of it, and the DevTools kit remains optional.
+
 The built-in panels read `unworklet:page-graph`, `unworklet:page-state`,
 `unworklet:page-signals`, and `unworklet:page-midi`. Each contains
 `{ pages: { [pageId]: snapshot } }`; `unworklet:pages` lists live page metadata.
@@ -154,7 +161,7 @@ to the 0.4 major, marked optional (`packages/unplugin/package.json`):
   an unplugin peer.
 - **Why coupled to the major:** live panels push to the dev server through an
   anonymous RPC scope whose prefix is coupled to the DevTools major
-  (`devframe:anonymous:` on the current line). A mismatched-major host silently
+  (`anonymous:` on the current line). A mismatched-major host silently
   rejects every push (DTK0013) and panels stay empty.
   (`packages/unplugin/src/index.ts` L708-719)
 - **Must be a direct dep:** the panel's page bridge imports
