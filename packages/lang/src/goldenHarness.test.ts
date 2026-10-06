@@ -1,6 +1,14 @@
 import { expect, test, vi } from "vite-plus/test";
 
-import { expectSameLoweredText, renderLoweredText } from "./goldenHarness.ts";
+import * as evaluation from "./eval-lowered.ts";
+import {
+  evalLowered,
+  expectSameLoweredText,
+  expectSameLowering,
+  fingerprintOf,
+  renderLoweredText,
+} from "./goldenHarness.ts";
+import * as lowering from "./lower.ts";
 
 const counter = `import { add, audioOutput, defineProcessor, forSample, state } from "@unworklet/core";
 let captures = 0;
@@ -46,4 +54,35 @@ test.each(["sequential", "concurrent"])(
 
 test("prepared fingerprints evaluate independent capture closures for identical text", async () => {
   await expect(expectSameLoweredText(counter, counter)).resolves.toBeUndefined();
+});
+
+test("prepared fingerprints reject different graphs with the same schema and layout", async () => {
+  const changed = counter.replace("add(count.read(), captures)", "add(count.read(), captures + 1)");
+  const [a, b] = await Promise.all([
+    fingerprintOf(evalLowered(counter)),
+    fingerprintOf(evalLowered(changed)),
+  ]);
+  expect(a.schemaHash).toBe(b.schemaHash);
+  expect(a.layout).toBe(b.layout);
+  expect(a.graph).not.toBe(b.graph);
+  await expect(expectSameLoweredText(counter, changed)).rejects.toThrow();
+});
+
+test("source wrapper preserves first-source evaluation error precedence", async () => {
+  const firstError = new Error("first-source evaluation");
+  const lower = vi.spyOn(lowering, "lower").mockImplementation((source) => {
+    if (source === "first") return counter;
+    throw new Error("second-source lowering");
+  });
+  const evaluate = vi.spyOn(evaluation, "evalLowered").mockImplementation(() => {
+    throw firstError;
+  });
+  try {
+    await expect(expectSameLowering("first", "second")).rejects.toBe(firstError);
+    expect(lower).toHaveBeenCalledTimes(1);
+    expect(evaluate).toHaveBeenCalledTimes(1);
+  } finally {
+    evaluate.mockRestore();
+    lower.mockRestore();
+  }
 });
