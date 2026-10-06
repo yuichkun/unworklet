@@ -1244,7 +1244,7 @@ const endSession = () => {
 };
 const startSession = async () => {
   if (disposed || hidden || !client || pageId) return;
-  const id = crypto.randomUUID();
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
   pageId = id;
   lastInjectSeq = 0;
   lastMidiSig = "";

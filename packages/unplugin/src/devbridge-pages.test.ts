@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomFillSync } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
 import { expect, test, vi } from "vite-plus/test";
 import * as bridge from "./devbridge.ts";
@@ -31,7 +31,7 @@ function createPage(js: string, failOpen = false, rejectOpen = false) {
   ];
   const context = createContext({
     ...bridge,
-    crypto: { randomUUID },
+    crypto: { getRandomValues: randomFillSync },
     document: { title: "Same app" },
     location: new URL("http://localhost:5173/"),
     addEventListener: (name: string, fn: () => void) => windowEvents.set(name, fn),
@@ -276,3 +276,14 @@ for (const cleanup of ["HMR", "node disposal"] as const) {
     expect(unsubscribe).toHaveBeenCalledTimes(9);
   });
 }
+
+test("generated bridge registers on development origins without crypto.randomUUID", async () => {
+  const page = createPage(await pageBridge());
+  await flush();
+  expect(page.calls.some((call) => call.name.endsWith("page-open"))).toBe(true);
+  expect(pageId(page)).toMatch(/^[0-9a-f]{32}$/);
+  await page.timers.get(150)!();
+  await flush();
+  page.inject([injectCommand(pageId(page))]);
+  expect(page.send).toHaveBeenCalledTimes(1);
+});

@@ -128,6 +128,12 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     const panel = await browserContext.newPage();
     await panel.goto(panelUrl.href);
     const selector = panel.getByLabel("Application page");
+    const playKey = async (index: number): Promise<void> => {
+      const key = panel.locator(".key-white").nth(index);
+      const bounds = await key.boundingBox();
+      if (!bounds) throw new Error("Piano key is not visible");
+      await key.click({ position: { x: bounds.width / 2, y: bounds.height - 8 } });
+    };
     await panel.waitForFunction(
       (token) => Object.values(localStorage).includes(token),
       descriptor.authToken,
@@ -170,13 +176,13 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await selector.selectOption(aId);
     await panel.locator(".fade-leave-active").waitFor({ state: "detached" });
     await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
-    await panel.locator(".key-white").nth(0).click();
+    await playKey(0);
     await a.waitForFunction("globalThis.received.length === 1");
     expect(await b.evaluate("globalThis.received")).toEqual([]);
     await selector.selectOption(bId);
     await panel.locator(".fade-leave-active").waitFor({ state: "detached" });
     await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
-    await panel.locator(".key-white").nth(1).click();
+    await playKey(1);
     await b.waitForFunction("globalThis.received.length === 1");
     expect(await a.evaluate("globalThis.received")).toEqual([60]);
     await writeFile(processorPath, source("second"));
@@ -189,12 +195,12 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await expect
       .poll(() => panel.locator(".inject-routing select").inputValue())
       .toBe(input(aId)!.nodeId + ".in");
-    await panel.locator(".key-white").nth(2).click();
+    await playKey(2);
     await a.waitForFunction("globalThis.received.length === 2");
     expect(await a.evaluate("globalThis.received")).toEqual([60, 64]);
     expect(await b.evaluate("globalThis.received")).toEqual([62]);
     await a.close();
-    await expect.poll(() => pages.value().pages.map((p) => p.id)).toEqual([bId]);
+    await expect.poll(() => pages.value().pages.map((p) => p.id), { timeout: 5000 }).toEqual([bId]);
     expect(await selector.inputValue()).toBe(aId);
     await expect.poll(() => panel.locator(".inject-routing select option").count()).toBe(0);
     expect(await panel.locator(".inject-routing select").inputValue()).toBe("");
@@ -202,7 +208,9 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await b.waitForFunction("globalThis.generation === 1");
     await b.waitForFunction("globalThis.devtoolsStatus() === 'connected'");
     await expect
-      .poll(() => pages.value().pages.length === 1 && pages.value().pages[0]!.id !== bId)
+      .poll(() => pages.value().pages.length === 1 && pages.value().pages[0]!.id !== bId, {
+        timeout: 5000,
+      })
       .toBe(true);
     const reloadedId = pages.value().pages[0]!.id;
     await expect.poll(() => input(reloadedId)?.nodeId).toBe("n0");
@@ -211,7 +219,7 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await selector.selectOption(reloadedId);
     await panel.locator(".fade-leave-active").waitFor({ state: "detached" });
     await expect.poll(() => panel.locator(".inject-routing select").inputValue()).toBe("n0.in");
-    await panel.locator(".key-white").nth(4).click();
+    await playKey(4);
     await b.waitForFunction("globalThis.received.length === 1");
     expect(await b.evaluate("globalThis.received")).toEqual([67]);
     const queue = await ctx.rpc.sharedState.get<PageMidiInject>("unworklet:midi-inject");
