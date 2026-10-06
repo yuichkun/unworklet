@@ -11,7 +11,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "demo-build-"));
   roots.push(root);
   execFileSync("git", ["init", "-q", root]);
-  writeFileSync(join(root, ".gitignore"), "dist\n");
+  writeFileSync(join(root, ".gitignore"), readFileSync(join(import.meta.dirname, "../.gitignore")));
   writeFileSync(join(root, "README.md"), "Fixture workspace");
   for (const name of ["core", "unplugin", "offline", "test", "lang"]) {
     mkdirSync(join(root, "packages", name, "dist"), { recursive: true });
@@ -93,6 +93,67 @@ test("marks dirty builds and previews without claiming a published release", () 
   expect(preview.info.label).toContain("Preview workspace v0.4.0");
   expect(preview.info.source).toBe(local.info.source);
 });
+
+test("keeps generated root package-store files out of build identity", () => {
+  const { root, build } = fixture();
+  const clean = prepareDemoBuild(root, build, {});
+  const cache = join(root, ".pnpm-store/v11/files");
+  mkdirSync(cache, { recursive: true });
+  writeFileSync(join(cache, "cached-package"), "cached dependency");
+  const cached = prepareDemoBuild(root, build, {});
+  expect(cached.info).toEqual(clean.info);
+  expect(cached.info.dirty).toBe(false);
+  expect(() => clean.verify()).not.toThrow();
+
+  const growing = prepareDemoBuild(
+    root,
+    (name) => {
+      build(name);
+      writeFileSync(join(cache, name), `generated while building ${name}`);
+    },
+    {},
+  );
+  expect(growing.info).toEqual(clean.info);
+  writeFileSync(join(cache, "cached-package"), "refreshed dependency");
+  expect(() => growing.verify()).not.toThrow();
+  expect(prepareDemoBuild(root, build, {}).info).toEqual(clean.info);
+});
+
+test("still fingerprints untracked package-store names outside the generated root store", () => {
+  const { root, build } = fixture();
+  const clean = prepareDemoBuild(root, build, {});
+  const nested = join(root, "packages/core/.pnpm-store");
+  mkdirSync(nested);
+  writeFileSync(join(nested, "source.ts"), "unexpected source");
+  const changed = prepareDemoBuild(root, build, {});
+  expect(changed.info.dirty).toBe(true);
+  expect(changed.info.source).not.toBe(clean.info.source);
+  expect(() => clean.verify()).toThrow(/source changed/);
+});
+
+test.each(["vercel.json", ".pnpm-store/tracked.json"])(
+  "keeps unexpected tracked changes visible in build identity: %s",
+  (file) => {
+    const { root, build } = fixture();
+    mkdirSync(join(root, ".pnpm-store"));
+    writeFileSync(join(root, file), '{"buildCommand":"vp build"}\n');
+    execFileSync("git", ["add", "--force", file], { cwd: root });
+    execFileSync(
+      "git",
+      ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "config"],
+      { cwd: root },
+    );
+    const clean = prepareDemoBuild(root, build, {});
+    expect(clean.info.dirty).toBe(false);
+    writeFileSync(join(root, file), '{"buildCommand":"unexpected command"}\n');
+    const changed = prepareDemoBuild(root, build, {});
+    expect(changed.info.dirty).toBe(true);
+    expect(changed.info.label).toContain("dirty");
+    expect(changed.info.source).not.toBe(clean.info.source);
+    expect(() => clean.verify()).toThrow(/source changed/);
+    expect(() => changed.verify()).not.toThrow();
+  },
+);
 
 async function bundleFixture(wrongResolution = false) {
   const { root, build } = fixture();
