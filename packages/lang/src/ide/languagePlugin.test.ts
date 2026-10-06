@@ -16,6 +16,11 @@ import {
 import ts from "typescript";
 import { expect, test } from "vite-plus/test";
 
+import {
+  COLLIDING_HELPERS,
+  COLLIDING_IMPORTS,
+  COLLIDING_SCOPE_BODIES,
+} from "../../test/generated-helpers.ts";
 import { AMBIENT_DTS } from "../ambient.ts";
 import { createUwkLanguagePlugin } from "./languagePlugin.ts";
 
@@ -115,6 +120,44 @@ function at(source: string, needle: string, nudge = 1): number {
   if (i < 0) throw new Error(`needle not found: ${needle}`);
   return i + nudge;
 }
+
+test.each([COLLIDING_HELPERS, ...COLLIDING_SCOPE_BODIES, ...COLLIDING_IMPORTS])(
+  "generated helper collisions report no editor diagnostics: %s",
+  (source) => {
+    expect(diagnostics(source)).toEqual([]);
+  },
+);
+
+test("generated helper collisions preserve authored call diagnostics, hover, and definitions", () => {
+  const source = `const mul = (a: number, b: number) => a + b;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => {
+  const wet = f32(0.5) * f32(2);
+  mul("incorrect", 2);
+  out.ch(0)[i] = wet;
+}); });`;
+  const diags = diagnostics(source);
+  expect(diags).toHaveLength(1);
+  expect(diags[0]!.span).toBe('"incorrect"');
+  expect(diags[0]!.message).toMatch(/string.*number/);
+
+  const { ls, fileName } = service(source);
+  const info = ls.getQuickInfoAtPosition(fileName, at(source, "wet"));
+  expect(info?.displayParts?.map((part) => part.text).join("")).toContain('Node<"f32">');
+  const definitions = ls.getDefinitionAtPosition(fileName, at(source, 'mul("incorrect"'));
+  expect(definitions).toHaveLength(1);
+  expect(definitions![0]!.fileName).toBe(fileName);
+  expect(definitions![0]!.textSpan).toEqual({ start: source.indexOf("mul"), length: 3 });
+});
+
+test("generated helper collisions preserve diagnostics on invalid DSP operands", () => {
+  const source = `const mul = (a: number, b: number) => a + b;
+const out = audioOutput({ channels: 1, name: "main" });
+  process(() => { forSample(i => { out.ch(0)[i] = f32(1) * "incorrect"; }); });`;
+  const diags = diagnostics(source);
+  expect(diags).toHaveLength(1);
+  expect(diags).toEqual(diagnostics(source.replace("const mul =", "const localMul =")));
+});
 
 // ───────────────────────── valid sugar → zero diagnostics ───────────────────
 

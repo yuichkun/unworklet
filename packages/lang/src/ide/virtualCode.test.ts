@@ -13,6 +13,7 @@
 import type { CodeMapping } from "@volar/language-core";
 import { expect, test } from "vite-plus/test";
 
+import { COLLIDING_HELPERS, GENERATED_HELPER_EXPRESSIONS } from "../../test/generated-helpers.ts";
 import { generateVirtualCode, type VirtualCodeResult } from "./virtualCode.ts";
 
 /** A mono processor body around `decls` + per-sample `body`. */
@@ -31,6 +32,34 @@ const code = (src: string): string => gen(src).code;
 
 /** A verbatim (author) mapping vs. an injected (synthetic) one. */
 const isSynth = (m: CodeMapping): boolean => m.generatedLengths !== undefined;
+
+test("generated helper collisions preserve authored text and source mapping boundaries", () => {
+  const result = gen(COLLIDING_HELPERS);
+  for (const [name] of GENERATED_HELPER_EXPRESSIONS) {
+    const alias = result.code.match(
+      new RegExp(`declare const (\\w+): typeof import\\("@unworklet/core"\\)\\.${name};`),
+    )?.[1];
+    expect(alias, name).toBeDefined();
+    expect(alias).not.toBe(name);
+    expect(result.code).toContain(`${alias}(`);
+    expect(result.code).toContain(`const ${name} = (a: number, b = 0) => a + b;`);
+  }
+  expect(result.code).toContain("mul(1, 2) + __uwk_mul + __uwk_mul_1 + __uwk_mul_2");
+  for (const mapping of result.mappings) {
+    const generated = mapping.generatedOffsets[0]!;
+    if (isSynth(mapping)) {
+      expect(mapping.lengths).toEqual([0]);
+      expect(mapping.data.navigation).toBeUndefined();
+      expect(mapping.data.verification).toBe(true);
+    } else {
+      const source = mapping.sourceOffsets[0]!;
+      const length = mapping.lengths[0]!;
+      expect(result.code.slice(generated, generated + length)).toBe(
+        COLLIDING_HELPERS.slice(source, source + length),
+      );
+    }
+  }
+});
 
 /** Map a source offset through the FULL (verbatim) mappings to a generated offset. */
 function toGenerated(result: VirtualCodeResult, sourceOffset: number): number {

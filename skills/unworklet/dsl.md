@@ -121,6 +121,8 @@ Generated sugar calls use the core helpers even when an authored binding has
 the same name. For example, a local `mul` does not affect DSP `a * b`; an explicit
 `mul(a, b)` still calls the authored binding. Generated import aliases avoid
 authored names in nested scopes too.
+The editor plugin and `unworklet-tsc` use the same helper bindings and preserve
+diagnostics on authored calls and operands.
 
 Closed operator set: `classify.ts:120` (`isSugarBinaryOperator`). Method chains
 interoperate with operators in the same body (core `Node` methods classify as
@@ -179,6 +181,11 @@ throws `uwk-unsupported-if` (rewrite to `select(...)`). The error’s optional
 | `if (c) s.write(a) else s.write(b)` (same target) | `s.write(select(c, a, b))`                |
 | `if (c) port.emit(p)` (block of emits)            | `port.emitIf(c, p)` (each)                |
 
+Buffer indices in these writes accept the same arithmetic, index-access, and
+bare-state sugar as unconditional writes, including `buf[i + 1] = value` and
+`buf.write(i + 1, value)`. A symmetric buffer `if`/`else` must use the same buffer
+and index expression in both branches.
+
 — `ifSugar.ts:149,155,159,164`
 
 **Multi-statement bodies with the same `Node<'bool'>` guard**: an `if (c) { s1.write(a); s2.write(b); port.emit(payload) }` isn't one of the 3 shapes. Write each side as its own guarded statement — the sugar lowers each individually and the pass optimizer coalesces them, so the runtime cost is identical:
@@ -235,6 +242,9 @@ plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
 - A `Node<'bool'>` `if` outside the 3 shapes → `uwk-unsupported-if`; use `select`.
 - `migrations()` / `options()` are processor-only and cannot reference a
   process-body binding → `uwk-options-binding` / `uwk-options-without-process`.
+  Static property names (such as `options({ id: "osc" })`), imported values, and
+  bindings local to an inline callback are allowed. Shorthand values, computed
+  keys, and callback closures must not capture a processor-body binding.
 - `options({ id: "my-synth" })` sets the processor's stable IDENTITY (also
   `defineProcessor(body, { id })` in `.processor.ts`). It is stamped into every
   snapshot blob: `schemaHash` covers declarations only, so two different
@@ -396,8 +406,10 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   process body and the if-sugar (§2) rewrites it to `emitIf`. —
   `declarations.ts:951,955`
 - Main-thread side is `node.events.<name>` (§5). — `declarations.ts:828,1466`
-- Outbound `atSample` is optional. Omission uses the enclosing `forSample`
-  index, or zero at block level. Set it explicitly with
+- Outbound `atSample` is optional. Omission uses the innermost active `forSample`
+  index, including inside `everyNSamples`, or zero outside a sample loop.
+  A block-level `onReceive` or MIDI `onEvent` handler uses zero, even after a
+  sample loop has completed. Set it explicitly with
   `port.emitIf(cond, { atSample: i, ...userFields })` when another offset is
   intended. It is a sample index within the render quantum.
 - **Payload retention and memory:** each typed-array ring reserves one content

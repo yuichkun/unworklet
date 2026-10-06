@@ -23,6 +23,8 @@ import type { Readable, Writable } from "node:stream";
 import { build } from "esbuild";
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
+import { COLLIDING_HELPERS } from "../../test/generated-helpers.ts";
+
 const LANG = path.resolve(import.meta.dirname, "../..");
 const REPO = path.resolve(LANG, "../..");
 const CORE = path.join(REPO, "packages/core");
@@ -95,7 +97,11 @@ class TsServer {
   private readonly waiters = new Map<number, (m: { body?: unknown }) => void>();
 
   constructor(cwd: string) {
-    this.proc = spawn("node", [TSSERVER], { cwd, stdio: ["pipe", "pipe", "ignore"] });
+    // TypeScript can live in a shared installation; resolve this consumer's plugin.
+    this.proc = spawn("node", [TSSERVER, "--pluginProbeLocations", cwd], {
+      cwd,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
     this.proc.stdout.setEncoding("utf8");
     this.proc.stdout.on("data", (chunk: string) => {
       this.buf += chunk;
@@ -199,6 +205,7 @@ beforeAll(async () => {
   writeFileSync(path.join(dir, "node-annotation.uwk.ts"), NODE_ANNOTATION);
   writeFileSync(path.join(dir, "lib-subgraph.uwk.ts"), LIB_SUBGRAPH);
   writeFileSync(path.join(dir, "subgraph-consumer.uwk.ts"), SUBGRAPH_CONSUMER);
+  writeFileSync(path.join(dir, "colliding-helpers.uwk.ts"), COLLIDING_HELPERS);
 });
 
 afterAll(() => {
@@ -206,6 +213,23 @@ afterAll(() => {
 });
 
 type Diag = { text: string };
+
+test("a real tsserver accepts generated helper collisions through the built plugin", async () => {
+  const server = new TsServer(dir);
+  try {
+    const file = path.join(dir, "colliding-helpers.uwk.ts");
+    server.notify("open", { file, fileContent: COLLIDING_HELPERS, scriptKindName: "TS" });
+    let diags: Diag[] = [{ text: "pending" }];
+    for (let i = 0; i < 20 && diags.length > 0; i++) {
+      await sleep(500);
+      const response = await server.request<Diag[]>("semanticDiagnosticsSync", { file });
+      diags = response.body ?? [];
+    }
+    expect(diags).toEqual([]);
+  } finally {
+    server.dispose();
+  }
+});
 
 test("a processor .uwk.ts imports a subgraph from a sibling .uwk.ts with no diagnostics (cross-file)", async () => {
   const server = new TsServer(dir);

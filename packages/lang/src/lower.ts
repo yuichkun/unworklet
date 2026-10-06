@@ -13,6 +13,7 @@
 
 import ts from "typescript";
 
+import { authoredBindingNames, collectBindingNames } from "./bindings.ts";
 import { autoNameDeclaration } from "./passes/autoName.ts";
 import { sugarTransformer } from "./passes/sugar.ts";
 import { buildProgram, type FsSnapshot } from "./program.ts";
@@ -234,19 +235,6 @@ function unaliasedCoreValueImports(
   return names;
 }
 
-/** Every name a binding pattern introduces (`a`, `{ b }`, `[c, ...d]`). */
-function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
-  if (ts.isIdentifier(name)) {
-    into.add(name.text);
-    return;
-  }
-  // ObjectBindingPattern | ArrayBindingPattern — array holes are
-  // OmittedExpression, not BindingElement, so they are skipped.
-  for (const element of name.elements) {
-    if (ts.isBindingElement(element)) collectBindingNames(element.name, into);
-  }
-}
-
 /**
  * `var` names declared anywhere inside `node`'s own body — `var` is scoped to
  * the enclosing function, not the block it sits in, so `{ var input = 1; }` and
@@ -304,22 +292,7 @@ function generatedHelperBindings(
   sourceFile: ts.SourceFile,
   aliases: Map<string, ts.Identifier>,
 ): ts.TransformerFactory<ts.SourceFile> {
-  const bound = importBoundNames(sourceFile.statements.filter(ts.isImportDeclaration));
-  const collect = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
-      collectBindingNames(node.name, bound);
-    } else if (
-      (ts.isDeclarationStatement(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isClassExpression(node)) &&
-      node.name !== undefined &&
-      ts.isIdentifier(node.name)
-    ) {
-      bound.add(node.name.text);
-    }
-    ts.forEachChild(node, collect);
-  };
-  collect(sourceFile);
+  const bound = authoredBindingNames(sourceFile);
 
   return (context) => {
     const reference = (expression: ts.Expression): ts.Expression => {
@@ -618,17 +591,36 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // argument is attached outside it, so such a reference would be out of scope at
   // module evaluation. (Reported by @codex on #12.)
   const bodyBindings = statementBoundNames(declarations);
-  const optionRefs = (expr: ts.Expression | undefined): string[] => {
+  for (const stmt of declarations) {
+    if (!ts.isFunctionLike(stmt)) collectFunctionScopedVars(stmt, bodyBindings);
+  }
+  const bodySymbols = new Set(
+    checker
+      .getSymbolsInScope(sourceFile, ts.SymbolFlags.Value | ts.SymbolFlags.Alias)
+      .filter((symbol) => bodyBindings.has(symbol.getName())),
+  );
+  // Symbol queries belong to the pristine AST; sugar can synthesize references
+  // without checker bindings. Only the final call of each macro is emitted.
+  const originalMacros = sourceFile.statements.map(topLevelMacroCall);
+  const optionRefs = (name: string): string[] => {
+    const expr = originalMacros.findLast((macro) => macro?.name === name)?.call.arguments[0];
     if (expr === undefined) return [];
     const hits = new Set<string>();
     const visit = (n: ts.Node): void => {
-      if (ts.isIdentifier(n) && bodyBindings.has(n.text)) hits.add(n.text);
+      if (ts.isPartOfTypeNode(n)) return;
+      if (ts.isIdentifier(n)) {
+        const symbol =
+          ts.isShorthandPropertyAssignment(n.parent) && n.parent.name === n
+            ? checker.getShorthandAssignmentValueSymbol(n.parent)
+            : checker.getSymbolAtLocation(n);
+        if (symbol !== undefined && bodySymbols.has(symbol)) hits.add(n.text);
+      }
       ts.forEachChild(n, visit);
     };
     visit(expr);
     return [...hits];
   };
-  const referenced = [...new Set([...optionRefs(migrationsArg), ...optionRefs(optionsObject)])];
+  const referenced = [...new Set([...optionRefs(MIGRATIONS_MACRO), ...optionRefs(OPTIONS_MACRO)])];
   if (referenced.length > 0) {
     throw new LowerError(
       "uwk-options-binding",

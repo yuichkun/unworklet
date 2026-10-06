@@ -35,6 +35,8 @@ import path from "node:path";
 
 import { afterAll, beforeAll, expect, test } from "vite-plus/test";
 
+import { COLLIDING_HELPERS } from "../test/generated-helpers.ts";
+
 const LANG = path.resolve(import.meta.dirname, "..");
 const REPO = path.resolve(LANG, "../..");
 const CORE = path.join(REPO, "packages/core");
@@ -101,6 +103,26 @@ function check(source: string): { code: number; output: string } {
   const r = spawnSync("node", [bin, "--noEmit"], { cwd: dir, encoding: "utf8" });
   return { code: r.status ?? -1, output: `${r.stdout}${r.stderr}` };
 }
+
+test("unworklet-tsc accepts generated helper collisions in the shipped CLI", () => {
+  const { code, output } = check(COLLIDING_HELPERS);
+  expect(output).toBe("");
+  expect(code).toBe(0);
+});
+
+test("unworklet-tsc maps authored call errors alongside generated helper collisions", () => {
+  const source = `const mul = (a: number, b: number) => a + b;
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => {
+  out.ch(0)[i] = f32(0.5) * f32(2);
+  mul("incorrect", 2);
+}); });`;
+  const { code, output } = check(source);
+  expect(code).not.toBe(0);
+  expect(output.match(/error TS/g)).toHaveLength(1);
+  expect(output).toMatch(/check\.uwk\.ts\(5,7\)/);
+  expect(output).toMatch(/string.*number/);
+});
 
 test("unworklet-tsc type-checks valid .uwk.ts sugar and exits 0", () => {
   const { code, output } = check(`const input = audioInput({ channels: 2 });
