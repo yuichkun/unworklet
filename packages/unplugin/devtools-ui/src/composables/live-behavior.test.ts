@@ -55,7 +55,7 @@ test("graph selection follows live nodes and clears when a node or the snapshot 
   expect(graph.selectedNode.value).toBeNull();
   expect(graph.placed.value).toEqual([]);
   await flush();
-  expect(get).toHaveBeenCalledWith("unworklet:graph");
+  expect(get).toHaveBeenCalledWith("unworklet:page-graph");
   expect(graph.edges.value).toEqual(graphData().edges);
   expect(graph.placed.value.map((node) => [node.id, node.x])).toEqual([
     ["synth", 60],
@@ -142,7 +142,7 @@ test("scalar histories cap at 150 polls, exclude i64, and prune removed nodes an
   const state = mount(useLiveState);
   expect(state.getHistory("missing", "slot")).toEqual([]);
   await flush();
-  expect(get).toHaveBeenCalledWith("unworklet:state");
+  expect(get).toHaveBeenCalledWith("unworklet:page-state");
   expect(state.totalScalars.value).toBe(4);
   expect(state.getHistory("synth", "gate")).toEqual([0]);
   expect(state.getHistory("synth", "count")).toEqual([]);
@@ -203,7 +203,7 @@ test("signals retries failed connections, scopes subscriptions to each mounted v
   const second = mount(useLiveSignals);
   await flush();
   expect(get).toHaveBeenCalledTimes(3);
-  expect(get).toHaveBeenLastCalledWith("unworklet:signals");
+  expect(get).toHaveBeenLastCalledWith("unworklet:page-signals");
   expect(subscribe).toHaveBeenCalledTimes(2);
   expect(current.nodes.value).toEqual(second.nodes.value);
   expect(current.nodes.value[0]).toEqual({
@@ -264,7 +264,7 @@ test("MIDI retries initialization, reads live snapshots, and injects only known 
   const second = mount(useLiveMidi);
   await flush();
   expect(get).toHaveBeenCalledTimes(3);
-  expect(get).toHaveBeenLastCalledWith("unworklet:midi");
+  expect(get).toHaveBeenLastCalledWith("unworklet:page-midi");
   expect(subscribe).toHaveBeenCalledTimes(2);
   expect(current.ports.value).toEqual([{ nodeId: "synth", portName: "keys", kind: "input" }]);
   expect(current.portKey(current.ports.value[0]!)).toBe("synth.keys");
@@ -272,7 +272,7 @@ test("MIDI retries initialization, reads live snapshots, and injects only known 
   current.injectMidi("missing.keys", event);
   expect(call).not.toHaveBeenCalled();
   current.injectMidi("synth.keys", event);
-  expect(call).toHaveBeenCalledExactlyOnceWith("unworklet:midi-inject", {
+  expect(call).toHaveBeenCalledExactlyOnceWith("unworklet:page-midi-inject", {
     pageId: "page-a",
     nodeId: "synth",
     port: "keys",

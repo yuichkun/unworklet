@@ -116,6 +116,11 @@ Choose an **Application page** in the sidebar. The panels read live data from
 that page’s running nodes, and MIDI injection targets only its selected input.
 A closed or reloaded page stays disconnected until you select a live page.
 
+Custom DevTools consumers can read page-scoped snapshots and send explicit
+page-targeted MIDI. Unscoped snapshot keys keep the most recently received raw
+snapshot; unscoped MIDI injection requires exactly one live application page.
+See [the DevTools guide](../../skills/unworklet/devtools.md#shared-state-and-rpc-consumers).
+
 The four panels are:
 
 - **Audio graph** — the real Web-Audio topology + a per-node detail pane.

@@ -2,6 +2,7 @@ import type { ViteDevToolsNodeContext } from "@vitejs/devtools-kit";
 import type {
   DevAudioGraph,
   DevLiveState,
+  DevMidiInject,
   DevMidiInjectCommand,
   DevMidiState,
   DevSignalsState,
@@ -34,21 +35,67 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
   const pages = await ctx.rpc.sharedState.get("unworklet:pages", {
     initialValue: { pages: [] } as DevPages,
   });
-  const graph = await ctx.rpc.sharedState.get("unworklet:graph", {
+  const graph = await ctx.rpc.sharedState.get("unworklet:page-graph", {
     initialValue: { pages: {} } as DevPageSnapshots<DevAudioGraph>,
   });
-  const state = await ctx.rpc.sharedState.get("unworklet:state", {
+  const state = await ctx.rpc.sharedState.get("unworklet:page-state", {
     initialValue: { pages: {} } as DevPageSnapshots<DevLiveState>,
   });
-  const signals = await ctx.rpc.sharedState.get("unworklet:signals", {
+  const signals = await ctx.rpc.sharedState.get("unworklet:page-signals", {
     initialValue: { pages: {} } as DevPageSnapshots<DevSignalsState>,
   });
-  const midi = await ctx.rpc.sharedState.get("unworklet:midi", {
+  const midi = await ctx.rpc.sharedState.get("unworklet:page-midi", {
     initialValue: { pages: {} } as DevPageSnapshots<DevMidiState>,
   });
-  const inject = await ctx.rpc.sharedState.get("unworklet:midi-inject", {
+  const inject = await ctx.rpc.sharedState.get("unworklet:page-midi-inject", {
     initialValue: { commands: [] } as PageMidiInject,
   });
+  const rawGraph = await ctx.rpc.sharedState.get("unworklet:graph", {
+    initialValue: { nodes: [], edges: [] } as DevAudioGraph,
+  });
+  const rawState = await ctx.rpc.sharedState.get("unworklet:state", {
+    initialValue: { nodes: [] } as DevLiveState,
+  });
+  const rawSignals = await ctx.rpc.sharedState.get("unworklet:signals", {
+    initialValue: {
+      nodes: [],
+      context: { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 },
+    } as DevSignalsState,
+  });
+  const rawMidi = await ctx.rpc.sharedState.get("unworklet:midi", {
+    initialValue: { ports: [], log: [] } as DevMidiState,
+  });
+  const rawInject = await ctx.rpc.sharedState.get("unworklet:midi-inject", {
+    initialValue: { commands: [] } as DevMidiInject,
+  });
+  const writeGraph = (data: DevAudioGraph): void => {
+    rawGraph.mutate((draft) => {
+      draft.nodes = data.nodes;
+      draft.edges = data.edges;
+    });
+  };
+  const writeState = (data: DevLiveState): void => {
+    rawState.mutate((draft) => {
+      draft.nodes = data.nodes;
+    });
+  };
+  const writeSignals = (data: DevSignalsState): void => {
+    rawSignals.mutate((draft) => {
+      draft.nodes = data.nodes;
+      draft.context = data.context;
+    });
+  };
+  const writeMidi = (data: DevMidiState): void => {
+    rawMidi.mutate((draft) => {
+      draft.ports = data.ports;
+      draft.log = data.log;
+    });
+  };
+  const clearUnscopedCommands = (): void => {
+    rawInject.mutate((draft) => {
+      draft.commands = [];
+    });
+  };
   const owners = new Map<string, Session>();
   let timer: ReturnType<typeof setInterval> | undefined;
   let seq = 0;
@@ -61,6 +108,7 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
   };
   const remove = (id: string): void => {
     owners.delete(id);
+    clearUnscopedCommands();
     pages.mutate((draft) => {
       draft.pages = draft.pages.filter((p) => p.id !== id);
     });
@@ -97,6 +145,7 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
       return false;
     for (const [id, owner] of owners) if (owner === session) remove(id);
     owners.set(page.id, session);
+    clearUnscopedCommands();
     pages.mutate((draft) => {
       draft.pages.push(page);
     });
@@ -112,49 +161,73 @@ export async function setupDevtoolsPages(ctx: ViteDevToolsNodeContext): Promise<
     if (owns(pageId)) remove(pageId);
   });
   register<{ pageId: string; data: DevAudioGraph }>(
-    `${ANONYMOUS_RPC_PREFIX}unworklet:graph-update`,
+    `${ANONYMOUS_RPC_PREFIX}unworklet:page-graph-update`,
     ({ pageId, data }) => {
-      if (owns(pageId))
-        graph.mutate((draft) => {
-          draft.pages[pageId] = data;
-        });
+      if (!owns(pageId)) return;
+      graph.mutate((draft) => {
+        draft.pages[pageId] = data;
+      });
+      writeGraph(data);
     },
   );
   register<{ pageId: string; data: DevLiveState }>(
-    `${ANONYMOUS_RPC_PREFIX}unworklet:state-update`,
+    `${ANONYMOUS_RPC_PREFIX}unworklet:page-state-update`,
     ({ pageId, data }) => {
-      if (owns(pageId))
-        state.mutate((draft) => {
-          draft.pages[pageId] = data;
-        });
+      if (!owns(pageId)) return;
+      state.mutate((draft) => {
+        draft.pages[pageId] = data;
+      });
+      writeState(data);
     },
   );
   register<{ pageId: string; data: DevSignalsState }>(
-    `${ANONYMOUS_RPC_PREFIX}unworklet:signals-update`,
+    `${ANONYMOUS_RPC_PREFIX}unworklet:page-signals-update`,
     ({ pageId, data }) => {
-      if (owns(pageId))
-        signals.mutate((draft) => {
-          draft.pages[pageId] = data;
-        });
+      if (!owns(pageId)) return;
+      signals.mutate((draft) => {
+        draft.pages[pageId] = data;
+      });
+      writeSignals(data);
     },
   );
   register<{ pageId: string; data: DevMidiState }>(
-    `${ANONYMOUS_RPC_PREFIX}unworklet:midi-update`,
+    `${ANONYMOUS_RPC_PREFIX}unworklet:page-midi-update`,
     ({ pageId, data }) => {
-      if (owns(pageId))
-        midi.mutate((draft) => {
-          draft.pages[pageId] = data;
-        });
+      if (!owns(pageId)) return;
+      midi.mutate((draft) => {
+        draft.pages[pageId] = data;
+      });
+      writeMidi(data);
     },
   );
-  register<Omit<PageMidiInjectCommand, "seq">>("unworklet:midi-inject", (cmd) => {
+  register(`${ANONYMOUS_RPC_PREFIX}unworklet:graph-update`, writeGraph);
+  register(`${ANONYMOUS_RPC_PREFIX}unworklet:state-update`, writeState);
+  register(`${ANONYMOUS_RPC_PREFIX}unworklet:signals-update`, writeSignals);
+  register(`${ANONYMOUS_RPC_PREFIX}unworklet:midi-update`, writeMidi);
+  const enqueue = (cmd: Omit<PageMidiInjectCommand, "seq">): number | undefined => {
     const owner = owners.get(cmd.pageId);
     if (!owner || !connected(owner)) return;
     const ports = midi.value().pages[cmd.pageId]?.ports ?? [];
     if (!ports.some((p) => p.nodeId === cmd.nodeId && p.name === cmd.port && p.direction === "in"))
       return;
+    const next = ++seq;
     inject.mutate((draft) => {
-      draft.commands = [...draft.commands, { ...cmd, seq: ++seq }].slice(-64);
+      draft.commands = [...draft.commands, { ...cmd, seq: next }].slice(-64);
+    });
+    return next;
+  };
+  register("unworklet:page-midi-inject", enqueue);
+  register<Omit<DevMidiInjectCommand, "seq">>("unworklet:midi-inject", (cmd) => {
+    const live = [...owners].filter(([, owner]) => connected(owner));
+    if (live.length !== 1)
+      throw new Error(
+        "MIDI injection requires exactly one live application page; select a page with unworklet:page-midi-inject.",
+      );
+    const command = { nodeId: cmd.nodeId, port: cmd.port, event: cmd.event };
+    const next = enqueue({ ...command, pageId: live[0]![0] });
+    if (next === undefined) return;
+    rawInject.mutate((draft) => {
+      draft.commands = [...draft.commands, { ...command, seq: next }].slice(-64);
     });
   });
   return () => {

@@ -1,5 +1,5 @@
 /**
- * Live audio-graph topology (Wire 4). Reads the `unworklet:graph` shared state
+ * Live audio-graph topology (Wire 4). Reads the `unworklet:page-graph` shared state
  * the plugin server mirrors from the dev page-script's `AudioNode.connect`
  * capture, and lays the nodes out left-to-right by longest-path depth.
  *
@@ -27,7 +27,7 @@ export type PlacedNode = LiveGraphNode & { x: number; y: number };
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
-    "unworklet:graph": PageSnapshots<LiveGraph>;
+    "unworklet:page-graph": PageSnapshots<LiveGraph>;
   }
 }
 
@@ -73,7 +73,7 @@ export function useLiveGraph() {
     }
   };
 
-  usePageState<LiveGraph>("unworklet:graph", apply);
+  usePageState<LiveGraph>("unworklet:page-graph", apply);
 
   const placed = computed(() => layout(graph.value));
   const edges = computed(() => graph.value.edges);

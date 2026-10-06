@@ -85,7 +85,8 @@ test("graph selection shows topology, declared ports and typed state without inv
   const state = createSharedState<LiveState>({ initialValue: { nodes: [] } });
   vi.mocked(getPanelRpc).mockResolvedValue({
     sharedState: {
-      get: async (key: string) => (key === "unworklet:graph" ? forPage(graph) : forPage(state)),
+      get: async (key: string) =>
+        key === "unworklet:page-graph" ? forPage(graph) : forPage(state),
     },
   } as unknown as PanelRpc);
   const root = mount(AudioGraphView);

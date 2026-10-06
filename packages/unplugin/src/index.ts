@@ -56,8 +56,8 @@ export { ANONYMOUS_RPC_PREFIX } from "./devtools-pages.ts";
 // The dev page-script (injected in serve mode) monkey-patches
 // `AudioNode.prototype.connect/disconnect` and reads the `@unworklet/core/dev`
 // live-node registry to build the real Web-Audio graph, then pushes it here via
-// the `unworklet:graph-update` action RPC. The server mirrors it into the
-// `unworklet:graph` shared state, which the iframe Audio-graph panel renders.
+// the `unworklet:page-graph-update` action RPC. The server mirrors it into the
+// `unworklet:page-graph` shared state, which the iframe Audio-graph panel renders.
 // No app code is involved (zero-config); WASM memory is never read for this.
 
 /** One node in the live audio graph. */
@@ -80,8 +80,8 @@ export type DevAudioGraph = { nodes: DevGraphNode[]; edges: DevGraphEdge[] };
 //
 // The page-script polls each live node's `devDump()` (the worklet copies its
 // WASM slots into bytes), decodes every slot, and pushes them here via the
-// `unworklet:state-update` action RPC; the server mirrors them into the
-// `unworklet:state` shared state the Live-state panel reads. Buffers larger than
+// `unworklet:page-state-update` action RPC; the server mirrors them into the
+// `unworklet:page-state` shared state the Live-state panel reads. Buffers larger than
 // `BUFFER_MAX_POINTS` are stride-downsampled for the wire (full resolution is
 // not needed to visualize them) — `length` always carries the true element count.
 
@@ -121,7 +121,7 @@ export type DevLiveState = { nodes: DevNodeState[] };
 //
 // The page-script taps an AnalyserNode on each unworklet output port and pushes
 // the live scope (time domain), normalized spectrum (frequency domain), and
-// RMS/peak levels here via `unworklet:signals-update`. `memory` is the static
+// RMS/peak levels here via `unworklet:page-signals-update`. `memory` is the static
 // declared linear-memory layout from a one-shot devDump. Per-node DSP timing is
 // intentionally absent — it is not observable from the main thread; the panel
 // surfaces the AudioContext's reported latencies instead.
@@ -196,11 +196,16 @@ export type DevMidiInject = { commands: DevMidiInjectCommand[] };
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
     "unworklet:pages": DevPages;
-    "unworklet:graph": DevPageSnapshots<DevAudioGraph>;
-    "unworklet:state": DevPageSnapshots<DevLiveState>;
-    "unworklet:signals": DevPageSnapshots<DevSignalsState>;
-    "unworklet:midi": DevPageSnapshots<DevMidiState>;
-    "unworklet:midi-inject": PageMidiInject;
+    "unworklet:graph": DevAudioGraph;
+    "unworklet:page-graph": DevPageSnapshots<DevAudioGraph>;
+    "unworklet:state": DevLiveState;
+    "unworklet:page-state": DevPageSnapshots<DevLiveState>;
+    "unworklet:signals": DevSignalsState;
+    "unworklet:page-signals": DevPageSnapshots<DevSignalsState>;
+    "unworklet:midi": DevMidiState;
+    "unworklet:page-midi": DevPageSnapshots<DevMidiState>;
+    "unworklet:midi-inject": DevMidiInject;
+    "unworklet:page-midi-inject": PageMidiInject;
   }
 }
 
@@ -1139,7 +1144,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
         // devtools code). It (1) exposes the live-node registry + snapshot codec
         // for later live-state X-ray, and (2) captures the live audio-graph
         // topology by monkey-patching AudioNode.connect/disconnect, then pushes
-        // it to the server via the `unworklet:graph-update` action RPC. No WASM
+        // it to the server via the `unworklet:page-graph-update` action RPC. No WASM
         // memory is read here — this is Web-Audio graph structure only.
         return `
 import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
@@ -1224,7 +1229,7 @@ const push = () => {
   pending = true;
   queueMicrotask(() => {
     pending = false;
-    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:graph-update")}, buildGraph());
+    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-graph-update")}, buildGraph());
   });
 };
 
@@ -1298,7 +1303,7 @@ const pollState = async () => {
       const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
     }
-    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:state-update")}, { nodes }, expectedPageId);
+    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-state-update")}, { nodes }, expectedPageId);
   } finally {
     statePolling = false;
   }
@@ -1388,7 +1393,7 @@ const pollSignals = async () => {
   const context = actx
     ? { sampleRate: actx.sampleRate || 0, baseLatencyMs: (actx.baseLatency || 0) * 1000, outputLatencyMs: (actx.outputLatency || 0) * 1000 }
     : { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 };
-  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:signals-update")}, { nodes, context }, expectedPageId);
+  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-signals-update")}, { nodes, context }, expectedPageId);
 };
 let signalsTimer = null;
 const startSignalsPoll = () => {
@@ -1444,7 +1449,7 @@ const ensureMidiInjectSub = () => {
   if (midiInjectSubscribed || !client || !client.rpc || !client.rpc.sharedState) return;
   midiInjectSubscribed = true;
   const expectedPageId = pageId;
-  client.rpc.sharedState.get("unworklet:midi-inject").then((shared) => {
+  client.rpc.sharedState.get("unworklet:page-midi-inject").then((shared) => {
     if (!ready || pageId !== expectedPageId) return;
     const onInject = (state) => {
       if (!ready || pageId !== expectedPageId) return;
@@ -1496,7 +1501,7 @@ const pollMidi = () => {
   const sig = JSON.stringify({ ports, log: midiLog });
   if (sig === lastMidiSig) return;
   lastMidiSig = sig;
-  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:midi-update")}, { ports, log: midiLog });
+  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-midi-update")}, { ports, log: midiLog });
 };
 let midiTimer = null;
 const startMidiPoll = () => {

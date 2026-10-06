@@ -15,6 +15,7 @@ async function pageBridge() {
 function createPage(js: string, failOpen = false, rejectOpen = false) {
   const timers = new Map<number, () => unknown>();
   const calls: Array<{ name: string; arg: any }> = [];
+  const sharedKeys: string[] = [];
   let listener: ((value: unknown) => void) | undefined;
   const send = vi.fn();
   const events = new Map<string, (...args: any[]) => void>();
@@ -70,15 +71,18 @@ function createPage(js: string, failOpen = false, rejectOpen = false) {
           },
         },
         sharedState: {
-          get: async () => ({
-            value: () => ({ commands: [] }),
-            on: (_: string, cb: typeof listener) => {
-              listener = cb;
-              return () => {
-                listener = undefined;
-              };
-            },
-          }),
+          get: async (key: string) => {
+            sharedKeys.push(key);
+            return {
+              value: () => ({ commands: [] }),
+              on: (_: string, cb: typeof listener) => {
+                listener = cb;
+                return () => {
+                  listener = undefined;
+                };
+              },
+            };
+          },
         },
       },
     }),
@@ -93,6 +97,7 @@ function createPage(js: string, failOpen = false, rejectOpen = false) {
   runInContext(js, context);
   return {
     calls,
+    sharedKeys,
     send,
     timers,
     context,
@@ -138,11 +143,15 @@ test("generated bridge isolates two pages whose first MIDI nodes are both n0", a
   expect(graphA.pageId).toBeTruthy();
   expect(graphB.pageId).not.toBe(graphA.pageId);
   for (const page of [a, b]) {
+    expect(page.sharedKeys).toEqual(["unworklet:page-midi-inject"]);
     await page.timers.get(200)!();
     await page.timers.get(33)!();
     const id = page === a ? graphA.pageId : graphB.pageId;
     for (const kind of ["graph", "state", "signals", "midi"]) {
-      expect(page.calls.find((c) => c.name.endsWith(`${kind}-update`))!.arg.pageId).toBe(id);
+      expect(
+        page.calls.find((c) => c.name === `anonymous:unworklet:page-${kind}-update`)!.arg.pageId,
+      ).toBe(id);
+      expect(page.calls.some((c) => c.name === `anonymous:unworklet:${kind}-update`)).toBe(false);
     }
   }
 });

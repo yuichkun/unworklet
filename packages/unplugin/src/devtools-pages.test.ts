@@ -30,12 +30,14 @@ async function server() {
   const dispose = await setupDevtoolsPages(ctx as any);
   const call = (name: string, arg: unknown, from: typeof a | null = a) => {
     session = from;
-    return handlers.get(
-      name.startsWith("unworklet:midi-inject") ? name : `anonymous:unworklet:${name}`,
-    )!(structuredClone(arg));
+    return handlers.get(name.startsWith("unworklet:") ? name : `anonymous:unworklet:${name}`)!(
+      structuredClone(arg),
+    );
   };
-  const read = (key: string) => states.get(`unworklet:${key}`)!.value();
-  return { a, b, peers, call, read, dispose };
+  const read = (key: string) =>
+    states.get(`unworklet:${key === "pages" ? key : "page-" + key}`)!.value();
+  const raw = (key: string) => states.get(`unworklet:${key}`)!.value();
+  return { a, b, peers, call, read, raw, dispose };
 }
 const page = (id: string) => ({ id, title: "Same app", url: "http://localhost:5173/" });
 const midi = {
@@ -55,10 +57,10 @@ test("all telemetry keeps separate snapshots for same node IDs and rejects anoth
     await s.call("page-open", page("a"), s.a);
     await s.call("page-open", page("b"), s.b);
     for (const kind of ["graph", "state", "signals", "midi"]) {
-      await s.call(`${kind}-update`, { pageId: "a", data: { marker: "A" } }, s.a);
-      await s.call(`${kind}-update`, { pageId: "b", data: { marker: "B" } }, s.b);
-      await s.call(`${kind}-update`, { pageId: "a", data: { marker: "wrong" } }, s.b);
-      await s.call(`${kind}-update`, { pageId: "unknown", data: {} }, s.a);
+      await s.call(`page-${kind}-update`, { pageId: "a", data: { marker: "A" } }, s.a);
+      await s.call(`page-${kind}-update`, { pageId: "b", data: { marker: "B" } }, s.b);
+      await s.call(`page-${kind}-update`, { pageId: "a", data: { marker: "wrong" } }, s.b);
+      await s.call(`page-${kind}-update`, { pageId: "unknown", data: {} }, s.a);
       expect(s.read(kind)).toEqual({ pages: { a: { marker: "A" }, b: { marker: "B" } } });
     }
     await s.call("page-open", { ...page("a"), title: "Hijack" }, s.b);
@@ -73,22 +75,22 @@ test("injection requires the selected live page and declared input; closing only
   try {
     await s.call("page-open", page("a"), s.a);
     await s.call("page-open", page("b"), s.b);
-    await s.call("midi-update", { pageId: "a", data: midi }, s.a);
-    await s.call("midi-update", { pageId: "b", data: midi }, s.b);
-    await s.call("unworklet:midi-inject", command("a"));
-    await s.call("unworklet:midi-inject", command("b"));
-    await s.call("unworklet:midi-inject", command("missing"));
-    await s.call("unworklet:midi-inject", { ...command("a"), nodeId: "missing" });
-    await s.call("unworklet:midi-inject", { ...command("a"), port: "missing" });
+    await s.call("page-midi-update", { pageId: "a", data: midi }, s.a);
+    await s.call("page-midi-update", { pageId: "b", data: midi }, s.b);
+    await s.call("unworklet:page-midi-inject", command("a"));
+    await s.call("unworklet:page-midi-inject", command("b"));
+    await s.call("unworklet:page-midi-inject", command("missing"));
+    await s.call("unworklet:page-midi-inject", { ...command("a"), nodeId: "missing" });
+    await s.call("unworklet:page-midi-inject", { ...command("a"), port: "missing" });
     expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["a", "b"]);
     await s.call("page-close", { pageId: "a" }, s.b);
     expect(s.read("pages").pages).toHaveLength(2);
     await s.call("page-close", { pageId: "a" }, s.a);
-    await s.call("unworklet:midi-inject", command("a"));
+    await s.call("unworklet:page-midi-inject", command("a"));
     expect(s.read("pages").pages).toEqual([page("b")]);
     expect(s.read("midi")).toEqual({ pages: { b: midi } });
     expect(s.read("midi-inject").commands.map((c: any) => c.pageId)).toEqual(["b"]);
-    await s.call("state-update", { pageId: "a", data: { nodes: ["late"] } }, s.a);
+    await s.call("page-state-update", { pageId: "a", data: { nodes: ["late"] } }, s.a);
     expect(s.read("state").pages.a).toBeUndefined();
   } finally {
     s.dispose();
@@ -101,8 +103,8 @@ test("peer disconnect cleans snapshots and commands without expiring connected b
   try {
     await s.call("page-open", page("a"), s.a);
     await s.call("page-open", page("b"), s.b);
-    await s.call("midi-update", { pageId: "a", data: midi }, s.a);
-    await s.call("unworklet:midi-inject", command("a"));
+    await s.call("page-midi-update", { pageId: "a", data: midi }, s.a);
+    await s.call("unworklet:page-midi-inject", command("a"));
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
     expect(s.read("pages").pages).toHaveLength(2);
     s.peers.delete(s.a.peer);
@@ -131,22 +133,22 @@ test("registration rejects invalid or disconnected senders and replaces only the
     s.peers.add(s.a.peer);
     await s.call("page-open", page("first"));
     await s.call("page-open", page("other"), s.b);
-    await s.call("unworklet:midi-inject", command("first"));
+    await s.call("unworklet:page-midi-inject", command("first"));
     expect(s.read("midi-inject").commands).toEqual([]);
-    await s.call("midi-update", {
+    await s.call("page-midi-update", {
       pageId: "first",
       data: { ports: [{ ...midi.ports[0], direction: "out" }], log: [] },
     });
-    await s.call("unworklet:midi-inject", command("first"));
+    await s.call("unworklet:page-midi-inject", command("first"));
     expect(s.read("midi-inject").commands).toEqual([]);
     await s.call("page-open", page("replacement"));
     expect(s.read("pages").pages).toEqual([page("other"), page("replacement")]);
     expect(s.read("midi").pages.first).toBeUndefined();
-    await s.call("midi-update", { pageId: "replacement", data: midi });
+    await s.call("page-midi-update", { pageId: "replacement", data: midi });
     await s.call("page-close", { pageId: "replacement" }, null);
     expect(s.read("pages").pages).toHaveLength(2);
     s.peers.delete(s.a.peer);
-    await s.call("unworklet:midi-inject", command("replacement"));
+    await s.call("unworklet:page-midi-inject", command("replacement"));
     expect(s.read("midi-inject").commands).toEqual([]);
   } finally {
     s.dispose();
@@ -160,11 +162,11 @@ test("RPC payloads remain independent after wire cloning and injection stays bou
     await s.call("page-open", metadata);
     metadata.title = "Local mutation";
     const snapshot = structuredClone(midi);
-    await s.call("midi-update", { pageId: "a", data: snapshot });
+    await s.call("page-midi-update", { pageId: "a", data: snapshot });
     snapshot.ports[0]!.name = "Changed locally";
     expect(s.read("pages").pages[0].title).toBe("Same app");
     expect(s.read("midi").pages.a.ports[0].name).toBe("in");
-    for (let i = 0; i < 70; i++) await s.call("unworklet:midi-inject", command("a"));
+    for (let i = 0; i < 70; i++) await s.call("unworklet:page-midi-inject", command("a"));
     expect(s.read("midi-inject").commands).toHaveLength(64);
     expect(s.read("midi-inject").commands[0].seq).toBe(7);
   } finally {
@@ -175,8 +177,8 @@ test("RPC payloads remain independent after wire cloning and injection stays bou
 test("server disposal clears page data and prevents late registrations", async () => {
   const s = await server();
   await s.call("page-open", page("a"));
-  await s.call("midi-update", { pageId: "a", data: midi });
-  await s.call("unworklet:midi-inject", command("a"));
+  await s.call("page-midi-update", { pageId: "a", data: midi });
+  await s.call("unworklet:page-midi-inject", command("a"));
   s.dispose();
   await s.call("page-open", page("late"));
   expect(s.read("pages").pages).toEqual([]);
@@ -190,6 +192,84 @@ test("registration reports acceptance so a page never publishes into a rejected 
     expect(await s.call("page-open", page("a"))).toBe(true);
     expect(await s.call("page-open", page("a"), s.b)).toBe(false);
     expect(await s.call("page-open", page("closed"), null)).toBe(false);
+  } finally {
+    s.dispose();
+  }
+});
+
+const snapshots = () => ({
+  graph: {
+    nodes: [{ id: "n0", label: "Synth", kind: "unworklet", audioNodeType: "AudioWorkletNode" }],
+    edges: [],
+  },
+  state: { nodes: [{ id: "n0", displayName: "Synth", scalars: [], buffers: [] }] },
+  signals: {
+    nodes: [{ id: "n0", displayName: "Synth", ports: [], memory: [], memoryBytes: 0 }],
+    context: { sampleRate: 48000, baseLatencyMs: 2, outputLatencyMs: 3 },
+  },
+  midi: structuredClone(midi),
+});
+
+test("unscoped keys and update RPCs preserve raw latest-snapshot compatibility", async () => {
+  const s = await server();
+  try {
+    expect(s.raw("graph")).toEqual({ nodes: [], edges: [] });
+    expect(s.raw("state")).toEqual({ nodes: [] });
+    expect(s.raw("signals")).toEqual({
+      nodes: [],
+      context: { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 },
+    });
+    expect(s.raw("midi")).toEqual({ ports: [], log: [] });
+    expect(s.raw("midi-inject")).toEqual({ commands: [] });
+    await s.call("page-open", page("a"), s.a);
+    await s.call("page-open", page("b"), s.b);
+    for (const [kind, value] of Object.entries(snapshots())) {
+      await s.call(`page-${kind}-update`, { pageId: "a", data: value }, s.a);
+      expect(s.raw(kind)).toEqual(value);
+      const next = kind === "midi" ? { ports: [], log: [] } : { ...value, nodes: [] };
+      await s.call(`page-${kind}-update`, { pageId: "b", data: next }, s.b);
+      expect(s.raw(kind)).toEqual(next);
+      await s.call(`${kind}-update`, value);
+      expect(s.raw(kind)).toEqual(value);
+      expect(s.read(kind).pages.b).toEqual(next);
+      await s.call(`page-${kind}-update`, { pageId: "a", data: next }, s.b);
+      expect(s.raw(kind)).toEqual(value);
+    }
+    await s.call("page-close", { pageId: "a" }, s.a);
+    await s.call("page-close", { pageId: "b" }, s.b);
+    for (const [kind, value] of Object.entries(snapshots())) {
+      expect(s.raw(kind)).toEqual(value);
+      expect(s.read(kind)).toEqual({ pages: {} });
+    }
+  } finally {
+    s.dispose();
+  }
+});
+
+test("unscoped MIDI routes only one live page and keeps the public queue shape", async () => {
+  const s = await server();
+  const cmd = { nodeId: "n0", port: "in", event: command("a").event };
+  try {
+    expect(() => s.call("unworklet:midi-inject", cmd)).toThrow("exactly one live application page");
+    await s.call("page-open", page("a"), s.a);
+    await s.call("page-midi-update", { pageId: "a", data: midi }, s.a);
+    await s.call("unworklet:midi-inject", { ...cmd, port: "missing" });
+    expect(s.raw("midi-inject").commands).toEqual([]);
+    await s.call("unworklet:midi-inject", cmd);
+    expect(s.raw("midi-inject").commands).toEqual([{ ...cmd, seq: 1 }]);
+    expect(s.read("midi-inject").commands).toEqual([{ ...cmd, seq: 1, pageId: "a" }]);
+    await s.call("page-open", page("b"), s.b);
+    await s.call("page-midi-update", { pageId: "b", data: midi }, s.b);
+    expect(s.raw("midi-inject").commands).toEqual([]);
+    expect(() => s.call("unworklet:midi-inject", cmd)).toThrow("exactly one live application page");
+    expect(s.read("midi-inject").commands).toHaveLength(1);
+    s.peers.delete(s.a.peer);
+    await s.call("unworklet:midi-inject", cmd);
+    expect(s.read("midi-inject").commands.at(-1).pageId).toBe("b");
+    for (let i = 0; i < 70; i++) await s.call("unworklet:midi-inject", cmd);
+    expect(s.raw("midi-inject").commands).toHaveLength(64);
+    await s.call("page-close", { pageId: "b" }, s.b);
+    expect(s.raw("midi-inject").commands).toEqual([]);
   } finally {
     s.dispose();
   }

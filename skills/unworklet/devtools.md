@@ -97,6 +97,30 @@ MIDI keys are released on their original target port and channel when routing
 changes or the MIDI view closes. Panic releases held keys and sends All Notes
 Off on every channel of the selected input.
 
+## Shared-state and RPC consumers
+
+The built-in panels read `unworklet:page-graph`, `unworklet:page-state`,
+`unworklet:page-signals`, and `unworklet:page-midi`. Each contains
+`{ pages: { [pageId]: snapshot } }`; `unworklet:pages` lists live page metadata.
+Page telemetry uses the matching `anonymous:unworklet:page-*-update` RPCs with
+`{ pageId, data }`. The server accepts a page's updates only from its registered
+connection.
+
+The unscoped `unworklet:graph`, `unworklet:state`, `unworklet:signals`, and
+`unworklet:midi` keys contain raw snapshots of their published types. Each is the
+most recently received snapshot for that kind, which can come from any page.
+The matching `anonymous:unworklet:*-update` RPCs accept those raw snapshots;
+they do not change page-scoped state.
+
+Trusted clients inject with `unworklet:page-midi-inject` and
+`{ pageId, nodeId, port, event }`. Commands appear in `unworklet:page-midi-inject`
+with their page ID and sequence number. The unscoped `unworklet:midi-inject` RPC
+accepts `{ nodeId, port, event }` only when exactly one live application page
+makes the target unambiguous; it rejects calls with zero or multiple live pages.
+Accepted unscoped commands also appear in the unscoped queue with the published
+`DevMidiInjectCommand` shape. That queue is cleared when page membership changes.
+Use explicit page targeting for multi-tab tools.
+
 ## The 0.4 pin
 
 `@unworklet/unplugin` declares only `@vitejs/devtools-kit` as a peer — pinned

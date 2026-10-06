@@ -1,8 +1,8 @@
 /**
- * Live MIDI panel. Reads the `unworklet:midi` shared state the plugin server
+ * Live MIDI panel. Reads the `unworklet:page-midi` shared state the plugin server
  * mirrors from the dev page-script: every declared MIDI port (with its real
  * overflow counter) plus a rolling log of real outbound events and panel
- * injections. Injection calls the `unworklet:midi-inject` RPC, which the
+ * injections. Injection calls the `unworklet:page-midi-inject` RPC, which the
  * page-script drains into the real `node.midi[port].send` — the virtual keyboard
  * plays the actual worklet.
  *
@@ -76,10 +76,10 @@ export type MidiShared = { ports: RawMidiPort[]; log: RawMidiLog[] };
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
-    "unworklet:midi": PageSnapshots<MidiShared>;
+    "unworklet:page-midi": PageSnapshots<MidiShared>;
   }
   interface DevToolsRpcServerFunctions {
-    "unworklet:midi-inject": (cmd: {
+    "unworklet:page-midi-inject": (cmd: {
       pageId: string;
       nodeId: string;
       port: string;
@@ -126,7 +126,7 @@ export function useLiveMidi() {
   const shared = ref<MidiShared>({ ports: [], log: [] });
   let rpcClient: PanelRpc | null = null;
   const pageId = usePageState<MidiShared>(
-    "unworklet:midi",
+    "unworklet:page-midi",
     (value) => {
       shared.value = normalizeMidi(value);
     },
@@ -150,7 +150,7 @@ export function useLiveMidi() {
     const meta = portByKey.value[targetPortKey];
     if (!meta || meta.direction !== "in" || !rpcClient || !pageId) return;
     void Promise.resolve(
-      rpcClient.call("unworklet:midi-inject", {
+      rpcClient.call("unworklet:page-midi-inject", {
         pageId,
         nodeId: meta.nodeId,
         port: meta.name,

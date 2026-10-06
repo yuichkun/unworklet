@@ -157,7 +157,8 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await b.waitForFunction("globalThis.devtoolsStatus() === 'connected'");
     await expect.poll(() => pages.value().pages.length).toBe(2);
     const bId = pages.value().pages.find((p) => p.id !== aId)!.id;
-    const midi = await ctx.rpc.sharedState.get<DevPageSnapshots<DevMidiState>>("unworklet:midi");
+    const midi =
+      await ctx.rpc.sharedState.get<DevPageSnapshots<DevMidiState>>("unworklet:page-midi");
     const input = (id: string) => midi.value().pages[id]?.ports.find((p) => p.direction === "in");
     await expect.poll(() => input(aId)?.nodeId).toBe("n0");
     await expect.poll(() => input(bId)?.nodeId).toBe("n0");
@@ -167,7 +168,7 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
           name: string,
           cmd: Omit<PageMidiInjectCommand, "seq">,
         ) => Promise<void>
-      )("unworklet:midi-inject", {
+      )("unworklet:page-midi-inject", {
         pageId,
         nodeId,
         port: "in",
@@ -222,7 +223,7 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await playKey(4);
     await b.waitForFunction("globalThis.received.length === 1");
     expect(await b.evaluate("globalThis.received")).toEqual([67]);
-    const queue = await ctx.rpc.sharedState.get<PageMidiInject>("unworklet:midi-inject");
+    const queue = await ctx.rpc.sharedState.get<PageMidiInject>("unworklet:page-midi-inject");
     expect(queue.value().commands.every((c) => c.pageId === reloadedId)).toBe(true);
   } finally {
     await browser?.close();

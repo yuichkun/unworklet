@@ -1,5 +1,5 @@
 /**
- * Live state X-ray. Reads the `unworklet:state` shared state the plugin server
+ * Live state X-ray. Reads the `unworklet:page-state` shared state the plugin server
  * mirrors from the dev page-script's `devDump()` poll, and keeps a rolling
  * history per scalar slot for sparklines.
  *
@@ -37,7 +37,7 @@ export type LiveState = { nodes: LiveNodeState[] };
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
-    "unworklet:state": PageSnapshots<LiveState>;
+    "unworklet:page-state": PageSnapshots<LiveState>;
   }
 }
 
@@ -101,7 +101,7 @@ export function useLiveState() {
     for (const key of histories.keys()) if (!present.has(key)) histories.delete(key);
   };
 
-  usePageState<LiveState>("unworklet:state", apply);
+  usePageState<LiveState>("unworklet:page-state", apply);
 
   const nodes = computed(() => state.value.nodes);
   const totalScalars = computed(() =>

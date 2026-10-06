@@ -1,5 +1,5 @@
 /**
- * Live signals X-ray. Reads the `unworklet:signals` shared state the plugin
+ * Live signals X-ray. Reads the `unworklet:page-signals` shared state the plugin
  * server mirrors from the dev page-script's AnalyserNode taps: per output port a
  * live time-domain scope, a normalized spectrum, and RMS/peak levels, plus each
  * node's declared linear-memory layout and the AudioContext's reported latencies.
@@ -51,7 +51,7 @@ export type SignalsStructure = { nodes: SignalsNodeShape[]; context: LiveSignals
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
-    "unworklet:signals": PageSnapshots<LiveSignals>;
+    "unworklet:page-signals": PageSnapshots<LiveSignals>;
   }
 }
 
@@ -137,7 +137,7 @@ export function useLiveSignals(): Signals {
     }
   };
 
-  usePageState<LiveSignals>("unworklet:signals", apply);
+  usePageState<LiveSignals>("unworklet:page-signals", apply);
   /** Latest per-frame data for a port, read directly by canvas rAF loops. */
   const getFrame = (nodeId: string, portName: string): LiveSignalsPort | undefined =>
     frames.get(frameKey(nodeId, portName));

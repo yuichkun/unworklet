@@ -47,7 +47,7 @@ test("MIDI routing changes and route exit send balanced note events through the 
     app.unmount();
     expect(call.mock.calls).toEqual([
       [
-        "unworklet:midi-inject",
+        "unworklet:page-midi-inject",
         {
           pageId: "page-a",
           nodeId: "n1",
@@ -56,7 +56,7 @@ test("MIDI routing changes and route exit send balanced note events through the 
         },
       ],
       [
-        "unworklet:midi-inject",
+        "unworklet:page-midi-inject",
         {
           pageId: "page-a",
           nodeId: "n1",
@@ -65,7 +65,7 @@ test("MIDI routing changes and route exit send balanced note events through the 
         },
       ],
       [
-        "unworklet:midi-inject",
+        "unworklet:page-midi-inject",
         {
           pageId: "page-a",
           nodeId: "n2",
@@ -74,7 +74,7 @@ test("MIDI routing changes and route exit send balanced note events through the 
         },
       ],
       [
-        "unworklet:midi-inject",
+        "unworklet:page-midi-inject",
         {
           pageId: "page-a",
           nodeId: "n2",
