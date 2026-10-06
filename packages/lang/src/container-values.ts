@@ -39,7 +39,8 @@ function literalKey(node: ts.Node): string | undefined {
 }
 
 function propertyKey(name: ts.PropertyName): string | undefined {
-  return ts.isComputedPropertyName(name) ? literalKey(name.expression) : name.text;
+  if (ts.isComputedPropertyName(name)) return literalKey(name.expression);
+  return ts.isNumericLiteral(name) ? literalKey(name) : name.text;
 }
 
 function literalMember(value: ts.Node, key: string): ts.Expression | undefined {
@@ -133,6 +134,10 @@ function isStableContainer(checker: ts.TypeChecker, declaration: ts.VariableDecl
   if (cached !== undefined) return cached;
   const symbol = checker.getSymbolAtLocation(declaration.name);
   const invalidReference = (node: ts.Node): boolean => {
+    if (ts.isExportDeclaration(node) && node.isTypeOnly) return false;
+    if (ts.isExportSpecifier(node)) {
+      return !node.isTypeOnly && checker.getExportSpecifierLocalTargetSymbol(node) === symbol;
+    }
     if (ts.isCallExpression(node)) {
       const callee = unwrapValue(node.expression);
       if (ts.isIdentifier(callee) && callee.text === "eval") return true;
@@ -147,7 +152,9 @@ function isStableContainer(checker: ts.TypeChecker, declaration: ts.VariableDecl
     }
     return ts.forEachChild(node, invalidReference) ?? false;
   };
-  const stable = !invalidReference(declaration.getSourceFile());
+  const stable =
+    (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export) === 0 &&
+    !invalidReference(declaration.getSourceFile());
   stableContainers.set(declaration, stable);
   return stable;
 }

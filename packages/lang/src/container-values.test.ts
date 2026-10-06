@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+import { renderOffline } from "@unworklet/offline";
 import ts from "typescript";
 import { expect, test } from "vite-plus/test";
 
@@ -5,6 +9,7 @@ import { classify } from "./classify.ts";
 import { containerValueOrigin, isConstDeclaration } from "./container-values.ts";
 import { renderLowered } from "./goldenHarness.ts";
 import { buildProgram } from "./program.ts";
+import { loadUwkProcessor } from "./materialize-lowered.ts";
 
 const shapes = [
   ["array member", "const values = [VALUE];", "values[0]"],
@@ -540,3 +545,97 @@ test.each([
     expect(actual.diagnostics.scrubbedSamples).toBe(0);
   },
 );
+
+test.each([
+  ["declaration", "export const values={left:f32(0.5)*2};", "values"],
+  ["specifier", "const values={left:f32(0.5)*2}; export {values};", "values"],
+  ["renamed specifier", "const values={left:f32(0.5)*2}; export {values as shared};", "shared"],
+] as const)(
+  "preserves consumer mutation through an exported %s",
+  async (_, declaration, imported) => {
+    const directory = mkdtempSync(path.join(import.meta.dirname, "..", ".container-export-"));
+    try {
+      writeFileSync(
+        path.join(directory, "library.uwk.ts"),
+        `${declaration}
+export function read() {return Math.max(0,values.left*2);}`,
+      );
+      const entry = path.join(directory, "main.uwk.ts");
+      writeFileSync(
+        entry,
+        `import {${imported} as values,read} from "./library.uwk.ts"; const out=audioOutput({channels:1,name:"main"}); values.left=3; process(()=>{forSample(i=>{out.ch(0)[i]=read();});});`,
+      );
+      const actual = await renderOffline(await loadUwkProcessor(entry), config);
+      expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(6));
+      expect(actual.diagnostics.scrubbedSamples).toBe(0);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  ["exponent", "1e2", "100"],
+  ["exponent index", "1e2", "1e2"],
+  ["hexadecimal", "0x64", "100"],
+  ["binary", "0b1100100", "100"],
+  ["octal", "0o144", "100"],
+  ["decimal", "100", "100"],
+  ["decimal fraction", "100.0", "100"],
+  ["negative exponent", "1e-2", "0.01"],
+] as const)("renders a DSP value under a %s numeric property", async (_, property, access) => {
+  const actual = await renderLowered(
+    processor(`const values={${property}:f32(0.5)*2};out.ch(0)[i]=values[${access}]*2;`),
+    config,
+  );
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(2));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test.each([
+  ["export const values={left:VALUE};", "values.left", undefined],
+  ["const values={left:VALUE};export {values};", "values.left", undefined],
+  ["const values={left:VALUE};export {values as shared};", "values.left", undefined],
+  ["const values={left:VALUE};export {values as default};", "values.left", undefined],
+  ["const values={left:VALUE};export default values;", "values.left", undefined],
+  ["const values={1e2:VALUE};", "values[100]", "VALUE"],
+  ["const values={0x64:VALUE};", "values[100]", "VALUE"],
+  ["const values={0b1100100:VALUE};", "values[100]", "VALUE"],
+  ["const values={100:VALUE};", "values[100]", "VALUE"],
+  ["const values={left:VALUE};const other=3;export {other};", "values.left", "VALUE"],
+  ["const values={left:VALUE};export {values} from './foreign';", "values.left", "VALUE"],
+  ["const values={100:3,1e2:VALUE};", "values[100]", "VALUE"],
+  ["const values={1e2:VALUE,100:3};", "values[100]", "3"],
+  ["const values={'1e2':VALUE,100:3};", "values['1e2']", "VALUE"],
+] as const)("checks exported and numeric literal origins: %s", (declarations, value, expected) => {
+  expect(literalOrigin(`${declarations} const result=${value};`)).toBe(expected);
+});
+
+test.each(["export type {values};", "export {type values};", "export {type values as shared};"])(
+  "keeps type-only exports from escaping a literal: %s",
+  (exports) => {
+    expect(literalOrigin(`const values={left:VALUE};${exports}const result=values.left;`)).toBe(
+      "VALUE",
+    );
+  },
+);
+
+test("preserves local literals inside exported functions", async () => {
+  const directory = mkdtempSync(path.join(import.meta.dirname, "..", ".container-export-local-"));
+  try {
+    writeFileSync(
+      path.join(directory, "library.uwk.ts"),
+      "export function read(){const values={left:f32(0.5)*2};return values.left*2;}",
+    );
+    const entry = path.join(directory, "main.uwk.ts");
+    writeFileSync(
+      entry,
+      'import {read} from "./library.uwk.ts";const out=audioOutput({channels:1,name:"main"});process(()=>{forSample(i=>{out.ch(0)[i]=read();});});',
+    );
+    const actual = await renderOffline(await loadUwkProcessor(entry), config);
+    expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(2));
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

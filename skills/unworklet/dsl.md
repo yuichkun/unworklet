@@ -144,7 +144,7 @@ or bound through `const` destructuring of a literal. Nested literal paths and
 numeric sibling fields keep their DSP and build-time meanings respectively.
 
 This inference requires direct, read-only references to the container. It does
-not infer through aliases, mutation, escapes, dynamic keys, or ambiguous helper
+not infer through aliases, value exports, mutation, escapes, dynamic keys, or ambiguous helper
 return values. Explicit core operations such as `mul(x, 2)` preserve the `Node`
 type of stored DSP values for ordinary TypeScript inference.
 
