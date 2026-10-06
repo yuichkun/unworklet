@@ -147,7 +147,8 @@ literal path, such as `values[-1]`.
 
 This inference requires direct, read-only references to the container. It does
 not infer through aliases, value exports, mutation, escapes, dynamic keys, or ambiguous helper
-return values. Explicit core operations such as `mul(x, 2)` preserve the `Node`
+return values. Erased type references such as `type Snapshot = typeof values`
+do not expose or mutate the container. Explicit core operations such as `mul(x, 2)` preserve the `Node`
 type of stored DSP values for ordinary TypeScript inference.
 
 ### Index / element-access (`packages/lang/src/passes/index.ts`)

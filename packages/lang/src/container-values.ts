@@ -8,7 +8,8 @@ function wrappedValue(node: ts.Node): ts.Expression | undefined {
     ts.isAsExpression(node) ||
     ts.isTypeAssertionExpression(node) ||
     ts.isNonNullExpression(node) ||
-    ts.isSatisfiesExpression(node)
+    ts.isSatisfiesExpression(node) ||
+    ts.isExpressionWithTypeArguments(node)
   )
     return node.expression;
   return undefined;
@@ -144,6 +145,8 @@ function isStableContainer(checker: ts.TypeChecker, declaration: ts.VariableDecl
   if (cached !== undefined) return cached;
   const symbol = checker.getSymbolAtLocation(declaration.name);
   const invalidReference = (node: ts.Node): boolean => {
+    // Class heritage and instantiation expressions also satisfy isTypeNode.
+    if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return false;
     if (ts.isExportDeclaration(node) && node.isTypeOnly) return false;
     if (ts.isExportSpecifier(node)) {
       return !node.isTypeOnly && checker.getExportSpecifierLocalTargetSymbol(node) === symbol;

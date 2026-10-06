@@ -123,6 +123,11 @@ const mutable = [
     "values.left",
   ],
   [
+    "generic method receiver",
+    "const values = { left: f32(0.5) * 2, reset: function <T>() { this.left = 3; } }; (values.reset<number>)();",
+    "values.left",
+  ],
+  [
     "stale scalar",
     "let value = f32(0.5) * 2; value = 3; const values = { value };",
     "values.value",
@@ -619,6 +624,66 @@ test.each(["export type {values};", "export {type values};", "export {type value
     );
   },
 );
+
+const erasedReferences = [
+  ["type query", "type Snapshot = typeof values;"],
+  ["member type query", "type Snapshot = typeof values.left;"],
+  ["indexed type query", 'type Snapshot = (typeof values)["left"];'],
+  ["mapped type", "type Snapshot = { [K in keyof typeof values]: (typeof values)[K] };"],
+  ["annotation", "let snapshot: typeof values;"],
+  ["parameter annotation", "function accept(snapshot: typeof values) {}"],
+  ["satisfies type", "const empty = {} satisfies Partial<typeof values>;"],
+  ["class type argument", "class Base<T> {} class Child extends Base<typeof values> {}"],
+] as const;
+
+test.each(erasedReferences)("ignores an erased container reference in a %s", (_, reference) => {
+  expect(literalOrigin(`const values={left:VALUE};${reference}const result=values.left;`)).toBe(
+    "VALUE",
+  );
+});
+
+test.each(erasedReferences)(
+  "renders DSP with an erased container reference in a %s",
+  async (_, reference) => {
+    const actual = await renderLowered(
+      processor(`const values={left:f32(0.5)*2};${reference}out.ch(0)[i]=values.left*2;`),
+      config,
+    );
+    expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(2));
+    expect(actual.diagnostics.scrubbedSamples).toBe(0);
+  },
+);
+
+test.each([
+  "const runtimeType = typeof values;",
+  "const runtimeType = typeof reset(values);",
+  "class Child extends reset(values) {}",
+])("retains runtime container references beside erased types: %s", (reference) => {
+  expect(
+    literalOrigin(
+      `const values={left:VALUE};type Snapshot=typeof values;${reference}const result=values.left;`,
+    ),
+  ).toBeUndefined();
+});
+
+test.each([
+  ["typeof expression", "const runtimeType = typeof reset(values);"],
+  ["class extends", "class Child extends reset(values) {}"],
+  ["asserted alias", "const alias = values as typeof values; reset(alias);"],
+])("preserves runtime mutation beside an erased type in a %s", async (_, mutation) => {
+  const actual = await renderLowered(
+    processor(`
+      const values={left:f32(0.5)*2};
+      type Snapshot=typeof values;
+      function reset(value: Snapshot) { value.left=3; return class {}; }
+      ${mutation}
+      out.ch(0)[i]=Math.max(0,values.left*2);
+    `),
+    config,
+  );
+  expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(6));
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
 
 test("preserves local literals inside exported functions", async () => {
   const directory = mkdtempSync(path.join(import.meta.dirname, "..", ".container-export-local-"));
