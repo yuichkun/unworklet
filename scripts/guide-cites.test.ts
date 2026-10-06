@@ -2,12 +2,41 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
+import { marked, type Tokens } from "marked";
 import { expect, test } from "vite-plus/test";
 
 import { validateGuideCitations } from "./guide-cites.ts";
 
 const REPO = path.resolve(import.meta.dirname, "..");
 const GUIDE_DIR = path.join(REPO, "skills/unworklet");
+
+test("guide citations stay visible instead of becoming Markdown reference definitions", () => {
+  for (const name of readdirSync(GUIDE_DIR).filter((file) => file.endsWith(".md"))) {
+    const tokens = marked.lexer(readFileSync(path.join(GUIDE_DIR, name), "utf8"));
+    expect(
+      Object.keys(tokens.links).filter((label) => label.startsWith("cite:")),
+      name,
+    ).toEqual([]);
+  }
+});
+
+test("slot exposure and events render as separate headings and fenced examples", () => {
+  const markdown = readFileSync(path.join(GUIDE_DIR, "dsl.md"), "utf8");
+  const html = marked.parse(markdown, { async: false });
+  expect(html).toContain("<h3>Slot exposure — <code>ExposeOptions</code></h3>");
+  expect(html).toContain("<h3>Events — <code>event&lt;T&gt;</code> (typed message ports)</h3>");
+  expect(html).toContain('<pre><code class="language-ts">type ExposeOptions = {');
+  expect(html).toContain("<li><code>publish</code> is allowed only on");
+  const examples = marked
+    .lexer(markdown)
+    .filter((token): token is Tokens.Code => token.type === "code");
+  expect(examples.filter((token) => token.text.startsWith("type ExposeOptions ="))).toEqual([
+    expect.objectContaining({ lang: "ts", text: expect.not.stringContaining("- `publish`") }),
+  ]);
+  expect(examples.filter((token) => token.text.startsWith("event<T>({ from:"))).toEqual([
+    expect.objectContaining({ lang: "ts", text: expect.not.stringContaining("Inbound") }),
+  ]);
+});
 
 test("every guide reference names an existing file and a unique current source anchor", () => {
   const guides = readdirSync(GUIDE_DIR).filter((name) => name.endsWith(".md"));

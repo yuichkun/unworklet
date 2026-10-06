@@ -1,3 +1,5 @@
+import { marked } from "marked";
+
 export function validateGuideCitations(
   markdown: string,
   readSource: (file: string) => string | undefined,
@@ -23,6 +25,15 @@ export function validateGuideCitations(
       );
       continue;
     }
+    const lineStart = markdown.lastIndexOf("\n", start.index) + 1;
+    if (
+      /^ {0,3}$/.test(markdown.slice(lineStart, start.index)) &&
+      markdown[start.index + citation[0].length] === ":"
+    ) {
+      errors.push(
+        "citation must not become a Markdown reference definition; omit its trailing colon",
+      );
+    }
     // The excerpt is source text, so identifiers such as L1 are not locations.
     locations = locations.replace(citation[0], "");
     const [, file, excerpt] = citation;
@@ -39,11 +50,22 @@ export function validateGuideCitations(
   // Whole-file references, inline path:line, links and bracketed shorthand all
   // occur outside [cite:] blocks in the guide, so scan beyond those blocks.
   const numeric =
-    /[\w./-]+\.[A-Za-z]+(?:`?\s+L\d+(?:-L?\d+)?|:L?\d+(?:-L?\d+)?|#L\d+(?:-L?\d+)?)|\[L\d+(?:-L?\d+)?\]|`:\d+(?:-\d+)?`/g;
+    /[\w./-]+\.[A-Za-z]+(?:`?(?:\s+\(?|\s*\()`?L\d+(?:-L?\d+)?|:L?\d+(?:-L?\d+)?|#L\d+(?:-L?\d+)?)|`:\d+(?:-\d+)?`/g;
   const reportLocation = (location: string): void => {
     errors.push(`numeric source location: ${location}; use a content-anchored [cite:]`);
   };
-  for (const [location] of locations.matchAll(numeric)) reportLocation(location);
+  // Strip URL authorities (including ports), retaining their source paths and
+  // fragments so GitHub path#L links are still checked.
+  const paths = locations.replace(/\b[a-z][a-z\d+.-]*:\/\/[^/\s)]+/gi, "");
+  for (const [location] of paths.matchAll(numeric)) reportLocation(location);
+  void marked.walkTokens(marked.lexer(locations), (token) => {
+    // Code spans/blocks can contain array literals and indexed identifiers.
+    // Only leaf prose text can use bracketed shorthand as a citation.
+    if (token.type !== "text" || ("tokens" in token && token.tokens)) return;
+    for (const [location] of token.text.matchAll(/(?<![\w$.\]])\[L\d+(?:-L?\d+)?\]/g)) {
+      reportLocation(location);
+    }
+  });
   for (const paragraph of locations.split(/\n\s*\n/)) {
     if (!/[\w./-]+\.[A-Za-z]+/.test(paragraph)) continue;
     // A phrase such as "at `L1692` on the hook" refers back to the file in

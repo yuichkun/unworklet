@@ -46,6 +46,9 @@ test("anchors support literal punctuation, brackets, semicolons and multiline ci
 test.each([
   `[cite: ${file} L12-34]`,
   `(${file} L12)`,
+  `${file} (L12)`,
+  `\`${file}\` (L12-L34)`,
+  `\`${file}\` (\`L12\`)`,
   `(\`${file}\` L12-34)`,
   `\`${file}:12\``,
   `\`${file}:12-34\``,
@@ -104,6 +107,11 @@ test.each([
   "The `L1` and `L2` caches hold nearby data.",
   "```ts\nconst L1 = 1;\nconst L2 = L1 + 1;\n```",
   "[L1 cache](https://example.com/cache)",
+  "const L1 = 1; const value = cache[L1];",
+  "Use `cache[L1]` or `[L1, L2]` to select values.",
+  "Use `[L1]` for a one-item array.",
+  "```ts\nconst L1 = 1;\nconst value = cache[L1];\nconst items = [L1];\n```",
+  "~~~ts\nconst items = [L1];\n~~~",
   `The \`${file}\` example uses \`L1\` and \`L2\` cache.`,
 ])("cache terminology and code identifiers are not source citations: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
@@ -119,5 +127,26 @@ test("a content anchor can itself contain a line-like identifier", () => {
 test("unrelated source references in a different paragraph do not turn identifiers into locations", () => {
   expect(
     validateGuideCitations(`See \`${file}\`.\n\nThe \`L1\` cache is small.`, read(anchor)),
+  ).toEqual([]);
+});
+
+test("URL port numbers are not numeric source locations", () => {
+  expect(
+    validateGuideCitations("The preview is https://example.com:5173/.", () => undefined),
+  ).toEqual([]);
+});
+
+test.each([`${cite}:`, `  ${cite}: \`\`\`ts`])(
+  "citations cannot become Markdown reference definitions: %s",
+  (markdown) => {
+    expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+      "Markdown reference definition",
+    );
+  },
+);
+
+test("source citations leave a following fenced example separate", () => {
+  expect(
+    validateGuideCitations(`${cite}\n\n\`\`\`ts\nconst items = [L1];\n\`\`\``, read(anchor)),
   ).toEqual([]);
 });

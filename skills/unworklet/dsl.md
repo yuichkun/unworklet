@@ -374,15 +374,15 @@ state.buffer.f32({ size: number }): Buffer<"f32">
 
 ### Slot exposure — `ExposeOptions`
 
-[cite: packages/core/src/types.ts :: `export type ExposeOptions =`]: ```ts
+[cite: packages/core/src/types.ts :: `export type ExposeOptions =`]
 
+```ts
 type ExposeOptions = {
-name?: string;
-snapshot?: "persistent" | "transient" | Record<string, "persistent" | "transient">;
-publish?: { rateFps: number }; // live value mirrored to the main thread
+  name?: string;
+  snapshot?: "persistent" | "transient" | Record<string, "persistent" | "transient">;
+  publish?: { rateFps: number }; // live value mirrored to the main thread
 };
-
-````
+```
 
 - `publish` is allowed only on `state.f32` / `state.i32` / `state.bool`, requires
   a user-defined name, and `rateFps` must be positive finite. On a BUFFER,
@@ -400,7 +400,7 @@ Direction is in the options; the return type and worklet-side methods narrow to 
 ```ts
 event<T>({ from: "main"; name; capacity?: Capacity; payloadCapacity?: number })  // main → worklet
 event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number })  // worklet → main
-````
+```
 
 - Inbound (`from: "main"`): worklet handles with `.onReceive(handler)`. —
   [cite: packages/core/src/dsl/declarations.ts :: `function eventFromMain<`]
