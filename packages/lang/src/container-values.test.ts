@@ -1027,3 +1027,125 @@ test.each([
   expect(actual.outputs.main[0]).toEqual(new Float32Array(128).fill(6));
   expect(actual.diagnostics.scrubbedSamples).toBe(0);
 });
+
+const primitiveKeyGroups = [
+  [
+    "bigint",
+    [
+      ["decimal", "const values={1n:VALUE};", "values[1n]", "VALUE"],
+      ["hexadecimal", "const values={0x10n:VALUE};", "values[16n]", "VALUE"],
+      ["binary", "const values={0b10n:VALUE};", "values[2n]", "VALUE"],
+      ["octal", "const values={0o10n:VALUE};", "values[8n]", "VALUE"],
+      ["separator", "const values={1_000n:VALUE};", "values[1000n]", "VALUE"],
+      [
+        "large integer",
+        "const values={9007199254740993n:VALUE};",
+        "values[9007199254740993n]",
+        "VALUE",
+      ],
+      ["negative", "const values={[-1n]:VALUE};", "values[-1n]", "VALUE"],
+      ["negative hexadecimal", "const values={[-0x10n]:VALUE};", "values[-16n]", "VALUE"],
+      ["negative zero", "const values={[-0n]:VALUE};", "values[0]", "VALUE"],
+      ["wrapped negative", "const values={[-(1n)]:VALUE};", "values[-(1n)]", "VALUE"],
+      ["array index", "const values=[VALUE];", "values[0n]", "VALUE"],
+      ["number property", "const values={1:VALUE};", "values[1n]", "VALUE"],
+      ["string access", "const values={1n:VALUE};", 'values["1"]', "VALUE"],
+      ["destructuring", "const {[1n]:value}={1n:VALUE};", "value", "VALUE"],
+    ],
+  ],
+  [
+    "boolean and null",
+    [
+      ["true", "const values={[true]:VALUE};", "values[true]", "VALUE"],
+      ["false", "const values={[false]:VALUE};", "values[false]", "VALUE"],
+      ["null", "const values={[null]:VALUE};", "values[null]", "VALUE"],
+      ["true string key", "const values={true:VALUE,1:3};", "values[true]", "VALUE"],
+      ["null string key", "const values={null:VALUE,0:3};", "values[null]", "VALUE"],
+      ["null destructuring", "const {[null]:value}={null:VALUE};", "value", "VALUE"],
+    ],
+  ],
+  [
+    "ordering and mutation",
+    [
+      ["later bigint", "const values={1:VALUE,1n:3};", "values[1]", "3"],
+      ["later number", "const values={1n:VALUE,1:3};", "values[1n]", "3"],
+      ["later DSP bigint", "const values={1:3,1n:VALUE};", "values[1]", "VALUE"],
+      [
+        "lower large integer",
+        "const values={9007199254740992n:VALUE,9007199254740993n:3};",
+        "values[9007199254740992n]",
+        "VALUE",
+      ],
+      [
+        "upper large integer",
+        "const values={9007199254740992n:3,9007199254740993n:VALUE};",
+        "values[9007199254740993n]",
+        "VALUE",
+      ],
+      ["bigint-looking string", 'const values={1n:3,"1n":VALUE};', 'values["1n"]', "VALUE"],
+      ["later distinct bigint", 'const values={"1n":VALUE,1n:3};', 'values["1n"]', "VALUE"],
+      ["later boolean", "const values={true:VALUE,[true]:3};", "values.true", "3"],
+      ["later null", "const values={null:VALUE,[null]:3};", "values.null", "3"],
+      ["bigint write", "const values={1n:VALUE};values[1n]=3;", "values[1n]", undefined],
+      [
+        "bigint alias",
+        "const values={1n:VALUE};const alias=values;alias[1n]=3;",
+        "values[1n]",
+        undefined,
+      ],
+      [
+        "bigint escape",
+        "const values={1n:VALUE};function reset(v){v[1n]=3;}reset(values);",
+        "values[1n]",
+        undefined,
+      ],
+      ["boolean write", "const values={true:VALUE};values[true]=3;", "values[true]", undefined],
+      ["null write", "const values={null:VALUE};values[null]=3;", "values[null]", undefined],
+    ],
+  ],
+] as const;
+
+test.each(
+  primitiveKeyGroups.flatMap<readonly [string, string, string, string | undefined]>(
+    ([, cases]) => cases,
+  ),
+)("resolves primitive key semantics for %s", (_, declaration, value, expected) => {
+  expect(literalOrigin(`${declaration}const result=${value};`)).toBe(expected);
+});
+
+test.each(primitiveKeyGroups)("renders primitive key semantics for %s", async (_, cases) => {
+  const body = cases
+    .map(([, declaration, value, expected], channel) => {
+      const output = expected === "VALUE" ? `${value}*2` : `Math.max(0,${value}*2)`;
+      return `{${declaration.replaceAll("VALUE", "f32(0.5)*2")}out.ch(${channel})[i]=${output};}`;
+    })
+    .join("\n");
+  const actual = await renderLowered(
+    `const out=audioOutput({channels:${cases.length},name:"main"});process(()=>{forSample(i=>{${body}});});`,
+    config,
+  );
+  cases.forEach(([name, , , expected], channel) => {
+    expect
+      .soft(actual.outputs.main[channel], name)
+      .toEqual(new Float32Array(128).fill(expected === "VALUE" ? 2 : 6));
+  });
+  expect(actual.diagnostics.scrubbedSamples).toBe(0);
+});
+
+test.each([
+  ["const values={1n:VALUE};", "values[+1n]"],
+  ["const values={1n:VALUE,[+1n]:3};", "values[1n]"],
+  ["const key=1n;const values={1n:VALUE};", "values[key]"],
+  ['const undefined="left";const values={left:VALUE};', "values[undefined]"],
+  ['const NaN="left";const values={left:VALUE};', "values[NaN]"],
+  ["const values={1n:VALUE};", "values[BigInt(1)]"],
+  ["const values={true:VALUE};", "values[!false]"],
+  ["const values={0:VALUE};", "values[-null]"],
+  ["const values={1n:VALUE};", "values[`${1n}`]"],
+  ["const values={left:VALUE};", "values[/left/]"],
+] as const)(
+  "does not evaluate nonliteral primitive-key expressions: %s %s",
+  (declaration, value) => {
+    expect(literalOrigin(`${declaration}const result=${value};`)).toBeUndefined();
+  },
+);

@@ -47,7 +47,7 @@ jobs:
   coverage:
     name: Branch coverage (${{ matrix.package }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.package == 'lang' && 90 || 45 }}
     strategy:
       fail-fast: false
       matrix:

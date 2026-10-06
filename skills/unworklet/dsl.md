@@ -144,6 +144,8 @@ or bound through `const` destructuring of a literal. Nested literal paths and
 numeric sibling fields keep their DSP and build-time meanings respectively.
 Signed numeric object keys such as `{[-1]: value}` are read through the matching
 literal path, such as `values[-1]`.
+Bigint keys such as `values[-1n]` retain their integer precision. Boolean and
+null literal keys use the JavaScript property names `"true"`, `"false"`, and `"null"`.
 String keys also accept template literals without substitutions, such as
 ``values[`left`]``. Templates with substitutions remain dynamic keys.
 

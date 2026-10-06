@@ -36,6 +36,13 @@ export function literalKey(node: ts.Node): string | undefined {
   node = unwrapValue(node);
   if (ts.isStringLiteralLike(node)) return node.text;
   if (ts.isNumericLiteral(node)) return String(Number(node.text));
+  if (ts.isBigIntLiteral(node)) return String(BigInt(node.text.slice(0, -1)));
+  if (
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword
+  )
+    return ts.tokenToString(node.kind);
   if (
     ts.isPrefixUnaryExpression(node) &&
     (node.operator === ts.SyntaxKind.PlusToken || node.operator === ts.SyntaxKind.MinusToken)
@@ -45,13 +52,16 @@ export function literalKey(node: ts.Node): string | undefined {
       const value = Number(operand.text);
       return String(node.operator === ts.SyntaxKind.MinusToken ? -value : value);
     }
+    if (node.operator === ts.SyntaxKind.MinusToken && ts.isBigIntLiteral(operand)) {
+      return String(-BigInt(operand.text.slice(0, -1)));
+    }
   }
   return undefined;
 }
 
 function propertyKey(name: ts.PropertyName): string | undefined {
   if (ts.isComputedPropertyName(name)) return literalKey(name.expression);
-  return ts.isNumericLiteral(name) ? literalKey(name) : name.text;
+  return ts.isNumericLiteral(name) || ts.isBigIntLiteral(name) ? literalKey(name) : name.text;
 }
 
 function literalMember(value: ts.Node, key: string): ts.Expression | undefined {
