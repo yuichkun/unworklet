@@ -1,7 +1,6 @@
-import { renderOffline } from "@unworklet/offline";
 import { expect, test } from "vite-plus/test";
 
-import { evalLowered, fingerprintOf, lower } from "../goldenHarness.ts";
+import { expectSameLoweredText, lower, renderLoweredText } from "../goldenHarness.ts";
 
 const SR = 48000;
 const mono = (declarations: string, value: string): string => `
@@ -42,18 +41,12 @@ const s = instantiate(sg);`,
   );
   const lowered = lower(source);
   const loweredExplicit = lower(decayExplicit);
-  const actual = await renderOffline(evalLowered(lowered), {
+  const actual = await renderLoweredText(lowered, {
     sampleRate: SR,
     duration: 128 / SR,
   });
-  const [actualFingerprint, explicitFingerprint] = await Promise.all([
-    fingerprintOf(evalLowered(lowered)),
-    fingerprintOf(evalLowered(loweredExplicit)),
-  ]);
-  expect(actualFingerprint.schemaHash).toBe(explicitFingerprint.schemaHash);
-  expect(actualFingerprint.graph).toBe(explicitFingerprint.graph);
-  expect(actualFingerprint.layout).toBe(explicitFingerprint.layout);
-  const explicit = await renderOffline(evalLowered(loweredExplicit), {
+  await expectSameLoweredText(lowered, loweredExplicit);
+  const explicit = await renderLoweredText(loweredExplicit, {
     sampleRate: SR,
     duration: 128 / SR,
   });
@@ -89,14 +82,8 @@ test.each([
   const source = mono(`${declaration}\nconst s = instantiate(sg);`, "s.run(f32(1))");
   const lowered = lower(source);
   const loweredExplicit = lower(accumulatorExplicit);
-  const [actualFingerprint, explicitFingerprint] = await Promise.all([
-    fingerprintOf(evalLowered(lowered)),
-    fingerprintOf(evalLowered(loweredExplicit)),
-  ]);
-  expect(actualFingerprint.schemaHash).toBe(explicitFingerprint.schemaHash);
-  expect(actualFingerprint.graph).toBe(explicitFingerprint.graph);
-  expect(actualFingerprint.layout).toBe(explicitFingerprint.layout);
-  const result = await renderOffline(evalLowered(lowered), {
+  await expectSameLoweredText(lowered, loweredExplicit);
+  const result = await renderLoweredText(lowered, {
     sampleRate: SR,
     duration: 128 / SR,
   });
