@@ -18,6 +18,7 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { Layout } from "./layout.ts";
+import { remainderFunction } from "./emit-remainder.ts";
 import { formatVerifyViolations, verifyRealtimeSafe } from "./verify.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
 
@@ -1196,19 +1197,7 @@ function emitExpressionInScope(
         emitExpression(node.lhs, layout, mod, binaryen),
         emitExpression(node.rhs, layout, mod, binaryen),
       );
-    // mod(a, b) = a - trunc(a/b)·b (= JS `%`-conforming: truncating, sign follows
-    // the dividend). Hold a in MOD_A, b in MOD_B, quotient=trunc(a/b) in MOD_Q.
-    //   - b=0 → a/0=Inf → trunc=Inf → Inf·0=NaN → a-NaN=NaN (= JS x%0=NaN).
-    //   - For an infinite divisor (|b|=Inf, a finite), quotient=trunc(a/Inf)=0,
-    //     so the naive product=0·Inf=NaN, but JS gives 5%Infinity===5 = returns
-    //     the dividend. When quotient==0 (⟺ |a|<|b| = the remainder is a itself),
-    //     fix this by pinning product to 0 (= so an Inf produced by div-by-zero
-    //     etc. flowing into the divisor does not corrupt a finite dividend,
-    //     reported by @codex on #6). Inf%5 / Inf%Inf keep quotient≠0 and so
-    //     preserve NaN.
     case "mod": {
-      // Integer remainder = signed `rem_s` (= WASM standard, sign follows the
-      // dividend). float (f32 / f64) uses the JS `%`-conforming special impl below.
       if (node.type === "i32") {
         return mod.i32.rem_s(
           emitExpression(node.lhs, layout, mod, binaryen),
@@ -1221,59 +1210,15 @@ function emitExpressionInScope(
           emitExpression(node.rhs, layout, mod, binaryen),
         );
       }
-      const type = binaryenTypeOf(node.type, binaryen);
-      const aLocal = allocateLocal(mod, type);
-      const bLocal = allocateLocal(mod, type);
-      const quotientLocal = allocateLocal(mod, type);
-      // f64: the same JS `%`-conforming special impl as the f32 version, using f64 locals.
-      if (node.type === "f64") {
-        const aTeedF64 = mod.local.tee(
-          aLocal,
+      const type = node.type === "f64" ? "f64" : "f32";
+      return mod.call(
+        remainderFunction(type, mod, binaryen),
+        [
           emitExpression(node.lhs, layout, mod, binaryen),
-          binaryen.f64,
-        );
-        const setQuotientF64 = mod.local.set(
-          quotientLocal,
-          mod.f64.trunc(
-            mod.f64.div(
-              mod.local.get(aLocal, binaryen.f64),
-              mod.local.tee(bLocal, emitExpression(node.rhs, layout, mod, binaryen), binaryen.f64),
-            ),
-          ),
-        );
-        const productF64 = mod.select(
-          mod.f64.eq(mod.local.get(quotientLocal, binaryen.f64), mod.f64.const(0)),
-          mod.f64.const(0),
-          mod.f64.mul(
-            mod.local.get(quotientLocal, binaryen.f64),
-            mod.local.get(bLocal, binaryen.f64),
-          ),
-        );
-        return mod.f64.sub(aTeedF64, mod.block(null, [setQuotientF64, productF64], binaryen.f64));
-      }
-      const aTeed = mod.local.tee(
-        aLocal,
-        emitExpression(node.lhs, layout, mod, binaryen),
-        binaryen.f32,
+          emitExpression(node.rhs, layout, mod, binaryen),
+        ],
+        binaryen[type],
       );
-      const setQuotient = mod.local.set(
-        quotientLocal,
-        mod.f32.trunc(
-          mod.f32.div(
-            mod.local.get(aLocal, binaryen.f32),
-            mod.local.tee(bLocal, emitExpression(node.rhs, layout, mod, binaryen), binaryen.f32),
-          ),
-        ),
-      );
-      const product = mod.select(
-        mod.f32.eq(mod.local.get(quotientLocal, binaryen.f32), mod.f32.const(0)),
-        mod.f32.const(0),
-        mod.f32.mul(
-          mod.local.get(quotientLocal, binaryen.f32),
-          mod.local.get(bLocal, binaryen.f32),
-        ),
-      );
-      return mod.f32.sub(aTeed, mod.block(null, [setQuotient, product], binaryen.f32));
     }
     case "abs":
       return emitAbs(mod, node.type, () => emitExpression(node.value, layout, mod, binaryen));

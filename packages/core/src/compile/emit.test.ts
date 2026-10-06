@@ -3370,14 +3370,14 @@ test("`emit(frac)` e2e: nested frac(frac(1.75)) = 0.75 (shared local survives ne
   expect(v).toBeCloseTo(0.75, 5);
 });
 
-test("`emitExpression(mod)` lowers to sub/trunc/div (JS % equivalent)", async () => {
+test("`emitExpression(mod)` lowers to exact integer significand reduction", async () => {
   const binaryen = await loadBinaryen();
   const mod = makeMod(binaryen);
   const ref = emitExpression(cmp("mod", 7, 3), emptyLayout, mod, binaryen);
   const wat = watOfExpression(mod, binaryen, ref, binaryen.f32);
-  expect(wat).toContain("(f32.sub");
-  expect(wat).toContain("(f32.trunc");
-  expect(wat).toContain("(f32.div");
+  expect(wat).toContain("(call $$unworklet_mod_f32");
+  expect(wat).toContain("(i32.rem_u");
+  expect(wat).not.toContain("(f32.div");
   mod.dispose();
 });
 
