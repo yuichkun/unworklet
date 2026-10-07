@@ -104,6 +104,10 @@ lowers to — a `Node<T>` (`isDspExpr`, `packages/lang/src/classify.ts:147`). Pu
 `number op number` (e.g. `Math.LN2 / 12`, `ctx.sampleRate * 0.5`) stays
 build-time JS. Operands recurse bottom-up, so JS precedence is preserved.
 
+A helper returning DSP arithmetic can use build-time `if`/`else`, `switch`, or
+other statement blocks. Arithmetic applied to its return value lowers in the
+same way as arithmetic inside the helper.
+
 ### Operators → free-fn calls (`packages/lang/src/passes/operators.ts`)
 
 | sugar                                   | lowers to                              |
@@ -116,6 +120,14 @@ build-time JS. Operands recurse bottom-up, so JS precedence is preserved.
 | `a < b` `a > b` `a <= b` `a >= b`       | `lt` `gt` `lte` `gte` `(a, b)`         |
 | `a && b` `a \|\| b` (both bool)         | `and(a, b)` `or(a, b)`                 |
 | `cond ? x : y` (cond is DSP)            | `select(cond, x, y)`                   |
+
+Generated sugar calls use the core helpers even when an authored binding has
+the same name. For example, a local `mul` does not affect DSP `a * b`; an explicit
+`mul(a, b)` still calls the authored binding. Generated import aliases avoid
+authored names in nested scopes too.
+The editor plugin and `unworklet-tsc` use the same helper bindings and preserve
+diagnostics on authored calls and operands.
+Type-only imports keep their type roles when a generated helper uses the same name.
 
 Closed operator set: `classify.ts:120` (`isSugarBinaryOperator`). Method chains
 interoperate with operators in the same body (core `Node` methods classify as
@@ -131,6 +143,25 @@ still advances the PRNG, and an unchosen `i32` division by zero still traps. To
 keep an expression out of the graph, do not write it — restructure so the
 dangerous operand is always safe (clamp the divisor, hoist the read), rather than
 expecting a conditional to skip it.
+
+### Local container values
+
+DSP operator results, intrinsic Node method results, and indexed DSP reads can be stored in local `const`
+array/object literals and read with literal keys (`values[0]`, `values.left`),
+or bound through `const` destructuring of a literal. Nested literal paths and
+numeric sibling fields keep their DSP and build-time meanings respectively.
+Signed numeric object keys such as `{[-1]: value}` are read through the matching
+literal path, such as `values[-1]`.
+Bigint keys such as `values[-1n]` retain their integer precision. Boolean and
+null literal keys use the JavaScript property names `"true"`, `"false"`, and `"null"`.
+String keys also accept template literals without substitutions, such as
+``values[`left`]``. Templates with substitutions remain dynamic keys.
+
+This inference requires direct, read-only references to the container. It does
+not infer through aliases, value exports, mutation, escapes, dynamic keys, or ambiguous helper or callback
+return values. Erased type references such as `type Snapshot = typeof values`
+do not expose or mutate the container. Explicit core operations such as `mul(x, 2)` preserve the `Node`
+type of stored DSP values for ordinary TypeScript inference.
 
 ### Index / element-access (`packages/lang/src/passes/index.ts`)
 
@@ -173,6 +204,11 @@ throws `uwk-unsupported-if` (rewrite to `select(...)`). The error’s optional
 | `if (c) buf[i] = v`                               | `buf.write(i, select(c, v, buf.read(i)))` |
 | `if (c) s.write(a) else s.write(b)` (same target) | `s.write(select(c, a, b))`                |
 | `if (c) port.emit(p)` (block of emits)            | `port.emitIf(c, p)` (each)                |
+
+Buffer indices in these writes accept the same arithmetic, index-access, and
+bare-state sugar as unconditional writes, including `buf[i + 1] = value` and
+`buf.write(i + 1, value)`. A symmetric buffer `if`/`else` must use the same buffer
+and index expression in both branches.
 
 — `ifSugar.ts:149,155,159,164`
 
@@ -230,6 +266,9 @@ plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
 - A `Node<'bool'>` `if` outside the 3 shapes → `uwk-unsupported-if`; use `select`.
 - `migrations()` / `options()` are processor-only and cannot reference a
   process-body binding → `uwk-options-binding` / `uwk-options-without-process`.
+  Static property names (such as `options({ id: "osc" })`), imported values, and
+  bindings local to an inline callback are allowed. Shorthand values, computed
+  keys, and callback closures must not capture a processor-body binding.
 - `options({ id: "my-synth" })` sets the processor's stable IDENTITY (also
   `defineProcessor(body, { id })` in `.processor.ts`). It is stamped into every
   snapshot blob: `schemaHash` covers declarations only, so two different
@@ -391,8 +430,10 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   process body and the if-sugar (§2) rewrites it to `emitIf`. —
   `declarations.ts:951,955`
 - Main-thread side is `node.events.<name>` (§5). — `declarations.ts:828,1466`
-- Outbound `atSample` is optional. Omission uses the enclosing `forSample`
-  index, or zero at block level. Set it explicitly with
+- Outbound `atSample` is optional. Omission uses the innermost active `forSample`
+  index, including inside `everyNSamples`, or zero outside a sample loop.
+  A block-level `onReceive` or MIDI `onEvent` handler uses zero, even after a
+  sample loop has completed. Set it explicitly with
   `port.emitIf(cond, { atSample: i, ...userFields })` when another offset is
   intended. It is a sample index within the render quantum.
 - **Payload retention and memory:** each typed-array ring reserves one content
@@ -577,6 +618,15 @@ anywhere a `Node` is and lifts to the operand's type.
 In `.uwk.ts` arithmetic/compare/power/`neg`/`not` are written with operators (§2);
 the named functions remain available and `sin`/`exp`/`clamp`/`pipe`/etc. are
 written directly.
+
+Floating `mod` / `%` uses truncating remainder, with the dividend's sign,
+including `-0` for negative exact multiples. It is exact for the operands'
+`f32` or `f64` values, including subnormals; `f32` inputs are rounded before
+the operation. A zero divisor, infinite dividend, or NaN operand yields NaN;
+a finite dividend modulo either infinity is unchanged. Integer-significand
+reduction is bounded by 32 steps for `f32` and 186 for `f64`; ordinary nearby
+exponents need fewer steps. This does not bypass the separate state/buffer-store
+subnormal flush or audio-output non-finite scrub.
 
 `pow` gives what JavaScript's `**` gives, special values included: a negative
 base with a fractional exponent is `NaN`, `x ** 0` is 1, `0 ** -1` is `Infinity`.

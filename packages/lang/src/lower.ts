@@ -13,6 +13,7 @@
 
 import ts from "typescript";
 
+import { authoredBindingNames, collectBindingNames } from "./bindings.ts";
 import { autoNameDeclaration } from "./passes/autoName.ts";
 import { sugarTransformer } from "./passes/sugar.ts";
 import { buildProgram, type FsSnapshot } from "./program.ts";
@@ -234,19 +235,6 @@ function unaliasedCoreValueImports(
   return names;
 }
 
-/** Every name a binding pattern introduces (`a`, `{ b }`, `[c, ...d]`). */
-function collectBindingNames(name: ts.BindingName, into: Set<string>): void {
-  if (ts.isIdentifier(name)) {
-    into.add(name.text);
-    return;
-  }
-  // ObjectBindingPattern | ArrayBindingPattern — array holes are
-  // OmittedExpression, not BindingElement, so they are skipped.
-  for (const element of name.elements) {
-    if (ts.isBindingElement(element)) collectBindingNames(element.name, into);
-  }
-}
-
 /**
  * `var` names declared anywhere inside `node`'s own body — `var` is scoped to
  * the enclosing function, not the block it sits in, so `{ var input = 1; }` and
@@ -300,10 +288,119 @@ function statementBoundNames(statements: readonly ts.Statement[]): Set<string> {
   return names;
 }
 
-function makeCoreImport(names: readonly string[], coreModule: string): ts.ImportDeclaration {
+function generatedHelperBindings(
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+  aliases: Map<string, ts.Identifier>,
+): ts.TransformerFactory<ts.SourceFile> {
+  const bound = authoredBindingNames(sourceFile);
+  const imports = sourceFile.statements.filter(ts.isImportDeclaration);
+  const typeOnlyNames = importBoundNames(imports);
+  for (const name of importBoundNames(imports, { valuesOnly: true })) typeOnlyNames.delete(name);
+  const ambientReferences = new Set<ts.Identifier>();
+  const collectAmbientReferences = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && typeOnlyNames.has(node.text)) {
+      const parent = node.parent;
+      const shorthand = ts.isShorthandPropertyAssignment(parent) && parent.name === node;
+      // Declaration merging can share a symbol across value and type names.
+      // Only value references follow the alias, never declarations or property keys.
+      if (
+        (!shorthand && "name" in parent && parent.name === node) ||
+        ("propertyName" in parent && parent.propertyName === node) ||
+        (ts.isQualifiedName(parent) && parent.right === node) ||
+        ts.isPartOfTypeNode(node)
+      ) {
+        return;
+      }
+      const symbol = shorthand
+        ? checker.resolveName(node.text, node, ts.SymbolFlags.Value, false)
+        : checker.getSymbolAtLocation(node);
+      if (
+        symbol !== undefined &&
+        symbol === checker.resolveName(node.text, undefined, ts.SymbolFlags.Value, false)
+      ) {
+        ambientReferences.add(node);
+      }
+    }
+    ts.forEachChild(node, collectAmbientReferences);
+  };
+  collectAmbientReferences(sourceFile);
+
+  return (context) => {
+    const reference = (expression: ts.Expression): ts.Expression => {
+      if (
+        !ts.isIdentifier(expression) ||
+        expression.pos >= 0 ||
+        !CORE_AUTHORING_EXPORTS.has(expression.text) ||
+        !bound.has(expression.text)
+      ) {
+        return expression;
+      }
+      let alias = aliases.get(expression.text);
+      if (alias === undefined) {
+        alias = ts.factory.createUniqueName(
+          `__uwk_${expression.text}`,
+          ts.GeneratedIdentifierFlags.Optimistic |
+            ts.GeneratedIdentifierFlags.ReservedInNestedScopes,
+        );
+        aliases.set(expression.text, alias);
+      }
+      return alias;
+    };
+    const visit: ts.Visitor = (node) => {
+      const visited = ts.visitEachChild(node, visit, context);
+      // Only synthesized value references belong to the compiler. Authored calls,
+      // property names, and binding patterns must keep their lexical meaning.
+      if (ts.isCallExpression(visited)) {
+        return ts.factory.updateCallExpression(
+          visited,
+          reference(visited.expression),
+          visited.typeArguments,
+          visited.arguments,
+        );
+      }
+      if (ts.isPropertyAccessExpression(visited)) {
+        return ts.factory.updatePropertyAccessExpression(
+          visited,
+          reference(visited.expression),
+          visited.name,
+        );
+      }
+      return visited;
+    };
+    // A type-only import can coexist with the ambient helper's value symbol.
+    // That value must follow the generated alias once its ordinary import is omitted.
+    const bindAmbientValues: ts.Visitor = (node) => {
+      if (ts.isShorthandPropertyAssignment(node) && ambientReferences.has(node.name)) {
+        const alias = aliases.get(node.name.text);
+        if (alias !== undefined) return ts.factory.createPropertyAssignment(node.name, alias);
+      }
+      if (ts.isIdentifier(node) && ambientReferences.has(node)) {
+        const alias = aliases.get(node.text);
+        if (alias !== undefined) return alias;
+      }
+      return ts.visitEachChild(node, bindAmbientValues, context);
+    };
+    return (sf) => {
+      const generated = ts.visitNode(sf, visit) as ts.SourceFile;
+      return ts.visitNode(generated, bindAmbientValues) as ts.SourceFile;
+    };
+  };
+}
+
+function makeCoreImport(
+  names: readonly string[],
+  coreModule: string,
+  aliases: ReadonlyMap<string, ts.Identifier>,
+): ts.ImportDeclaration {
   const specifiers = names.map((name) =>
     ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(name)),
   );
+  for (const [name, alias] of aliases) {
+    specifiers.push(
+      ts.factory.createImportSpecifier(false, ts.factory.createIdentifier(name), alias),
+    );
+  }
   return ts.factory.createImportDeclaration(
     undefined,
     ts.factory.createImportClause(false, undefined, ts.factory.createNamedImports(specifiers)),
@@ -444,7 +541,11 @@ export function lower(source: string, options: LowerOptions = {}): string {
     record: options.captureInto,
     sourcePath: options.sourcePath,
   });
-  const sf = ts.transform(sourceFile, [sugarTransformer(checker)]).transformed[0] as ts.SourceFile;
+  const generatedAliases = new Map<string, ts.Identifier>();
+  const sf = ts.transform(sourceFile, [
+    sugarTransformer(checker),
+    generatedHelperBindings(checker, sourceFile, generatedAliases),
+  ]).transformed[0] as ts.SourceFile;
 
   let processBody: ts.Statement[] | undefined;
   let processCount = 0;
@@ -489,6 +590,13 @@ export function lower(source: string, options: LowerOptions = {}): string {
     declarations.push(autoNameDeclaration(stmt));
   }
 
+  const importedNames = importBoundNames(userImports, { valuesOnly: true });
+  // A generated alias supplies its helper without double-binding an authored
+  // type-only import under the ordinary helper name.
+  for (const name of importBoundNames(userImports)) {
+    if (generatedAliases.has(name)) importedNames.add(name);
+  }
+
   if (processCount === 0) {
     // No process() = a "library module": emit the (already-desugared) top-level
     // declarations + exports as a plain module — no defineProcessor wrap, no
@@ -510,9 +618,9 @@ export function lower(source: string, options: LowerOptions = {}): string {
       );
     }
     const used = collectUsedCoreExports(sf);
-    for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
+    for (const name of importedNames) used.delete(name);
     for (const name of statementBoundNames(declarations)) used.delete(name);
-    const importDecl = makeCoreImport([...used].sort(), coreModule);
+    const importDecl = makeCoreImport([...used].sort(), coreModule, generatedAliases);
     const lowered = ts.factory.updateSourceFile(sf, [...userImports, importDecl, ...declarations]);
     const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
     return printer.printFile(lowered);
@@ -538,17 +646,36 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // argument is attached outside it, so such a reference would be out of scope at
   // module evaluation. (Reported by @codex on #12.)
   const bodyBindings = statementBoundNames(declarations);
-  const optionRefs = (expr: ts.Expression | undefined): string[] => {
+  for (const stmt of declarations) {
+    if (!ts.isFunctionLike(stmt)) collectFunctionScopedVars(stmt, bodyBindings);
+  }
+  const bodySymbols = new Set(
+    checker
+      .getSymbolsInScope(sourceFile, ts.SymbolFlags.Value | ts.SymbolFlags.Alias)
+      .filter((symbol) => bodyBindings.has(symbol.getName())),
+  );
+  // Symbol queries belong to the pristine AST; sugar can synthesize references
+  // without checker bindings. Only the final call of each macro is emitted.
+  const originalMacros = sourceFile.statements.map(topLevelMacroCall);
+  const optionRefs = (name: string): string[] => {
+    const expr = originalMacros.findLast((macro) => macro?.name === name)?.call.arguments[0];
     if (expr === undefined) return [];
     const hits = new Set<string>();
     const visit = (n: ts.Node): void => {
-      if (ts.isIdentifier(n) && bodyBindings.has(n.text)) hits.add(n.text);
+      if (ts.isPartOfTypeNode(n)) return;
+      if (ts.isIdentifier(n)) {
+        const symbol =
+          ts.isShorthandPropertyAssignment(n.parent) && n.parent.name === n
+            ? checker.getShorthandAssignmentValueSymbol(n.parent)
+            : checker.getSymbolAtLocation(n);
+        if (symbol !== undefined && bodySymbols.has(symbol)) hits.add(n.text);
+      }
       ts.forEachChild(n, visit);
     };
     visit(expr);
     return [...hits];
   };
-  const referenced = [...new Set([...optionRefs(migrationsArg), ...optionRefs(optionsObject)])];
+  const referenced = [...new Set([...optionRefs(MIGRATIONS_MACRO), ...optionRefs(OPTIONS_MACRO)])];
   if (referenced.length > 0) {
     throw new LowerError(
       "uwk-options-binding",
@@ -623,13 +750,12 @@ export function lower(source: string, options: LowerOptions = {}): string {
   if (needInput) used.add("audioInput");
   if (needOutput) used.add("audioOutput");
   used.add("defineProcessor");
-  // Drop any name the user imports explicitly so the injected core import never
-  // double-binds it (their import provides it). This also strips the user
-  // import's own specifier identifiers, which `collectUsedCoreExports` counts.
-  for (const name of importBoundNames(userImports, { valuesOnly: true })) used.delete(name);
+  // Exclude imports already represented by authored bindings or generated aliases;
+  // their specifier identifiers are included by `collectUsedCoreExports`.
+  for (const name of importedNames) used.delete(name);
   // A declaration inside the wrapper shadows the import for the whole body.
   for (const name of statementBoundNames(declarations)) used.delete(name);
-  const importDecl = makeCoreImport([...used].sort(), coreModule);
+  const importDecl = makeCoreImport([...used].sort(), coreModule, generatedAliases);
   const optionsArg = makeOptionsArg(migrationsArg, optionsObject);
   const exported = makeDefineProcessor(
     allDeclarations,

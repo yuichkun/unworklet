@@ -5,15 +5,63 @@
  * `Buffer<"u8">` / `Param` / `InputChannelView<"f32">` / `OutputChannelView<"f32">`.
  *
  * The hard part is that operator sugar is a TS error until lowered (`Node * 2`
- * types as `number`), so stock TS mis-types three DSP-producing shapes as
+ * types as `number`), so stock TS mis-types DSP-producing shapes as
  * `number` / `any`: an index read (`buf[i]`), a `const` bound to a sugar
- * expression (`const x = a * 2`), and a call to a sugar-bodied helper
- * (`double(x)`). `isDspExpr` / `classify` recover all three structurally, so an
- * operator over them still lowers. All queries run against the PRISTINE source
+ * expression (`const x = a * 2`), a call to a sugar-bodied helper
+ * (`double(x)`), and values stored in literal containers. `isDspExpr` /
+ * `classify` recover these structurally, so an operator over them still lowers. All queries run against the PRISTINE source
  * (a visitor receives original, never factory, nodes).
  */
 
+import type { Node as DspNode, ScalarType } from "@unworklet/core";
 import ts from "typescript";
+
+import {
+  containerValueOrigin,
+  isConstDeclaration,
+  literalKey,
+  unwrapValue,
+} from "./container-values.ts";
+
+type DspValue = DspNode<ScalarType | "f32x4">;
+type NodeValueMethod = {
+  [Key in Extract<keyof DspValue, string>]: DspValue[Key] extends (...args: never[]) => DspValue
+    ? Key
+    : never;
+}[Extract<keyof DspValue, string>];
+
+const intrinsicNodeMethods = {
+  add: true,
+  sub: true,
+  mul: true,
+  div: true,
+  mod: true,
+  neg: true,
+  eq: true,
+  lt: true,
+  gt: true,
+  lte: true,
+  gte: true,
+  not: true,
+  and: true,
+  or: true,
+  sin: true,
+  cos: true,
+  tan: true,
+  tanh: true,
+  exp: true,
+  log: true,
+  pow: true,
+  sqrt: true,
+  floor: true,
+  ceil: true,
+  frac: true,
+  abs: true,
+  min: true,
+  max: true,
+  clamp: true,
+  lane: true,
+} satisfies Record<Exclude<NodeValueMethod, "pipe">, true>;
 
 export function typeString(checker: ts.TypeChecker, node: ts.Node): string {
   return checker.typeToString(checker.getTypeAtLocation(node));
@@ -30,19 +78,28 @@ export type ValueClass =
 
 /** Recursion guard for the structural fallbacks (bound locals / sugar-bodied calls). */
 const inFlight = new Set<ts.Node>();
+let recursionEpoch = 0;
+
+function recursiveQuery(node: ts.Node): boolean {
+  if (!inFlight.has(node)) return false;
+  recursionEpoch++;
+  return true;
+}
 
 // Per-node memo. Nodes are unique per `ts.Program` (one program per `lower()`),
 // so the WeakMap is self-clearing across calls and never sees a stale checker.
 // The structural fallbacks resolve symbols / signatures, which is expensive, so
-// memoizing turns the whole classify pass from O(queries) to O(nodes).
+// memoization avoids repeating that work. A recursion guard depends on the
+// active query stack, so results affected by one cannot be cached by node alone.
 const classifyMemo = new WeakMap<ts.Node, ValueClass>();
 const dspExprMemo = new WeakMap<ts.Node, boolean>();
 
 export function classify(checker: ts.TypeChecker, node: ts.Node): ValueClass {
   const cached = classifyMemo.get(node);
   if (cached !== undefined) return cached;
+  const epoch = recursionEpoch;
   const result = computeClassify(checker, node);
-  classifyMemo.set(node, result);
+  if (epoch === recursionEpoch) classifyMemo.set(node, result);
   return result;
 }
 
@@ -62,6 +119,8 @@ function computeClassify(checker: ts.TypeChecker, node: ts.Node): ValueClass {
   // Fallback: a `const x = <sugar expr>` is mis-typed `number` / `any`, so a
   // binding whose initializer is itself a DSP expression is a DSP value.
   if (ts.isIdentifier(node) && isDspBoundLocal(checker, node)) return "node";
+  const origin = containerValueOrigin(checker, node);
+  if (origin !== undefined && isLoweredNodeValue(checker, origin)) return "node";
   return "other";
 }
 
@@ -82,6 +141,8 @@ function computeClassify(checker: ts.TypeChecker, node: ts.Node): ValueClass {
  * states.
  */
 function typedFromOperands(checker: ts.TypeChecker, node: ts.Node): boolean {
+  const origin = containerValueOrigin(checker, node);
+  if (origin !== undefined && isLoweredNodeValue(checker, origin)) return true;
   if (ts.isParenthesizedExpression(node)) return typedFromOperands(checker, node.expression);
   if (ts.isConditionalExpression(node)) return isDspExpr(checker, node.condition);
   if (ts.isBinaryExpression(node)) {
@@ -100,7 +161,7 @@ function typedFromOperands(checker: ts.TypeChecker, node: ts.Node): boolean {
       !ts.isVariableDeclaration(decl) ||
       decl.initializer === undefined ||
       decl.initializer === node ||
-      inFlight.has(decl)
+      recursiveQuery(decl)
     ) {
       return false;
     }
@@ -114,6 +175,56 @@ function typedFromOperands(checker: ts.TypeChecker, node: ts.Node): boolean {
   return false;
 }
 
+/** Proven emitted Nodes, rather than a possibly mixed helper's return type. */
+function isLoweredNodeValue(checker: ts.TypeChecker, node: ts.Node): boolean {
+  node = unwrapValue(node);
+  if (ts.isBinaryExpression(node) && isSugarBinaryOperator(node.operatorToken.kind)) {
+    return isDspExpr(checker, node.left) || isDspExpr(checker, node.right);
+  }
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    (node.operator === ts.SyntaxKind.MinusToken || node.operator === ts.SyntaxKind.ExclamationToken)
+  ) {
+    return isDspExpr(checker, node.operand);
+  }
+  if (ts.isConditionalExpression(node)) return isDspExpr(checker, node.condition);
+  if (ts.isElementAccessExpression(node)) {
+    const object = classify(checker, node.expression);
+    if (object === "buffer" || object === "param" || object === "inputChannel") return true;
+  }
+  if (recursiveQuery(node)) return false;
+  inFlight.add(node);
+  try {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapValue(node.expression);
+      if (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) {
+        const method = ts.isPropertyAccessExpression(callee)
+          ? callee.name.text
+          : literalKey(callee.argumentExpression);
+        if (method !== undefined && Object.hasOwn(intrinsicNodeMethods, method)) {
+          return isLoweredNodeValue(checker, callee.expression);
+        }
+      }
+    }
+    if (ts.isIdentifier(node)) {
+      const declaration = ts.isShorthandPropertyAssignment(node.parent)
+        ? checker.getShorthandAssignmentValueSymbol(node.parent)?.valueDeclaration
+        : checker.getSymbolAtLocation(node)?.valueDeclaration;
+      if (
+        declaration !== undefined &&
+        isConstDeclaration(declaration) &&
+        declaration.initializer !== undefined
+      ) {
+        return isLoweredNodeValue(checker, declaration.initializer);
+      }
+    }
+    const origin = containerValueOrigin(checker, node);
+    return origin !== undefined && isLoweredNodeValue(checker, origin);
+  } finally {
+    inFlight.delete(node);
+  }
+}
+
 /** A local `const X = <DSP expr>` binding (stock TS mis-types it `number`/`any`). */
 function isDspBoundLocal(checker: ts.TypeChecker, node: ts.Identifier): boolean {
   const sym = checker.getSymbolAtLocation(node);
@@ -123,7 +234,7 @@ function isDspBoundLocal(checker: ts.TypeChecker, node: ts.Identifier): boolean 
     !ts.isVariableDeclaration(decl) ||
     decl.initializer === undefined ||
     decl.initializer === node ||
-    inFlight.has(decl)
+    recursiveQuery(decl)
   ) {
     return false;
   }
@@ -145,7 +256,7 @@ function isDspCall(checker: ts.TypeChecker, call: ts.CallExpression): boolean {
   const decl = checker.getResolvedSignature(call)?.declaration;
   if (
     decl === undefined ||
-    inFlight.has(decl) ||
+    recursiveQuery(decl) ||
     !(
       ts.isArrowFunction(decl) ||
       ts.isFunctionExpression(decl) ||
@@ -160,8 +271,14 @@ function isDspCall(checker: ts.TypeChecker, call: ts.CallExpression): boolean {
   inFlight.add(decl);
   try {
     if (!ts.isBlock(body)) return isDspExpr(checker, body);
-    const ret = body.statements.find(ts.isReturnStatement);
-    return ret?.expression !== undefined && isDspExpr(checker, ret.expression);
+    const returnsDsp = (node: ts.Node): boolean => {
+      if (ts.isReturnStatement(node)) {
+        return node.expression !== undefined && isDspExpr(checker, node.expression);
+      }
+      if (ts.isFunctionLike(node) || ts.isClassLike(node)) return false;
+      return ts.forEachChild(node, returnsDsp) ?? false;
+    };
+    return returnsDsp(body);
   } finally {
     inFlight.delete(decl);
   }
@@ -209,8 +326,9 @@ export function isSugarBinaryOperator(kind: ts.SyntaxKind): boolean {
 export function isDspExpr(checker: ts.TypeChecker, node: ts.Node): boolean {
   const cached = dspExprMemo.get(node);
   if (cached !== undefined) return cached;
+  const epoch = recursionEpoch;
   const result = computeDspExpr(checker, node);
-  dspExprMemo.set(node, result);
+  if (epoch === recursionEpoch) dspExprMemo.set(node, result);
   return result;
 }
 

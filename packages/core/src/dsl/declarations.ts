@@ -996,20 +996,16 @@ function eventToMain<T>(options: EventOptions): EventDecl<T> {
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
-      // atSample default lift (= option B):
-      // - inside a forSample callback (= currentLoopBody !== null) → loopCounter Node
-      // - at per-block top level (= currentLoopBody === null) → literal 0
-      // A user override passes through unchanged (= Node<'i32'> | number). An invalid
-      // type (= string etc.) throws. A handler-context default is added in a later
-      // path (sub-phase 7.7 / 9).
+      // Handler bodies also collect statements, so only active sample loops supply an offset.
+      const { loopDepth } = getCurrentCapture();
       const atSampleRaw = payload.atSample;
       const atSampleAst: AstNode = isWrappedNode(atSampleRaw)
         ? unwrapAst(atSampleRaw)
         : typeof atSampleRaw === "number"
           ? { kind: "literal", type: "i32", value: atSampleRaw }
           : atSampleRaw === undefined
-            ? getCurrentCapture().currentLoopBody !== null
-              ? { kind: "loopCounter" }
+            ? loopDepth > 0
+              ? { kind: "loopCounter", depth: loopDepth - 1 }
               : { kind: "literal", type: "i32", value: 0 }
             : (() => {
                 throw new Error(
@@ -1372,12 +1368,11 @@ function midiToMain(options: MidiPortOptions): MidiOutputHandle {
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
-      // `atSample` is a common field across every MidiEventEmit variant; default
-      // it like event<T> emit (loop counter inside forSample, else block-start 0).
+      const { loopDepth } = getCurrentCapture();
       const atSample: AstNode =
         event.atSample === undefined
-          ? getCurrentCapture().currentLoopBody !== null
-            ? { kind: "loopCounter" }
+          ? loopDepth > 0
+            ? { kind: "loopCounter", depth: loopDepth - 1 }
             : I32_ZERO
           : liftI32(event.atSample);
       // Map MidiEventGraph → semantic args; emit computes the 8-byte wire slot

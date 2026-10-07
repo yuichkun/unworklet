@@ -72,10 +72,25 @@ export async function expectByteIdentical(
  * chain-DSL `.uwk.ts`. The explicit form is the ground truth.
  */
 export async function expectSameLowering(sugar: string, explicit: string): Promise<void> {
-  const [a, b] = await Promise.all([
+  await expectSameFingerprints(
     fingerprintOf(evalLowered(lower(sugar))),
     fingerprintOf(evalLowered(lower(explicit))),
-  ]);
+  );
+}
+
+/** Share only immutable lowered text; each fingerprint evaluates a fresh processor. */
+export async function expectSameLoweredText(sugar: string, explicit: string): Promise<void> {
+  await expectSameFingerprints(
+    fingerprintOf(evalLowered(sugar)),
+    fingerprintOf(evalLowered(explicit)),
+  );
+}
+
+async function expectSameFingerprints(
+  sugar: Promise<Fingerprint>,
+  explicit: Promise<Fingerprint>,
+): Promise<void> {
+  const [a, b] = await Promise.all([sugar, explicit]);
   expect(a.schemaHash).toBe(b.schemaHash);
   expect(a.graph).toBe(b.graph);
   expect(a.layout).toBe(b.layout);
@@ -86,5 +101,13 @@ export async function renderLowered(
   uwk: string,
   config: RenderOfflineConfig,
 ): Promise<RenderOfflineResult> {
-  return renderOffline(evalLowered(lower(uwk)), config);
+  return renderLoweredText(lower(uwk), config);
+}
+
+/** Fresh evaluation keeps compilation and runtime state independent of other oracles. */
+export async function renderLoweredText(
+  lowered: string,
+  config: RenderOfflineConfig,
+): Promise<RenderOfflineResult> {
+  return renderOffline(evalLowered(lowered), config);
 }

@@ -19,9 +19,16 @@
  * sub-graphs are always evaluated; the condition only picks which result lands.
  */
 
+import { renderOffline } from "@unworklet/offline";
 import { expect, test } from "vite-plus/test";
 
-import { expectSameLowering, lower, renderLowered } from "../goldenHarness.ts";
+import {
+  evalLowered,
+  expectSameLowering,
+  fingerprintOf,
+  lower,
+  renderLowered,
+} from "../goldenHarness.ts";
 import { LowerError } from "../lower.ts";
 
 const SR = 48000;
@@ -288,6 +295,86 @@ test("shape2 buffer: behavior — select writes 1 above / 2 at-or-below", async 
   );
   for (let n = 0; n < N; n++) expect(got[n]).toBeCloseTo(f32(x[n]!) > 0 ? 1 : 2, 5);
 });
+
+const conditionalBufferIndices = [
+  { name: "arithmetic", index: "i + 1", explicit: "add(i, 1)", declarations: "", setup: "" },
+  {
+    name: "compound arithmetic",
+    index: "(i * 2 + 2) / 2",
+    explicit: "div(add(mul(i, 2), 2), 2)",
+    declarations: "",
+    setup: "",
+  },
+  {
+    name: "bare state",
+    index: "wp",
+    explicit: "wp.read()",
+    declarations: "const wp = state.i32(0).named('wp');",
+    setup: "wp.write(add(i, 1));",
+  },
+  {
+    name: "arithmetic with bare state",
+    index: "wp + 1",
+    explicit: "add(wp.read(), 1)",
+    declarations: "const wp = state.i32(0).named('wp');",
+    setup: "wp.write(i);",
+  },
+  {
+    name: "ternary with bare states",
+    index: "i < 64 ? wp : wp",
+    explicit: "select(lt(i, 64), wp.read(), wp.read())",
+    declarations: "const wp = state.i32(0).named('wp');",
+    setup: "wp.write(add(i, 1));",
+  },
+  {
+    name: "nested buffer read",
+    index: "indices[i] + 1",
+    explicit: "add(indices.read(i), 1)",
+    declarations: "const indices = state.buffer.i32({ size: 128 }).named('indices');",
+    setup: "indices.write(i, i);",
+  },
+];
+
+for (const form of ["assignment", "write call"] as const) {
+  for (const hasElse of [false, true]) {
+    test.each(conditionalBufferIndices)(
+      `conditional buffer index: $name, ${form}, ${hasElse ? "symmetric else" : "no else"}`,
+      async ({ index, explicit, declarations, setup }) => {
+        const d = `const buf = state.buffer.f32({ size: 128 }).named('buf');\n${declarations}`;
+        const write = (value: string): string =>
+          form === "assignment" ? `buf[${index}] = ${value};` : `buf.write(${index}, ${value});`;
+        const limit = hasElse ? 64 : 127;
+        const sugar = mono(
+          d,
+          `${setup}
+if (i < ${limit}) ${write("0.5")} ${hasElse ? `else ${write("-0.5")}` : ""}
+out.ch(0)[i] = buf[i];`,
+        );
+        const reference = mono(
+          d,
+          `${setup}
+buf.write(${explicit}, select(lt(i, ${limit}), 0.5, ${hasElse ? "-0.5" : `buf.read(${explicit})`}));
+out.ch(0).at(i).write(buf.read(i));`,
+        );
+        const sugarProcessor = evalLowered(lower(sugar));
+        const referenceProcessor = evalLowered(lower(reference));
+        expect(await fingerprintOf(sugarProcessor)).toEqual(
+          await fingerprintOf(referenceProcessor),
+        );
+        const expected = Float32Array.from({ length: N }, (_, n) =>
+          n === 0 ? 0 : hasElse && n > 64 ? -0.5 : 0.5,
+        );
+        const config = { sampleRate: SR, duration: N / SR };
+        const actual = await renderOffline(sugarProcessor, config);
+        const oracle = await renderOffline(referenceProcessor, config);
+        expect(actual.outputs.main![0]).toEqual(expected);
+        expect(actual.outputs.main![0]).toEqual(oracle.outputs.main![0]);
+        expect(actual.diagnostics.scrubbedSamples).toBe(0);
+        expect(oracle.diagnostics.scrubbedSamples).toBe(0);
+      },
+    );
+  }
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // condition variants — comparison / ! / != / bool-state-derived
@@ -757,5 +844,13 @@ test("reject: symmetric if-else writing the SAME buffer at DIFFERENT indices", (
     "const buf = state.buffer.f32({ size: 8 }).named('buf');\nconst head = state.i32(0).named('head');",
     `if (input.ch(0).at(i) > 0) buf[i] = f32(1); else buf[head] = f32(2);`,
   );
+  expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
+});
+
+test.each([
+  "if (i < 127) buf[i + 1] = 0.5; else buf[i + 2] = -0.5;",
+  "if (i < 127) { buf[i + 1] = 0.5; buf[i + 2] = -0.5; }",
+])("reject: computed buffer indices retain the supported branch shapes: %s", (body) => {
+  const src = mono("const buf = state.buffer.f32({ size: 128 }).named('buf');", body);
   expect(lowerErrorId(src)).toBe("uwk-unsupported-if");
 });

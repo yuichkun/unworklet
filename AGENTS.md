@@ -109,6 +109,18 @@ unworklet is developed with **TDD**. Write comprehensive behavior-based test cas
 - Provider: standard Vitest (`@vitest/coverage-v8`). Set `test.coverage.thresholds.branches` to `98` in each package's `vite.config.ts`.
 - No requirements on line / function / statement coverage — branches only.
 
+The per-package CI command is `vp test run --coverage`, run from each package
+directory with `--maxWorkers=2`. Lang runs four native file shards and enforces
+the full threshold after native report merge in its independent required gate;
+partial shards cannot satisfy that gate. DevTools UI coverage uses one worker. These V8 reports measure the Node-side suites, including
+runtime helpers in files that also contain type declarations (for example,
+`packages/core/src/compile/ast.ts`). They do not measure browser AudioWorklet
+execution or code running in spawned CLI processes. The core browser projects
+(`vite.browser.config.ts` and `vite.browser-postmessage.config.ts`) exercise real
+SAB and postMessage transport separately; `packages/lang/src/unworklet-tsc.test.ts`
+exercises the CLI in child processes. Those behavior checks complement the branch
+gate; passing either one does not establish coverage in the other execution realm.
+
 ### Test placement
 
 - Co-located `src/**/*.test.ts` files, placed next to the implementation file they test.
