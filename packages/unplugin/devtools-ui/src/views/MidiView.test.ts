@@ -50,10 +50,42 @@ const key = (type: string, name = "a", options: KeyboardEventInit = {}) => {
 };
 const released = () => ["n1.in", { type: "noteOff", channel: 0, note: 60, velocity: 0 }];
 
+test.each(["mouseleave", "mouseup"])("%s cannot release a PC-held note", (type) => {
+  key("keydown");
+  root.querySelector<HTMLButtonElement>(".key-white")!.dispatchEvent(new MouseEvent(type));
+  expect(fixture.injectMidi).toHaveBeenCalledTimes(1);
+  key("keyup");
+  expect(fixture.injectMidi.mock.calls).toHaveLength(2);
+  expect(fixture.injectMidi).toHaveBeenLastCalledWith(...released());
+});
+
+test.each([
+  ["mouse", "mouse"],
+  ["mouse", "keyboard"],
+  ["keyboard", "mouse"],
+  ["keyboard", "keyboard"],
+])("same note pressed first by %s and released first by %s stays held", (firstDown, firstUp) => {
+  const button = root.querySelector<HTMLButtonElement>(".key-white")!;
+  const down = (source: string) =>
+    source === "mouse" ? button.dispatchEvent(new MouseEvent("mousedown")) : key("keydown");
+  const up = (source: string) =>
+    source === "mouse" ? button.dispatchEvent(new MouseEvent("mouseup")) : key("keyup");
+  const other = (source: string) => (source === "mouse" ? "keyboard" : "mouse");
+  down(firstDown);
+  down(other(firstDown));
+  expect(fixture.injectMidi).toHaveBeenCalledTimes(1);
+  up(firstUp);
+  expect(fixture.injectMidi).toHaveBeenCalledTimes(1);
+  up(other(firstUp));
+  expect(fixture.injectMidi).toHaveBeenCalledTimes(2);
+  expect(fixture.injectMidi).toHaveBeenLastCalledWith(...released());
+});
+
 test.each(["channel", "target"])(
   "changing %s releases the held note at its original destination",
   async (routing) => {
     key("keydown");
+    root.querySelector<HTMLButtonElement>(".key-white")!.dispatchEvent(new MouseEvent("mousedown"));
     expect(fixture.injectMidi).toHaveBeenLastCalledWith("n1.in", {
       type: "noteOn",
       channel: 0,
@@ -73,6 +105,7 @@ test.each(["channel", "target"])(
     expect(fixture.injectMidi).toHaveBeenLastCalledWith(...released());
     expect(fixture.injectMidi).toHaveBeenCalledTimes(2);
     key("keyup");
+    root.querySelector<HTMLButtonElement>(".key-white")!.dispatchEvent(new MouseEvent("mouseup"));
     expect(fixture.injectMidi).toHaveBeenCalledTimes(2);
     key("keydown");
     expect(fixture.injectMidi).toHaveBeenLastCalledWith(routing === "target" ? "n2.in" : "n1.in", {
@@ -83,6 +116,35 @@ test.each(["channel", "target"])(
     });
   },
 );
+
+test.each([false, true])(
+  "octave removal clears mouse ownership with PC hold %s",
+  async (pcHeld) => {
+    const button = root.querySelector<HTMLButtonElement>(".key-white")!;
+    button.dispatchEvent(new MouseEvent("mousedown"));
+    if (pcHeld) key("keydown");
+    key("keydown", "x");
+    await nextTick();
+    expect(button.isConnected).toBe(false);
+    expect(fixture.injectMidi).toHaveBeenCalledTimes(pcHeld ? 1 : 2);
+    root.querySelector<HTMLButtonElement>(".key-white")!.dispatchEvent(new MouseEvent("mouseup"));
+    if (pcHeld) key("keyup");
+    expect(fixture.injectMidi).toHaveBeenCalledTimes(2);
+    expect(fixture.injectMidi).toHaveBeenLastCalledWith(...released());
+  },
+);
+
+test("octave changes retain mouse ownership of keys still rendered", async () => {
+  const button = root.querySelector<HTMLButtonElement>(".key-white")!;
+  button.dispatchEvent(new MouseEvent("mousedown"));
+  key("keydown", "z");
+  await nextTick();
+  expect(button.isConnected).toBe(true);
+  expect(fixture.injectMidi).toHaveBeenCalledTimes(1);
+  button.dispatchEvent(new MouseEvent("mouseup"));
+  expect(fixture.injectMidi).toHaveBeenCalledTimes(2);
+  expect(fixture.injectMidi).toHaveBeenLastCalledWith(...released());
+});
 
 test("route unmount releases notes and removes key listeners", () => {
   key("keydown");
