@@ -543,6 +543,11 @@ test.each([
   `file://${file}`,
   `/home/me/unworklet (1)/${file}`,
   `/home/me/unworklet [copy]/${file}`,
+  `C:\\work\\unworklet\\${file}`,
+  `..\\${file}`,
+  "./README.md",
+  "/checkout/README.md",
+  "C:\\work\\README.md",
 ])("unmarked local path prefixes are validated before reading: %s", (source) => {
   for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](${source})`]) {
     const checked: string[] = [];
@@ -563,6 +568,10 @@ test.each([
   `[compiler L12 in parser](${file})`,
   `[L12C4-L18C9 compiler setting](${file})`,
   `[compiler **L12** setting](${file})`,
+  `[compiler at L12 cache handling](${file})`,
+  `[compiler line L12 cache handling](${file})`,
+  `[compiler lines L12 cache handling](${file})`,
+  `[source](https://github.com/yuichkun/unworklet/blob/main/README.md#L12)`,
 ])("coordinates with descriptive label suffixes are rejected: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
     "numeric source location",

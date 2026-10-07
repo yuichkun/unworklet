@@ -111,7 +111,7 @@ export function validateGuideCitations(
   // The same path grammar establishes both file existence and numeric-location
   // intent. Bare application filenames and orphan line labels are not evidence.
   const repositoryFile =
-    /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g;
+    /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|\bREADME\.md\b/g;
   const afterPath =
     /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*[([]?\s*(?:(?:at|see|on|in)\s+)?[([]?\s*`?(?:L|lines?\s+`?L?|:)`?\d+)/i;
   const beforePath =
@@ -120,7 +120,7 @@ export function validateGuideCitations(
     const references = [...text.matchAll(repositoryFile)];
     for (const reference of references) {
       const file = reference[0];
-      const prefix = /[^\s`]*\/$/.exec(text.slice(0, reference.index))?.[0];
+      const prefix = /[^\s`]*[/\\]$/.exec(text.slice(0, reference.index))?.[0];
       if (prefix && !/\bhttps?:\/\/[^\s`]*\/$/i.test(prefix)) {
         errors.push(`${prefix + file}: expected a canonical repository-relative path`);
         continue;
@@ -169,14 +169,15 @@ export function validateGuideCitations(
     if (token.type === "link") {
       inspectProse(token.href);
       if (token.tokens && token.href.match(repositoryFile)) {
-        const label = normalize(linkDestinations(token.tokens).replaceAll("`", "")).replace(
+        const label = normalize(linkDestinations(token.tokens).replaceAll("`", ""));
+        const withoutCacheTerms = label.replace(
           /\bL\d+(?:\s*(?:\/|and|,)\s*L\d+)*(?:\s+(?:data|instruction|unified))?\s+caches?\b/gi,
           "cache",
         );
         const location =
-          /\bat\s+L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b|\blines?\s+L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?|\s+to\s+L?\d+(?:C\d+)?)?\b|(?:^|[\s(])L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b(?!\s+cache\b)/i.exec(
+          /\bat\s+L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b|\blines?\s+L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?|\s+to\s+L?\d+(?:C\d+)?)?\b/i.exec(
             label,
-          );
+          ) ?? /(?:^|[\s(])L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b/i.exec(withoutCacheTerms);
         if (location)
           errors.push(
             `numeric source location: ${token.href} ${location[0]}; use a content-anchored [cite:]`,
