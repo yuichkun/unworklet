@@ -7,6 +7,10 @@ export function validateGuideCitations(
   const errors: string[] = [];
   const sources = new Map<string, string | undefined>();
   const sourceFor = (file: string): string | undefined => {
+    if (file.split("/").some((part) => part === "" || part === "." || part === "..")) {
+      errors.push(`${file}: expected a canonical repository-relative path`);
+      return undefined;
+    }
     if (!sources.has(file)) sources.set(file, readSource(file));
     const source = sources.get(file);
     if (source === undefined) errors.push(`${file}: missing file`);
@@ -109,7 +113,7 @@ export function validateGuideCitations(
   const repositoryFile =
     /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g;
   const afterPath =
-    /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+`?L?|:)`?\d+)/i;
+    /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*[([]?\s*(?:(?:at|see|on|in)\s+)?[([]?\s*`?(?:L|lines?\s+`?L?|:)`?\d+)/i;
   const beforePath =
     /(?:\bL\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?|\blines?\s+`?L?\d+(?:C\d+)?(?:(?:[-–]|\s+to\s+)L?\d+(?:C\d+)?)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
   const inspectProse = (text: string): void => {

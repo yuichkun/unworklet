@@ -533,6 +533,50 @@ test.each(["L12", "L12-L18", "L12C4", "L12C4-L18C9"])(
   },
 );
 
+test.each(["on", "in"])("worded source coordinates accept %s line", (preposition) => {
+  for (const markdown of [
+    `${file} ${preposition} line L12`,
+    `[source](${file}) ${preposition} lines L12C4-L18C9`,
+    `\`${file}\` (${preposition} line \`L12\`)`,
+  ]) {
+    expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+      "numeric source location",
+    );
+  }
+});
+
+test.each([
+  "packages/core/../../AGENTS.md",
+  "packages/core/./src/client.ts",
+  "packages/core//src/client.ts",
+  "scripts/../scripts/check.ts",
+])("whole-file evidence paths must be canonical before reading: %s", (source) => {
+  const checked: string[] = [];
+  expect(
+    validateGuideCitations(`See \`${source}\`.`, (file) => {
+      checked.push(file);
+      return anchor;
+    }).join("\n"),
+  ).toContain("canonical repository-relative path");
+  expect(checked).toEqual([]);
+});
+
+test.each([
+  `/${file}`,
+  `./${file}`,
+  file.replace("/src/", "/./src/"),
+  file.replace("/src/", "//src/"),
+])("explicit citation paths must be canonical before reading: %s", (source) => {
+  const checked: string[] = [];
+  expect(
+    validateGuideCitations(`[cite: ${source} :: \`${anchor}\`]`, (file) => {
+      checked.push(file);
+      return anchor;
+    }).join("\n"),
+  ).toContain("canonical repository-relative path");
+  expect(checked).toEqual([]);
+});
+
 test.each([
   `[source](${file}) processes 12 lines per block.`,
   `[source](${file}) uses \`L1\` and \`L2\` cache.`,
