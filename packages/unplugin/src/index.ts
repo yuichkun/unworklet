@@ -21,6 +21,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ANALYSIS_ARTIFACT_MAX_BYTES, partitionAnalysisArtifacts } from "./analysis-artifacts.ts";
+import {
+  ANONYMOUS_RPC_PREFIX,
+  setupDevtoolsPages,
+  type DevPageSnapshots,
+  type DevPages,
+  type PageMidiInject,
+} from "./devtools-pages.ts";
 import { withExtensionHint } from "./native-import-hint.ts";
 import { preserveNativeCommonJs } from "./native-commonjs.ts";
 import { discoverWorkletImports } from "./worklet-discovery.ts";
@@ -40,17 +47,7 @@ import { createServer } from "vite-plus";
 
 import { workletsDts } from "@unworklet/lang";
 
-/**
- * Devframe's untrusted-RPC scope prefix. Every method name registered or called
- * from an untrusted client (the page-side devbridge) must start with this string
- * or the anonymous-method gate rejects it (DTK0013), silently emptying every
- * panel. The value mirrors devframe's own `ANONYMOUS_RPC_PREFIX` (currently
- * `"anonymous:"` in devframe 0.8, shipped with @vitejs/devtools 0.4). Kept as a
- * single source of truth so a future upstream rename is caught by
- * `test/index.test.ts` (which pins this against devframe's dist), not by silent
- * panel breakage.
- */
-export const ANONYMOUS_RPC_PREFIX = "anonymous:";
+export { ANONYMOUS_RPC_PREFIX } from "./devtools-pages.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // DevTools live audio-graph topology (Wire 4)
@@ -59,8 +56,8 @@ export const ANONYMOUS_RPC_PREFIX = "anonymous:";
 // The dev page-script (injected in serve mode) monkey-patches
 // `AudioNode.prototype.connect/disconnect` and reads the `@unworklet/core/dev`
 // live-node registry to build the real Web-Audio graph, then pushes it here via
-// the `unworklet:graph-update` action RPC. The server mirrors it into the
-// `unworklet:graph` shared state, which the iframe Audio-graph panel renders.
+// the `unworklet:page-graph-update` action RPC. The server mirrors it into the
+// `unworklet:page-graph` shared state, which the iframe Audio-graph panel renders.
 // No app code is involved (zero-config); WASM memory is never read for this.
 
 /** One node in the live audio graph. */
@@ -83,8 +80,8 @@ export type DevAudioGraph = { nodes: DevGraphNode[]; edges: DevGraphEdge[] };
 //
 // The page-script polls each live node's `devDump()` (the worklet copies its
 // WASM slots into bytes), decodes every slot, and pushes them here via the
-// `unworklet:state-update` action RPC; the server mirrors them into the
-// `unworklet:state` shared state the Live-state panel reads. Buffers larger than
+// `unworklet:page-state-update` action RPC; the server mirrors them into the
+// `unworklet:page-state` shared state the Live-state panel reads. Buffers larger than
 // `BUFFER_MAX_POINTS` are stride-downsampled for the wire (full resolution is
 // not needed to visualize them) — `length` always carries the true element count.
 
@@ -124,7 +121,7 @@ export type DevLiveState = { nodes: DevNodeState[] };
 //
 // The page-script taps an AnalyserNode on each unworklet output port and pushes
 // the live scope (time domain), normalized spectrum (frequency domain), and
-// RMS/peak levels here via `unworklet:signals-update`. `memory` is the static
+// RMS/peak levels here via `unworklet:page-signals-update`. `memory` is the static
 // declared linear-memory layout from a one-shot devDump. Per-node DSP timing is
 // intentionally absent — it is not observable from the main thread; the panel
 // surfaces the AudioContext's reported latencies instead.
@@ -198,11 +195,17 @@ export type DevMidiInject = { commands: DevMidiInjectCommand[] };
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
+    "unworklet:pages": DevPages;
     "unworklet:graph": DevAudioGraph;
+    "unworklet:page-graph": DevPageSnapshots<DevAudioGraph>;
     "unworklet:state": DevLiveState;
+    "unworklet:page-state": DevPageSnapshots<DevLiveState>;
     "unworklet:signals": DevSignalsState;
+    "unworklet:page-signals": DevPageSnapshots<DevSignalsState>;
     "unworklet:midi": DevMidiState;
+    "unworklet:page-midi": DevPageSnapshots<DevMidiState>;
     "unworklet:midi-inject": DevMidiInject;
+    "unworklet:page-midi-inject": PageMidiInject;
   }
 }
 
@@ -644,7 +647,7 @@ const compileBuildProcessor = async (sourcePath: string) => {
 const setupDevtools = async (
   ctx: import("@vitejs/devtools-kit").ViteDevToolsNodeContext,
   uiRoot: string,
-): Promise<void> => {
+): Promise<() => void> => {
   // Register the dock + host the panel SPA synchronously, before any await:
   // the dock must appear independently of the async graph-state wiring below
   // (and keeps setup robust if the devtools-kit import / shared-state handshake
@@ -676,128 +679,7 @@ const setupDevtools = async (
   });
   ctx.views.hostStatic("/__unworklet/", uiRoot);
 
-  // Live audio-graph topology — mirror the page-script's captured graph into a
-  // shared state the Audio-graph panel reads (Wire 4). `@vitejs/devtools-kit` is
-  // imported lazily (only when the devtools host actually drives setup) so the
-  // plugin's module graph — and anything importing it, e.g. tests — does not
-  // eagerly pull the devtools runtime.
-  const { defineRpcFunction } = await import("@vitejs/devtools-kit");
-  // The page-script (devbridge) pushes graph / state / signals / MIDI here, but it
-  // is an UNTRUSTED devtools client (no auth token), so a normal RPC name is
-  // rejected with DTK0013 "Unauthorized access to method" — and the 33ms signals
-  // poll turns that into a console flood that blocks the panel. The only bypass is
-  // devframe's anonymous-method mechanism: a method whose name starts with
-  // `ANONYMOUS_RPC_PREFIX` skips the client-auth check. The prefix is
-  // version-coupled — `vite:anonymous:` in devtools 0.2.x / devframe pre-0.5,
-  // `devframe:anonymous:` in devtools 0.3.x / devframe 0.5, `anonymous:` in devtools
-  // 0.4.x / devframe 0.8 — so the `@vitejs/devtools-kit` peer is pinned to a
-  // devtools major whose prefix matches {@link ANONYMOUS_RPC_PREFIX} below. A
-  // mismatched host silently empties every panel (`test/index.test.ts` locks the
-  // constant against devframe's own `ANONYMOUS_RPC_PREFIX` so a future upstream
-  // rename cannot regress this again). These pushes are dev-only, local, and
-  // non-sensitive, so anonymous is the right scope. (MIDI inject below is called from
-  // the trusted panel, not the page, so it needs no prefix.)
-  const graphState = await ctx.rpc.sharedState.get("unworklet:graph", {
-    initialValue: { nodes: [], edges: [] } as DevAudioGraph,
-  });
-  const graphUpdate = defineRpcFunction({
-    name: `${ANONYMOUS_RPC_PREFIX}unworklet:graph-update`,
-    type: "action",
-    setup: () => ({
-      handler: async (graph: DevAudioGraph): Promise<void> => {
-        graphState.mutate((draft) => {
-          draft.nodes = graph.nodes;
-          draft.edges = graph.edges;
-        });
-      },
-    }),
-  });
-  // `register()` takes the loosely-typed RpcFunctionDefinition union; defineRpcFunction
-  // infers an argument-specific one (contravariant handler), so widen at the boundary.
-  ctx.rpc.register(graphUpdate as Parameters<typeof ctx.rpc.register>[0]);
-
-  // Live state X-ray — the page-script polls each node's devDump and pushes the
-  // decoded scalar slots here; the Live-state panel reads `unworklet:state`.
-  const liveState = await ctx.rpc.sharedState.get("unworklet:state", {
-    initialValue: { nodes: [] } as DevLiveState,
-  });
-  const stateUpdate = defineRpcFunction({
-    name: `${ANONYMOUS_RPC_PREFIX}unworklet:state-update`,
-    type: "action",
-    setup: () => ({
-      handler: async (state: DevLiveState): Promise<void> => {
-        liveState.mutate((draft) => {
-          draft.nodes = state.nodes;
-        });
-      },
-    }),
-  });
-  ctx.rpc.register(stateUpdate as Parameters<typeof ctx.rpc.register>[0]);
-
-  // Signals — the page-script taps an AnalyserNode per output port and pushes
-  // the live scope / spectrum / levels + declared memory here; the Signals
-  // panel reads `unworklet:signals`.
-  const signalsState = await ctx.rpc.sharedState.get("unworklet:signals", {
-    initialValue: {
-      nodes: [],
-      context: { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 },
-    } as DevSignalsState,
-  });
-  const signalsUpdate = defineRpcFunction({
-    name: `${ANONYMOUS_RPC_PREFIX}unworklet:signals-update`,
-    type: "action",
-    setup: () => ({
-      handler: async (signals: DevSignalsState): Promise<void> => {
-        signalsState.mutate((draft) => {
-          draft.nodes = signals.nodes;
-          draft.context = signals.context;
-        });
-      },
-    }),
-  });
-  ctx.rpc.register(signalsUpdate as Parameters<typeof ctx.rpc.register>[0]);
-
-  // MIDI — the page-script pushes live port traffic (out events + overflow) here
-  // via `unworklet:midi-update`; the MIDI panel reads `unworklet:midi`.
-  const midiState = await ctx.rpc.sharedState.get("unworklet:midi", {
-    initialValue: { ports: [], log: [] } as DevMidiState,
-  });
-  const midiUpdate = defineRpcFunction({
-    name: `${ANONYMOUS_RPC_PREFIX}unworklet:midi-update`,
-    type: "action",
-    setup: () => ({
-      handler: async (midi: DevMidiState): Promise<void> => {
-        midiState.mutate((draft) => {
-          draft.ports = midi.ports;
-          draft.log = midi.log;
-        });
-      },
-    }),
-  });
-  ctx.rpc.register(midiUpdate as Parameters<typeof ctx.rpc.register>[0]);
-
-  // MIDI inject — the panel's virtual keyboard calls `unworklet:midi-inject`,
-  // which appends a server-seq'd command to the `unworklet:midi-inject` shared
-  // state the page-script drains into the real `node.midi[port].send`. The seq
-  // (not state coalescing) keeps a fast burst — noteOn + its noteOff — intact.
-  const INJECT_QUEUE_MAX = 64;
-  let injectSeq = 0;
-  const injectState = await ctx.rpc.sharedState.get("unworklet:midi-inject", {
-    initialValue: { commands: [] } as DevMidiInject,
-  });
-  const midiInject = defineRpcFunction({
-    name: "unworklet:midi-inject",
-    type: "action",
-    setup: () => ({
-      handler: async (cmd: Omit<DevMidiInjectCommand, "seq">): Promise<void> => {
-        injectState.mutate((draft) => {
-          const next: DevMidiInjectCommand = { seq: ++injectSeq, ...cmd };
-          draft.commands = [...draft.commands, next].slice(-INJECT_QUEUE_MAX);
-        });
-      },
-    }),
-  });
-  ctx.rpc.register(midiInject as Parameters<typeof ctx.rpc.register>[0]);
+  return setupDevtoolsPages(ctx);
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -830,6 +712,8 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   const uiRoot = resolveDevtoolsUiRoot();
   let isServe = false;
   let devtoolsActive = false;
+  let disposeDevtools: (() => void) | undefined;
+  let devtoolsClosing = false;
   let basePath = "/";
   let projectRoot = "";
   // The page's effective COEP (captured from the resolved config), mirrored onto
@@ -957,6 +841,8 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       await writeWorkletsWitness();
     },
     async closeBundle() {
+      devtoolsClosing = true;
+      disposeDevtools?.();
       if (isServe) {
         witnessClosing = true;
         await witnessRefresh;
@@ -1258,7 +1144,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
         // devtools code). It (1) exposes the live-node registry + snapshot codec
         // for later live-state X-ray, and (2) captures the live audio-graph
         // topology by monkey-patching AudioNode.connect/disconnect, then pushes
-        // it to the server via the `unworklet:graph-update` action RPC. No WASM
+        // it to the server via the `unworklet:page-graph-update` action RPC. No WASM
         // memory is read here — this is Web-Audio graph structure only.
         return `
 import { getDevNodes, onDevNodesChanged } from "@unworklet/core/dev";
@@ -1320,11 +1206,18 @@ const buildGraph = () => {
 };
 
 let client = null;
+let pageId = "";
+let ready = false;
+let disposed = false;
+let hidden = false;
+let offConnection;
+let clientTimer;
 // Fire an RPC and swallow both a synchronous throw and an async rejection — a
 // transient backend hiccup (or a second dev server stealing trust) must never
 // surface as an unhandled promise rejection in the app's console.
-const rpcCall = (name, arg) => {
-  if (!client) return;
+const rpcCall = (name, data, expectedPageId = pageId) => {
+  if (!client || !ready || expectedPageId !== pageId) return;
+  const arg = { pageId, data };
   try {
     const r = client.rpc.call(name, arg);
     if (r && typeof r.catch === "function") r.catch(() => {});
@@ -1336,16 +1229,60 @@ const push = () => {
   pending = true;
   queueMicrotask(() => {
     pending = false;
-    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:graph-update")}, buildGraph());
+    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-graph-update")}, buildGraph());
   });
 };
 
+const endSession = () => {
+  releaseInjectedMidi();
+  if (pageId) {
+    try { Promise.resolve(client.rpc.call(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-close")}, { pageId })).catch(() => {}); } catch (e) { /* dev only */ }
+  }
+  ready = false;
+  pageId = "";
+  clearTimeout(clientTimer);
+  for (const queue of Object.values(injectQueues)) {
+    queue.off?.();
+    queue.off = undefined;
+    queue.subscribed = false;
+  }
+  clearTimeout(stateTimer); stateTimer = null;
+  clearTimeout(signalsTimer); signalsTimer = null;
+  clearTimeout(midiTimer); midiTimer = null;
+};
+const startSession = async () => {
+  if (disposed || hidden || !client || pageId) return;
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  pageId = id;
+  injectQueues.scoped.lastSeq = 0;
+  lastMidiSig = "";
+  midiLog = [];
+  try {
+    const accepted = await client.rpc.call(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-open")}, { id, title: document.title, url: location.origin + location.pathname });
+    if (!accepted) throw new Error("Page registration rejected");
+    if (disposed || hidden || pageId !== id) return;
+    ready = true;
+    push(); startStatePoll(); startSignalsPoll(); startMidiPoll();
+  } catch (e) {
+    if (pageId === id) {
+      pageId = "";
+      clientTimer = setTimeout(() => { void startSession(); }, 1000);
+    }
+  }
+};
 let polls = 0;
 const ensureClient = () => {
-  if (client) return;
+  if (disposed || client) return;
   client = getDevToolsClientContext() || null;
-  if (client) { push(); startStatePoll(); startSignalsPoll(); startMidiPoll(); return; }
-  if (polls++ < 40) setTimeout(ensureClient, 100);
+  if (client) {
+    offConnection = client.rpc.events.on("connection:status", (status) => {
+      if (status === "connected") void startSession();
+      else endSession();
+    });
+    void startSession();
+    return;
+  }
+  if (polls++ < 40) clientTimer = setTimeout(ensureClient, 100);
 };
 
 // Live state X-ray: poll each node's devDump on a gentle cadence, decode every
@@ -1357,7 +1294,8 @@ const STATE_POLL_MS = 200;
 const BUFFER_MAX_POINTS = 512;
 let statePolling = false;
 const pollState = async () => {
-  if (statePolling || !client) return;
+  if (statePolling || !ready) return;
+  const expectedPageId = pageId;
   statePolling = true;
   try {
     const nodes = [];
@@ -1368,7 +1306,7 @@ const pollState = async () => {
       const { scalars, buffers } = splitSlots(slots, BUFFER_MAX_POINTS);
       nodes.push({ id: idOf(h.node.node), displayName: h.displayName || h.processorName, scalars, buffers });
     }
-    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:state-update")}, { nodes });
+    rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-state-update")}, { nodes }, expectedPageId);
   } finally {
     statePolling = false;
   }
@@ -1376,9 +1314,11 @@ const pollState = async () => {
 let stateTimer = null;
 const startStatePoll = () => {
   if (stateTimer !== null) return;
+  const expectedPageId = pageId;
   const loop = async () => {
+    if (!ready || pageId !== expectedPageId) return;
     await pollState();
-    stateTimer = setTimeout(loop, STATE_POLL_MS);
+    if (ready && pageId === expectedPageId) stateTimer = setTimeout(loop, STATE_POLL_MS);
   };
   stateTimer = setTimeout(loop, STATE_POLL_MS);
 };
@@ -1390,7 +1330,7 @@ const startStatePoll = () => {
 const SIGNALS_POLL_MS = 33;
 const SCOPE_POINTS = 256;
 const SPECTRUM_POINTS = 128;
-const analysersByNode = new WeakMap();
+const analysersByNode = new Map();
 const memoryByNode = new Map();
 const ensureAnalysers = (awn, outputs) => {
   let map = analysersByNode.get(awn);
@@ -1417,13 +1357,16 @@ const ensureAnalysers = (awn, outputs) => {
 };
 let signalsBusy = false;
 const pollSignals = async () => {
-  if (!client) return;
+  if (!ready) return;
+  const expectedPageId = pageId;
   const nodes = [];
   const liveIds = new Set();
+  const liveNodes = new Set();
   let actx = null;
   for (const h of getDevNodes()) {
     const awn = h.node.node;
     actx = awn.context;
+    liveNodes.add(awn);
     const id = idOf(awn);
     liveIds.add(id);
     const map = ensureAnalysers(awn, h.node.outputs);
@@ -1445,17 +1388,24 @@ const pollSignals = async () => {
   // not retain an entry per disposed node for the page's lifetime as ids climb
   // across processor recreation (mirrors the frame reconcile in useLiveSignals).
   for (const k of memoryByNode.keys()) if (!liveIds.has(k)) memoryByNode.delete(k);
+  for (const [node, taps] of analysersByNode) {
+    if (liveNodes.has(node)) continue;
+    for (const { analyser } of taps.values()) { try { realDisconnect.call(node, analyser); } catch (e) { /* dev only */ } }
+    analysersByNode.delete(node);
+  }
   const context = actx
     ? { sampleRate: actx.sampleRate || 0, baseLatencyMs: (actx.baseLatency || 0) * 1000, outputLatencyMs: (actx.outputLatency || 0) * 1000 }
     : { sampleRate: 0, baseLatencyMs: 0, outputLatencyMs: 0 };
-  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:signals-update")}, { nodes, context });
+  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-signals-update")}, { nodes, context }, expectedPageId);
 };
 let signalsTimer = null;
 const startSignalsPoll = () => {
   if (signalsTimer !== null) return;
+  const expectedPageId = pageId;
   const loop = async () => {
+    if (!ready || pageId !== expectedPageId) return;
     if (!signalsBusy) { signalsBusy = true; try { await pollSignals(); } finally { signalsBusy = false; } }
-    signalsTimer = setTimeout(loop, SIGNALS_POLL_MS);
+    if (ready && pageId === expectedPageId) signalsTimer = setTimeout(loop, SIGNALS_POLL_MS);
   };
   signalsTimer = setTimeout(loop, SIGNALS_POLL_MS);
 };
@@ -1469,13 +1419,75 @@ const MIDI_POLL_MS = 150;
 let midiLog = [];
 let midiSeq = 0;
 let lastMidiSig = "";
-const midiTapped = new WeakSet();
-let lastInjectSeq = 0;
-let midiInjectSubscribed = false;
+const midiTapped = new Map();
+const injectQueues = {
+  scoped: { key: "unworklet:page-midi-inject", scoped: true, lastSeq: 0, subscribed: false },
+  raw: { key: "unworklet:midi-inject", scoped: false, lastSeq: 0, subscribed: false },
+};
+const injectedNotes = new Map();
+const NOTE_HOLD_CONTROLLERS = new Set([64, 66, 69]);
+const injectedHolds = new Map();
+const trackInjectedMidi = (port, event) => {
+  if (event.type === "cc") {
+    let holds = injectedHolds.get(port);
+    const key = event.channel + ":" + event.controller;
+    if (NOTE_HOLD_CONTROLLERS.has(event.controller)) {
+      if (event.value >= 64) {
+        if (!holds) { holds = new Map(); injectedHolds.set(port, holds); }
+        holds.set(key, { channel: event.channel, controller: event.controller });
+      } else holds?.delete(key);
+    } else if (holds && event.controller === 121) {
+      for (const [key, hold] of holds) if (hold.channel === event.channel) holds.delete(key);
+    }
+    if (holds?.size === 0) injectedHolds.delete(port);
+  }
+  let notes = injectedNotes.get(port);
+  const key = event.channel + ":" + event.note;
+  if (event.type === "noteOn" && event.velocity > 0) {
+    if (!notes) { notes = new Map(); injectedNotes.set(port, notes); }
+    notes.set(key, { channel: event.channel, note: event.note, count: (notes.get(key)?.count || 0) + 1 });
+  } else if (notes) {
+    if (event.type === "noteOff" || (event.type === "noteOn" && event.velocity === 0)) {
+      const held = notes.get(key);
+      if (held && --held.count === 0) notes.delete(key);
+    } else if (event.type === "cc" && (event.controller === 120 || event.controller === 123)) {
+      for (const [key, note] of notes) if (note.channel === event.channel) notes.delete(key);
+    }
+    if (notes.size === 0) injectedNotes.delete(port);
+  }
+};
+const releaseInjectedMidi = (livePorts) => {
+  for (const [port, notes] of injectedNotes) {
+    if (livePorts?.has(port)) continue;
+    // Keep the exact port reference: a replacement node or page must never receive cleanup.
+    for (const [key, held] of notes) {
+      const count = held.count;
+      for (let i = 0; i < count; i++) {
+        try {
+          port.send({ type: "noteOff", channel: held.channel, note: held.note, velocity: 0 });
+          held.count--;
+        } catch (e) { /* dev only */ }
+      }
+      if (held.count === 0) notes.delete(key);
+    }
+    if (notes.size === 0) injectedNotes.delete(port);
+  }
+  for (const [port, holds] of injectedHolds) {
+    if (livePorts?.has(port)) continue;
+    for (const [key, { channel, controller }] of holds) {
+      try {
+        port.send({ type: "cc", channel, controller, value: 0 });
+        holds.delete(key);
+      } catch (e) { /* dev only */ }
+    }
+    if (holds.size === 0) injectedHolds.delete(port);
+  }
+};
 const tapMidiOut = (h) => {
   const awn = h.node.node;
   if (midiTapped.has(awn)) return;
-  midiTapped.add(awn);
+  const subscriptions = [];
+  midiTapped.set(awn, subscriptions);
   const id = idOf(awn);
   const midi = h.node.midi || {};
   for (const pm of h.midiPorts || []) {
@@ -1484,9 +1496,10 @@ const tapMidiOut = (h) => {
     if (!port || typeof port.onEvent !== "function") continue;
     for (const t of MIDI_TYPES) {
       try {
-        port.onEvent(t, (e) => {
+        subscriptions.push(port.onEvent(t, (e) => {
+          if (!ready) return;
           midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "out", nodeId: id, port: pm.name, event: toLoggableMidiEvent(e) }, MIDI_LOG_MAX);
-        });
+        }));
       } catch (err) { /* dev only */ }
     }
   }
@@ -1496,58 +1509,74 @@ const findHandleById = (id) => {
   return null;
 };
 const ensureMidiInjectSub = () => {
-  if (midiInjectSubscribed || !client || !client.rpc || !client.rpc.sharedState) return;
-  midiInjectSubscribed = true;
-  client.rpc.sharedState.get("unworklet:midi-inject").then((shared) => {
-    const onInject = (state) => {
-      const cmds = (state && state.commands) || [];
-      const drained = drainInjects(cmds, lastInjectSeq);
-      lastInjectSeq = drained.lastSeq;
-      for (const c of drained.fresh) {
-        const h = findHandleById(c.nodeId);
-        if (!h) continue;
-        const port = (h.node.midi || {})[c.port];
-        if (!port || typeof port.send !== "function") continue;
-        // Panel events arrive RPC-serialized (sysex data = number[]); convert
-        // to the Uint8Array shape send() expects, refusing malformed bytes
-        // rather than letting Uint8Array.from wrap them into a different message.
-        const sendable = toSendableMidiEvent(c.event);
-        if (!sendable) { console.warn("unworklet devtools: dropped malformed MIDI inject", c.event); continue; }
-        try {
-          port.send(sendable);
-          midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: toLoggableMidiEvent(sendable) }, MIDI_LOG_MAX);
-        } catch (err) { /* dev only */ }
-      }
-    };
-    onInject(shared.value());
-    shared.on("updated", onInject);
-  }).catch(() => { midiInjectSubscribed = false; });
+  if (!client || !client.rpc || !client.rpc.sharedState) return;
+  for (const queue of Object.values(injectQueues)) {
+    if (queue.subscribed) continue;
+    queue.subscribed = true;
+    const expectedPageId = pageId;
+    client.rpc.sharedState.get(queue.key).then((shared) => {
+      if (!ready || pageId !== expectedPageId) return;
+      const onInject = (state) => {
+        if (!ready || pageId !== expectedPageId) return;
+        const cmds = (state && state.commands) || [];
+        const drained = drainInjects(cmds, queue.lastSeq);
+        queue.lastSeq = drained.lastSeq;
+        for (const c of drained.fresh) {
+          if (queue.scoped && c.pageId !== pageId) continue;
+          const h = findHandleById(c.nodeId);
+          if (!h || (queue.scoped && !(h.midiPorts || []).some((p) => p.name === c.port && p.direction === "in"))) continue;
+          const port = (h.node.midi || {})[c.port];
+          if (!port || typeof port.send !== "function") continue;
+          // Panel events arrive RPC-serialized (sysex data = number[]); convert
+          // to the Uint8Array shape send() expects, refusing malformed bytes
+          // rather than letting Uint8Array.from wrap them into a different message.
+          const sendable = toSendableMidiEvent(c.event);
+          if (!sendable) { console.warn("unworklet devtools: dropped malformed MIDI inject", c.event); continue; }
+          try {
+            port.send(sendable);
+            trackInjectedMidi(port, sendable);
+            midiLog = appendBounded(midiLog, { seq: ++midiSeq, ts: Date.now(), dir: "inject", nodeId: c.nodeId, port: c.port, event: toLoggableMidiEvent(sendable) }, MIDI_LOG_MAX);
+          } catch (err) { /* dev only */ }
+        }
+      };
+      onInject(shared.value());
+      queue.off = shared.on("updated", onInject);
+    }).catch(() => { if (pageId === expectedPageId) queue.subscribed = false; });
+  }
 };
 const pollMidi = () => {
-  if (!client) return;
+  if (!ready) return;
   ensureMidiInjectSub();
   const ports = [];
+  const liveNodes = new Set();
+  const liveInputs = new Set();
   for (const h of getDevNodes()) {
+    liveNodes.add(h.node.node);
     tapMidiOut(h);
     const id = idOf(h.node.node);
     const midi = h.node.midi || {};
     for (const pm of h.midiPorts || []) {
+      if (pm.direction === "in" && midi[pm.name]) liveInputs.add(midi[pm.name]);
       let overflow = 0;
       try { const p = midi[pm.name]; if (p && p.diagnostics) overflow = p.diagnostics.overflowCount() || 0; } catch (e) { /* dev only */ }
       ports.push({ nodeId: id, node: h.displayName || h.processorName, name: pm.name, direction: pm.direction, overflow });
     }
+  }
+  releaseInjectedMidi(liveInputs);
+  for (const [node, subscriptions] of midiTapped) {
+    if (!liveNodes.has(node)) { for (const off of subscriptions) off(); midiTapped.delete(node); }
   }
   // Only push when ports / overflow / log actually changed — avoids re-rendering
   // the panel every poll while the app is idle (no MIDI traffic).
   const sig = JSON.stringify({ ports, log: midiLog });
   if (sig === lastMidiSig) return;
   lastMidiSig = sig;
-  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:midi-update")}, { ports, log: midiLog });
+  rpcCall(${JSON.stringify(ANONYMOUS_RPC_PREFIX + "unworklet:page-midi-update")}, { ports, log: midiLog });
 };
 let midiTimer = null;
 const startMidiPoll = () => {
   if (midiTimer !== null) return;
-  const loop = () => { pollMidi(); midiTimer = setTimeout(loop, MIDI_POLL_MS); };
+  const loop = () => { pollMidi(); if (ready) midiTimer = setTimeout(loop, MIDI_POLL_MS); };
   midiTimer = setTimeout(loop, MIDI_POLL_MS);
 };
 
@@ -1609,7 +1638,39 @@ AN.disconnect = function (target) {
   return r;
 };
 
-onDevNodesChanged(push);
+const offNodes = onDevNodesChanged(push);
+const onPageHide = () => { hidden = true; endSession(); };
+const onPageShow = () => {
+  hidden = false;
+  if (client) void startSession();
+  else {
+    clearTimeout(clientTimer);
+    polls = 0;
+    ensureClient();
+  }
+};
+addEventListener("pagehide", onPageHide);
+addEventListener("pageshow", onPageShow);
+if (import.meta.hot) import.meta.hot.dispose(() => {
+  disposed = true;
+  endSession();
+  clearTimeout(clientTimer);
+  offConnection?.();
+  offNodes();
+  removeEventListener("pagehide", onPageHide);
+  removeEventListener("pageshow", onPageShow);
+  AN.connect = realConnect;
+  AN.disconnect = realDisconnect;
+  for (const [node, taps] of analysersByNode) {
+    for (const { analyser } of taps.values()) { try { realDisconnect.call(node, analyser); } catch (e) { /* dev only */ } }
+  }
+  analysersByNode.clear();
+  for (const subscriptions of midiTapped.values()) for (const off of subscriptions) off();
+  midiTapped.clear();
+  memoryByNode.clear();
+  seen.clear();
+  edges.clear();
+});
 ensureClient();
 `;
       }
@@ -1856,14 +1917,16 @@ ensureClient();
       return mods.length > 0 ? [...new Set([...ctx.modules, ...mods])] : undefined;
     },
     devtools: {
-      setup: (ctx) => {
+      setup: async (ctx) => {
         // This hook fires only when the `@vitejs/devtools` host is present in the
         // config — which is exactly when `@vitejs/devtools-kit` is installed and
         // browser-resolvable. Gate the page-bridge injection on it so apps without
         // the DevTools panel (examples, test runners) never get the bridge's
         // `@vitejs/devtools-kit/client` import, which they cannot resolve.
         devtoolsActive = true;
-        return setupDevtools(ctx, uiRoot);
+        const dispose = await setupDevtools(ctx, uiRoot);
+        if (devtoolsClosing) dispose();
+        else disposeDevtools = dispose;
       },
     },
   };

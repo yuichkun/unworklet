@@ -1,0 +1,43 @@
+import type {} from "@unworklet/unplugin/devtools";
+import type { DevMidiInject } from "@unworklet/unplugin";
+import type { DevToolsRpcServerFunctions } from "@vitejs/devtools-kit";
+import { getDevToolsClientContext, getDevToolsRpcClient } from "@vitejs/devtools-kit/client";
+declare const rpc: NonNullable<ReturnType<typeof getDevToolsClientContext>>["rpc"];
+const event = { type: "noteOn", channel: 0, note: 60, velocity: 100 } as const;
+const graph = { nodes: [], edges: [] };
+const state = { nodes: [] };
+const signals = { nodes: [], context: { sampleRate: 48000, baseLatencyMs: 0, outputLatencyMs: 0 } };
+const midi = { ports: [], log: [] };
+rpc.call("anonymous:unworklet:graph-update", graph);
+rpc.call("anonymous:unworklet:state-update", state);
+rpc.call("anonymous:unworklet:signals-update", signals);
+rpc.call("anonymous:unworklet:midi-update", midi);
+rpc.call("anonymous:unworklet:page-graph-update", { pageId: "page-a", data: graph });
+rpc.call("anonymous:unworklet:page-state-update", { pageId: "page-a", data: state });
+rpc.call("anonymous:unworklet:page-signals-update", { pageId: "page-a", data: signals });
+rpc.call("anonymous:unworklet:page-midi-update", { pageId: "page-a", data: midi });
+rpc.call("anonymous:unworklet:page-close", { pageId: "page-a" });
+const opened: Promise<boolean> = rpc.call("anonymous:unworklet:page-open", {
+  id: "page-a", title: "App", url: "http://localhost/",
+});
+declare const open: DevToolsRpcServerFunctions["anonymous:unworklet:page-open"];
+const accepted: boolean = open({ id: "page-a", title: "App", url: "http://localhost/" });
+rpc.call("unworklet:page-midi-inject", { pageId: "page-a", nodeId: "n0", port: "in", event });
+rpc.call("unworklet:midi-inject", { nodeId: "n0", port: "in", event });
+declare const inject: DevToolsRpcServerFunctions["unworklet:page-midi-inject"];
+const result: void = inject({ pageId: "page-a", nodeId: "n0", port: "in", event });
+// @ts-expect-error Page-scoped commands require an explicit page.
+rpc.call("unworklet:page-midi-inject", { nodeId: "n0", port: "in", event });
+
+declare const client: Awaited<ReturnType<typeof getDevToolsRpcClient>>;
+const rawGraphShared = await client.scope("unworklet").rpc.sharedState("graph");
+const rawGraphLabel: string | undefined = rawGraphShared.value().nodes[0]?.label;
+// @ts-expect-error Raw graph snapshots do not wrap pages.
+rawGraphShared.value().pages;
+const pageGraphShared = await client.scope("unworklet").rpc.sharedState("page-graph");
+const label: string | undefined = pageGraphShared.value().pages["page-a"]?.nodes[0]?.label;
+const queue = (await client.sharedState.get<DevMidiInject>("unworklet:midi-inject")).value();
+// @ts-expect-error Raw commands do not carry a required page target.
+queue.commands[0]!.pageId;
+const pages = await client.scope("unworklet").rpc.sharedState("pages");
+const pageId: string | undefined = pages.value().pages[0]?.id;
