@@ -576,6 +576,9 @@ test.each([
   `[compiler at L12 cache handling](${file})`,
   `[compiler line L12 cache handling](${file})`,
   `[compiler lines L12 cache handling](${file})`,
+  `[compiler :12-34](${file})`,
+  `[compiler:12](${file})`,
+  `[compiler (:L12-L34) setting](${file})`,
   `[source](https://github.com/yuichkun/unworklet/blob/main/README.md#L12)`,
 ])("coordinates with descriptive label suffixes are rejected: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
@@ -589,6 +592,9 @@ test.each([
   `[L1 instruction cache](${file})`,
   `[L2 data cache](${file})`,
   `[L1 and L2 caches](${file})`,
+  `[ratio 1:2](${file})`,
+  `[time 12:34](${file})`,
+  "[compiler :12-34](src/check.uwk.ts)",
   `[source](https://github.com/yuichkun/unworklet/blob/main/${file})`,
   `See https://github.com/yuichkun/unworklet/blob/main/${file}`,
   `[source](https://raw.githubusercontent.com/yuichkun/unworklet/main/${file})`,
