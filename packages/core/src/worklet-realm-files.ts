@@ -22,6 +22,7 @@ export const WORKLET_REALM_FILES = [
   "src/types.ts",
   "src/compile/ast.ts",
   "src/compile/layout.ts",
+  "src/compile/every-n.ts",
   "src/dsl/constants.ts",
   "src/egressFrame.ts",
   "src/ringIndex.ts",

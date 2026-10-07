@@ -541,7 +541,13 @@ forSample.byN(stride, (i, everyNSamples) => { … });            // once per `st
 
 - `everyNSamples` is delivered as the **second callback parameter** (not a free
   import): `everyNSamples(n: number, body: () => void)` runs `body` once per `n`
-  samples (sub-rate work). — `loop.ts:23,76`
+  samples (sub-rate work), starting on its first invocation. With `.byN(stride)`,
+  it fires where the stride and `n` sample grids coincide: every
+  `n / gcd(n, stride)` invocations. Nested call sites advance only when reached.
+  Each call site retains its cadence across blocks without counter overflow,
+  including periods larger than 32 bits. Scheduler phase is internal and is not
+  included in snapshots; restoring named values leaves a running scheduler's
+  phase intact. — `loop.ts:23,76`
 - `stride` must be a power of two that divides the render quantum 128: one of
   `1, 2, 4, 8, 16, 32, 64, 128`. `everyNSamples`'s `n` must be a compile-time
   positive integer. These compile-time checks apply to loops in `process`,

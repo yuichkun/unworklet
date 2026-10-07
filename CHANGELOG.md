@@ -7,6 +7,15 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
+## Unreleased
+
+### Fixed
+
+- `everyNSamples` preserves its cadence across long-running renders and accepts
+  large positive integer periods without 32-bit truncation or audio-thread traps.
+  Existing stride, nesting, and snapshot behavior is preserved; no migration is
+  required for public snapshots.
+
 ## 0.5.0 — 2026-10-06
 
 Safer processor compilation and testing, more reliable runtime and hot-reload

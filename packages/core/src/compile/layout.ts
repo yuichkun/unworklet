@@ -19,6 +19,7 @@
 import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
 import type { AstNode, CapturedGraph } from "./ast.ts";
+import { everyNResetWords } from "./every-n.ts";
 
 const BYTES_PER_F32 = 4;
 const PARAM_SLOT_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
@@ -459,18 +460,16 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // Per-call-site counter slots for everyNSamples (§9.1): an i32 4 bytes per
-  // counterId. Collected by recursively walking forSample / everyNSamples /
-  // messageOnReceive bodies. Placing it at the tail keeps totalBytes unchanged
-  // for a graph with no everyNSamples. Zero-initialized memory means counters
-  // start at 0.
+  // Countdown words are little-endian and zero-initialized to fire on the first
+  // invocation. Common periods occupy one word; the largest finite number needs
+  // at most 32 words. These internal counters are excluded from snapshots.
   const everyNSamplesCountersBase = cursor;
   const everyNSamplesCounterSlots: Record<number, number> = {};
   const collectEveryNCounters = (nodes: readonly AstNode[]): void => {
     for (const node of nodes) {
       if (node.kind === "everyNSamples") {
         everyNSamplesCounterSlots[node.counterId] = cursor;
-        cursor += 4;
+        cursor += everyNResetWords(node.divisor, node.stride).length * 4;
       }
       if (
         node.kind === "forSample" ||

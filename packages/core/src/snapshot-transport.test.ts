@@ -396,3 +396,38 @@ for (const type of ["i32", "f64"] as const) {
     expect(slots.find((s) => s.name === "samples")!.data).toEqual(new Uint8Array(8));
   });
 }
+
+test("snapshots exclude scheduler counters and restore named values without resetting cadence", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const count = state.named("count").f32(0);
+    return {
+      process: () =>
+        forSample((i, every) => {
+          every(3, () => count.write(count.read().add(1)));
+          every(Number.MAX_VALUE, () => {});
+          out.ch(0).at(i).write(count.read());
+        }),
+    };
+  });
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+  let q = quantum();
+  proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  fireToWorklet(self, { kind: "snapshot-request", requestId: 1 });
+  const slots = lastOfKind(self, "snapshot-response")!["slots"] as SnapshotSlot[];
+  expect(slots.map(({ name }) => name)).toEqual(["count"]);
+  expect(decodeScalar("f32", slots[0]!.data)).toBe(43);
+  fireToWorklet(self, {
+    kind: "restore",
+    requestId: 2,
+    slots: [{ name: "count", kind: "state", type: "f32", data: encodeScalar("f32", 100) }],
+  });
+  expect(lastOfKind(self, "restore-done")!["applied"]).toEqual(["count"]);
+  q = quantum();
+  proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  expect([...q.outputs[0]![0]!]).toEqual(
+    Array.from({ length: 128 }, (_, i) => 100 + Math.floor((i + 2) / 3)),
+  );
+});

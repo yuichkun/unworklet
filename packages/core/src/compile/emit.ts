@@ -19,6 +19,7 @@
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import type { Layout } from "./layout.ts";
 import { remainderFunction } from "./emit-remainder.ts";
+import { everyNResetWords } from "./every-n.ts";
 import { formatVerifyViolations, verifyRealtimeSafe } from "./verify.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
 
@@ -1798,30 +1799,38 @@ function emitStatementInScope(
       ]);
     }
     case "everyNSamples": {
-      // §9.1: run the body when (counter % divisor) == 0, then counter += stride.
-      // The counter persists across blocks in a per-call-site memory slot
-      // (= zero-order hold arises naturally because the body's state.store retains
-      // the value).
       const counterOffset = layout.regions.everyNSamplesCounters.slots[node.counterId];
       /* v8 ignore next 3 — counterId is numbered at capture + its slot is reserved by layout = unreachable */
       if (counterOffset === undefined) {
         throw new Error(`unworklet: missing everyNSamples counter slot ${node.counterId}`);
       }
-      const loadCounter = (): number =>
-        mod.i32.load(0, BYTES_PER_I32, mod.i32.const(counterOffset));
-      const bodyEmits = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
-      return mod.block(null, [
-        mod.if(
-          mod.i32.eq(mod.i32.rem_u(loadCounter(), mod.i32.const(node.divisor)), mod.i32.const(0)),
-          mod.block(null, bodyEmits.length > 0 ? bodyEmits : [mod.nop()]),
-        ),
+      const reset = everyNResetWords(node.divisor, node.stride);
+      const loadWord = (index: number): number =>
+        mod.i32.load(0, BYTES_PER_I32, mod.i32.const(counterOffset + index * BYTES_PER_I32));
+      const storeWord = (index: number, value: number): number =>
         mod.i32.store(
           0,
           BYTES_PER_I32,
-          mod.i32.const(counterOffset),
-          mod.i32.add(loadCounter(), mod.i32.const(node.stride)),
-        ),
-      ]);
+          mod.i32.const(counterOffset + index * BYTES_PER_I32),
+          value,
+        );
+      const decrement = (index: number): number => {
+        const statements: number[] = [];
+        if (index + 1 < reset.length) {
+          statements.push(mod.if(mod.i32.eqz(loadWord(index)), decrement(index + 1)));
+        }
+        statements.push(storeWord(index, mod.i32.sub(loadWord(index), mod.i32.const(1))));
+        return mod.block(null, statements);
+      };
+      const nonzero = reset.map((_, index) => loadWord(index)).reduce((a, b) => mod.i32.or(a, b));
+      return mod.if(
+        mod.i32.eqz(nonzero),
+        mod.block(null, [
+          ...node.body.map((s) => emitStatement(s, layout, mod, binaryen)),
+          ...reset.map((word, index) => storeWord(index, mod.i32.const(word))),
+        ]),
+        decrement(0),
+      );
     }
     case "eventEmitIf":
       return emitEventEmitIf(node, layout, mod, binaryen);
