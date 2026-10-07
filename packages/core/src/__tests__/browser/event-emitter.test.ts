@@ -137,14 +137,14 @@ test("event: dispose clears all subscribers and stops firing", async () => {
   expect(calls.length).toBe(beforeDispose);
 });
 
-test("event: render works without any subscriber (silent OK)", async () => {
+test("event: audio passes through unchanged without any subscriber", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
   node.outputs["main"]!.connect(ctx.destination);
   source.start();
-  await ctx.startRendering();
-  // output is input passthrough, expected level 0.7
-  // (regression check: audio path runs even with no subscribers)
+  const rendered = await ctx.startRendering();
+  expect(rendered.numberOfChannels).toBe(1);
+  expect(rendered.getChannelData(0)).toEqual(new Float32Array(512).fill(0.7));
   node.dispose();
 });
