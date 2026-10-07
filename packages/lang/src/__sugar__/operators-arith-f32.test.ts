@@ -23,7 +23,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { expectSameLowering, renderLowered } from "../goldenHarness.ts";
+import { expectSameLowering, lower, renderLowered, renderLoweredText } from "../goldenHarness.ts";
 
 const SR = 48000;
 const DUR = 128 / SR;
@@ -51,6 +51,15 @@ function block(v: number): Float32Array {
 /** Run a body `out = expr(x)` for constant input `x`, return sample 0 of out. */
 async function render1(decls: string, body: string, x: number): Promise<number> {
   const r = await renderLowered(mono(decls, body), {
+    sampleRate: SR,
+    duration: DUR,
+    inputs: { main: [block(x)] },
+  });
+  return r.outputs.main![0]![0]!;
+}
+
+async function render1Lowered(lowered: string, x: number): Promise<number> {
+  const r = await renderLoweredText(lowered, {
     sampleRate: SR,
     duration: DUR,
     inputs: { main: [block(x)] },
@@ -169,12 +178,9 @@ test("SEMANTIC: % — node%lit, lit%node (NON-commutative)", async () => {
 // ───────────────────────── unary negation ───────────────────────────────────
 
 test("SEMANTIC: -x negates in f32", async () => {
-  expect(await render1("", `out.ch(0).at(i).write(-input.ch(0).at(i));`, 0.42)).toBe(
-    neg32(fr(0.42)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(-input.ch(0).at(i));`, -0.42)).toBe(
-    neg32(fr(-0.42)),
-  );
+  const lowered = lower(mono("", `out.ch(0).at(i).write(-input.ch(0).at(i));`));
+  expect(await render1Lowered(lowered, 0.42)).toBe(neg32(fr(0.42)));
+  expect(await render1Lowered(lowered, -0.42)).toBe(neg32(fr(-0.42)));
 });
 
 test("SEMANTIC: -x + 5 — neg binds tighter than +", async () => {
@@ -239,26 +245,23 @@ test("SEMANTIC: parens override precedence — (x + 1) * 2", async () => {
 
 test("SEMANTIC: x - 1 - 2 = (x-1)-2 (left-assoc), NOT x-(1-2)", async () => {
   // (5-1)-2 = 2 ; x-(1-2) = x+1 = 6 — these differ, so assoc is observable
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) - 1 - 2);`, 5.0)).toBe(
-    sub32(sub32(fr(5.0), fr(1)), fr(2)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) - 1 - 2);`, 5.0)).toBe(2);
+  const lowered = lower(mono("", `out.ch(0).at(i).write(input.ch(0).at(i) - 1 - 2);`));
+  expect(await render1Lowered(lowered, 5.0)).toBe(sub32(sub32(fr(5.0), fr(1)), fr(2)));
+  expect(await render1Lowered(lowered, 5.0)).toBe(2);
 });
 
 test("SEMANTIC: x / 2 / 4 = (x/2)/4 (left-assoc)", async () => {
   // (8/2)/4 = 1 ; x/(2/4) = 8/0.5 = 16 — observable
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) / 2 / 4);`, 8.0)).toBe(
-    div32(div32(fr(8.0), fr(2)), fr(4)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) / 2 / 4);`, 8.0)).toBe(1);
+  const lowered = lower(mono("", `out.ch(0).at(i).write(input.ch(0).at(i) / 2 / 4);`));
+  expect(await render1Lowered(lowered, 8.0)).toBe(div32(div32(fr(8.0), fr(2)), fr(4)));
+  expect(await render1Lowered(lowered, 8.0)).toBe(1);
 });
 
 test("SEMANTIC: x % 5 % 3 = (x%5)%3 (left-assoc)", async () => {
   // (13%5)%3 = 3%3 = 0 ; x%(5%3) = 13%2 = 1 — observable
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) % 5 % 3);`, 13.0)).toBe(
-    mod32(mod32(fr(13.0), fr(5)), fr(3)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) % 5 % 3);`, 13.0)).toBe(0);
+  const lowered = lower(mono("", `out.ch(0).at(i).write(input.ch(0).at(i) % 5 % 3);`));
+  expect(await render1Lowered(lowered, 13.0)).toBe(mod32(mod32(fr(13.0), fr(5)), fr(3)));
+  expect(await render1Lowered(lowered, 13.0)).toBe(0);
 });
 
 test("SEMANTIC: x - x + x = (x-x)+x left-assoc with three Nodes", async () => {
@@ -299,10 +302,9 @@ test("SEMANTIC: chained 5 adds with literals", async () => {
 
 test("SEMANTIC: x * 0.5 — fractional literal is NOT i32-truncated (proves f32 lift)", async () => {
   // If 0.5 lifted to i32(0)=0 the result would be 0. It must lift to f32(0.5).
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) * 0.5);`, 3.0)).toBe(
-    mul32(fr(3.0), fr(0.5)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) * 0.5);`, 3.0)).toBe(1.5);
+  const lowered = lower(mono("", `out.ch(0).at(i).write(input.ch(0).at(i) * 0.5);`));
+  expect(await render1Lowered(lowered, 3.0)).toBe(mul32(fr(3.0), fr(0.5)));
+  expect(await render1Lowered(lowered, 3.0)).toBe(1.5);
 });
 
 test("SEMANTIC: integer literal 2 and decimal 2.0 lift to the same f32 — x/2 === x/2.0", async () => {
@@ -352,45 +354,38 @@ test("SEMANTIC: x % 0 → NaN in-expression (matches JS remainder); the output b
 
 test("SEMANTIC: -x % 3 → -1 — f32 mod is truncated remainder (sign of dividend, matches JS %)", async () => {
   // -7 % 3 = -1 in JS truncated remainder; NOT +2 (Euclidean).
-  expect(await render1("", `out.ch(0).at(i).write(-input.ch(0).at(i) % 3);`, 7.0)).toBe(
-    mod32(neg32(fr(7.0)), fr(3)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(-input.ch(0).at(i) % 3);`, 7.0)).toBe(-1);
+  const lowered = lower(mono("", `out.ch(0).at(i).write(-input.ch(0).at(i) % 3);`));
+  expect(await render1Lowered(lowered, 7.0)).toBe(mod32(neg32(fr(7.0)), fr(3)));
+  expect(await render1Lowered(lowered, 7.0)).toBe(-1);
 });
 
 // ───────────────────────── adversarial: negative literals ───────────────────
 
 test("SEMANTIC: x - -2 = x + 2 (negative literal on right of sub)", async () => {
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) - -2);`, 3.0)).toBe(
-    sub32(fr(3.0), fr(-2)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) - -2);`, 3.0)).toBe(5);
+  const lowered = lower(mono("", `out.ch(0).at(i).write(input.ch(0).at(i) - -2);`));
+  expect(await render1Lowered(lowered, 3.0)).toBe(sub32(fr(3.0), fr(-2)));
+  expect(await render1Lowered(lowered, 3.0)).toBe(5);
 });
 
 test("SEMANTIC: x * -3 = -3x (negative literal factor)", async () => {
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) * -3);`, 2.0)).toBe(
-    mul32(fr(2.0), fr(-3)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(input.ch(0).at(i) * -3);`, 2.0)).toBe(-6);
+  const lowered = lower(mono("", `out.ch(0).at(i).write(input.ch(0).at(i) * -3);`));
+  expect(await render1Lowered(lowered, 2.0)).toBe(mul32(fr(2.0), fr(-3)));
+  expect(await render1Lowered(lowered, 2.0)).toBe(-6);
 });
 
 // ───────────────────────── adversarial: leading-literal associativity ───────
 
 test("SEMANTIC: 8 / x / 2 = (8/x)/2 — leading literal, left-assoc with a Node middle", async () => {
   // (8/4)/2 = 1 ; 8/(x/2) = 8/2 = 4 — observable
-  expect(await render1("", `out.ch(0).at(i).write(8 / input.ch(0).at(i) / 2);`, 4.0)).toBe(
-    div32(div32(fr(8), fr(4.0)), fr(2)),
-  );
-  expect(await render1("", `out.ch(0).at(i).write(8 / input.ch(0).at(i) / 2);`, 4.0)).toBe(1);
+  const lowered = lower(mono("", `out.ch(0).at(i).write(8 / input.ch(0).at(i) / 2);`));
+  expect(await render1Lowered(lowered, 4.0)).toBe(div32(div32(fr(8), fr(4.0)), fr(2)));
+  expect(await render1Lowered(lowered, 4.0)).toBe(1);
 });
 
 test("SEMANTIC: const var operand stays raw — x + N (N=7) === x + 7", async () => {
-  expect(await render1("const N = 7;", `out.ch(0).at(i).write(input.ch(0).at(i) + N);`, 1.0)).toBe(
-    add32(fr(1.0), fr(7)),
-  );
-  expect(await render1("const N = 7;", `out.ch(0).at(i).write(input.ch(0).at(i) + N);`, 1.0)).toBe(
-    8,
-  );
+  const lowered = lower(mono("const N = 7;", `out.ch(0).at(i).write(input.ch(0).at(i) + N);`));
+  expect(await render1Lowered(lowered, 1.0)).toBe(add32(fr(1.0), fr(7)));
+  expect(await render1Lowered(lowered, 1.0)).toBe(8);
 });
 
 // ───────────────────────── const-fold MUST stay JS ──────────────────────────

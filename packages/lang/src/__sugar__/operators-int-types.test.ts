@@ -19,7 +19,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { expectSameLowering, renderLowered } from "../goldenHarness.ts";
+import { expectSameLowering, lower, renderLowered, renderLoweredText } from "../goldenHarness.ts";
 
 const SR = 48000;
 
@@ -40,6 +40,11 @@ ${body}
 /** Render and return the very first output sample (channel 0, sample 0). */
 async function firstSample(uwk: string): Promise<number> {
   const r = await renderLowered(uwk, { sampleRate: SR, duration: 1 / SR });
+  return r.outputs.main![0]![0]!;
+}
+
+async function firstLoweredSample(lowered: string): Promise<number> {
+  const r = await renderLoweredText(lowered, { sampleRate: SR, duration: 1 / SR });
   return r.outputs.main![0]![0]!;
 }
 
@@ -73,8 +78,9 @@ test("i32: -7 / 2 truncates toward zero → -3 (NOT floor -4)", async () => {
     "const a = state.i32(-7).named('a');\nconst b = state.i32(2).named('b');",
     "out.ch(0).at(i).write(f32(a / b));",
   );
-  expect(await firstSample(uwk)).toBe(-3);
-  expect(await firstSample(uwk)).not.toBe(-4);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(-3);
+  expect(await firstLoweredSample(lowered)).not.toBe(-4);
 });
 
 test("i32: 7 / -2 → -3 and -7 / -2 → 3", async () => {
@@ -114,8 +120,9 @@ test("i32: -7 % 3 → -1 (rem follows dividend sign, NOT euclidean 2)", async ()
     "const a = state.i32(-7).named('a');\nconst b = state.i32(3).named('b');",
     "out.ch(0).at(i).write(f32(a % b));",
   );
-  expect(await firstSample(uwk)).toBe(irem(-7, 3)); // -1
-  expect(await firstSample(uwk)).not.toBe(2);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(irem(-7, 3)); // -1
+  expect(await firstLoweredSample(lowered)).not.toBe(2);
 });
 
 test("i32: 7 % -3 → 1 (rem follows dividend, ignores divisor sign)", async () => {
@@ -132,8 +139,9 @@ test("i32: 7 % -3 → 1 (rem follows dividend, ignores divisor sign)", async () 
 
 test("i32: 100000 * 100000 wraps to 1410065408 (10^10 mod 2^32, signed)", async () => {
   const uwk = mono("const a = state.i32(100000).named('a');", "out.ch(0).at(i).write(f32(a * a));");
-  expect(await firstSample(uwk)).toBe(i32f(Math.imul(100000, 100000)));
-  expect(await firstSample(uwk)).toBe(1410065408);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i32f(Math.imul(100000, 100000)));
+  expect(await firstLoweredSample(lowered)).toBe(1410065408);
 });
 
 test("i32: 2147483647 + 1 overflows to -2147483648 (INT_MAX + 1)", async () => {
@@ -141,8 +149,9 @@ test("i32: 2147483647 + 1 overflows to -2147483648 (INT_MAX + 1)", async () => {
     "const a = state.i32(2147483647).named('a');\nconst one = state.i32(1).named('one');",
     "out.ch(0).at(i).write(f32(a + one));",
   );
-  expect(await firstSample(uwk)).toBe(i32f(2147483647 + 1)); // -2147483648
-  expect(await firstSample(uwk)).toBe(-2147483648);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i32f(2147483647 + 1)); // -2147483648
+  expect(await firstLoweredSample(lowered)).toBe(-2147483648);
 });
 
 test("i32: -2147483648 - 1 underflows to 2147483647 (INT_MIN - 1)", async () => {
@@ -153,8 +162,9 @@ test("i32: -2147483648 - 1 underflows to 2147483647 (INT_MIN - 1)", async () => 
   // The i32 underflow yields INT_MAX (2147483647) inside WASM, but the f32
   // output port cannot represent it exactly — `Math.fround(2147483647)` rounds
   // up to 2147483648, which is what we observe. The semantic check is `i32f`.
-  expect(await firstSample(uwk)).toBe(i32f(wrap32(-2147483648 - 1)));
-  expect(await firstSample(uwk)).toBe(Math.fround(2147483647)); // = 2147483648
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i32f(wrap32(-2147483648 - 1)));
+  expect(await firstLoweredSample(lowered)).toBe(Math.fround(2147483647)); // = 2147483648
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -169,8 +179,9 @@ test("i32: add/sub/mul/div round-trip — (a + b) * c - d / e", async () => {
   const uwk = mono(decls, "out.ch(0).at(i).write(f32((a + b) * c - d / e));");
   // (9+5)*3 - trunc(17/4) = 42 - 4 = 38, all i32
   const expected = i32f(wrap32(Math.imul(wrap32(9 + 5), 3)) - idiv(17, 4));
-  expect(await firstSample(uwk)).toBe(expected);
-  expect(await firstSample(uwk)).toBe(38);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(expected);
+  expect(await firstLoweredSample(lowered)).toBe(38);
 });
 
 test("i32: precedence — a + b * c (mul binds tighter than add)", async () => {
@@ -178,9 +189,10 @@ test("i32: precedence — a + b * c (mul binds tighter than add)", async () => {
     "const a = state.i32(2).named('a');\nconst b = state.i32(3).named('b');\nconst c = state.i32(4).named('c');";
   const uwk = mono(decls, "out.ch(0).at(i).write(f32(a + b * c));");
   // 2 + (3*4) = 14, NOT (2+3)*4 = 20
-  expect(await firstSample(uwk)).toBe(i32f(wrap32(2 + Math.imul(3, 4))));
-  expect(await firstSample(uwk)).toBe(14);
-  expect(await firstSample(uwk)).not.toBe(20);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i32f(wrap32(2 + Math.imul(3, 4))));
+  expect(await firstLoweredSample(lowered)).toBe(14);
+  expect(await firstLoweredSample(lowered)).not.toBe(20);
 });
 
 test("i32: left-associativity — a - b - c = (a - b) - c", async () => {
@@ -188,8 +200,9 @@ test("i32: left-associativity — a - b - c = (a - b) - c", async () => {
     "const a = state.i32(20).named('a');\nconst b = state.i32(5).named('b');\nconst c = state.i32(3).named('c');";
   const uwk = mono(decls, "out.ch(0).at(i).write(f32(a - b - c));");
   // (20-5)-3 = 12, NOT 20-(5-3) = 18
-  expect(await firstSample(uwk)).toBe(i32f(wrap32(wrap32(20 - 5) - 3)));
-  expect(await firstSample(uwk)).toBe(12);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i32f(wrap32(wrap32(20 - 5) - 3)));
+  expect(await firstLoweredSample(lowered)).toBe(12);
 });
 
 test("i32: deep left-fold division — a / b / c = (a / b) / c truncates per step", async () => {
@@ -199,8 +212,9 @@ test("i32: deep left-fold division — a / b / c = (a / b) / c truncates per ste
   // trunc(trunc(100/3)/3) = trunc(33/3) = 11, NOT trunc(100/9) = 11 here (same)
   // pick values where stepwise differs: 100/3=33, 33/3=11. trunc(100/9)=11 — same.
   // use a/b/c = 100/6/... below for divergence test
-  expect(await firstSample(uwk)).toBe(idiv(idiv(100, 3), 3));
-  expect(await firstSample(uwk)).toBe(11);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(idiv(idiv(100, 3), 3));
+  expect(await firstLoweredSample(lowered)).toBe(11);
 });
 
 test("i32: stepwise truncation diverges from single-divide — 17 / 2 / 2 = 4 not 4.25→4", async () => {
@@ -208,8 +222,9 @@ test("i32: stepwise truncation diverges from single-divide — 17 / 2 / 2 = 4 no
     "const a = state.i32(17).named('a');\nconst b = state.i32(2).named('b');\nconst c = state.i32(2).named('c');";
   const uwk = mono(decls, "out.ch(0).at(i).write(f32(a / b / c));");
   // (17/2=8) / 2 = 4. Confirms per-step truncation.
-  expect(await firstSample(uwk)).toBe(idiv(idiv(17, 2), 2));
-  expect(await firstSample(uwk)).toBe(4);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(idiv(idiv(17, 2), 2));
+  expect(await firstLoweredSample(lowered)).toBe(4);
 });
 
 test("i32: unary neg — -a flips sign (a=12 → -12)", async () => {
@@ -223,8 +238,9 @@ test("i32: neg of INT_MIN wraps to itself (-(-2147483648) = -2147483648)", async
     "out.ch(0).at(i).write(f32(-a));",
   );
   // 0 - INT_MIN wraps back to INT_MIN in i32
-  expect(await firstSample(uwk)).toBe(i32f(wrap32(0 - -2147483648)));
-  expect(await firstSample(uwk)).toBe(-2147483648);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i32f(wrap32(0 - -2147483648)));
+  expect(await firstLoweredSample(lowered)).toBe(-2147483648);
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -290,8 +306,9 @@ test("i64: large value within f32-exact range — 16777216n survives round-trip"
     "const a = state.i64(16777215n).named('a');",
     "out.ch(0).at(i).write(f32(a + i64(1n)));",
   );
-  expect(await firstSample(uwk)).toBe(i64f(16777216n));
-  expect(await firstSample(uwk)).toBe(16777216);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i64f(16777216n));
+  expect(await firstLoweredSample(lowered)).toBe(16777216);
 });
 
 test("i64: division truncates toward zero — 7n / i64(2n) = 3", async () => {
@@ -325,9 +342,10 @@ test("i64: 64-bit value beyond i32 range — 5_000_000_000n / i64(2n) = 2_500_00
     "const a = state.i64(5000000000n).named('a');",
     "out.ch(0).at(i).write(f32(a / i64(2n)));",
   );
-  expect(await firstSample(uwk)).toBe(i64f(5000000000n / 2n));
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i64f(5000000000n / 2n));
   // sanity: an i32 wrap would have mangled 5e9; 2.5e9 fround:
-  expect(await firstSample(uwk)).toBe(Math.fround(2500000000));
+  expect(await firstLoweredSample(lowered)).toBe(Math.fround(2500000000));
 });
 
 test("i64 structural: a + i64(1n) lowers to add(a.read(), i64(1n))", async () => {
@@ -353,8 +371,9 @@ test("f64: 0.1 + 0.2 stored to f32 port = fround(0.30000000000000004)", async ()
     "const a = state.f64(0.1).named('a');\nconst b = state.f64(0.2).named('b');",
     "out.ch(0).at(i).write(f32(a + b));",
   );
-  expect(await firstSample(uwk)).toBe(f64f(0.1 + 0.2));
-  expect(await firstSample(uwk)).toBeCloseTo(0.3, 6);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(f64f(0.1 + 0.2));
+  expect(await firstLoweredSample(lowered)).toBeCloseTo(0.3, 6);
 });
 
 test("f64: division is real (not truncating) — 7.0 / 2.0 = 3.5", async () => {
@@ -362,14 +381,16 @@ test("f64: division is real (not truncating) — 7.0 / 2.0 = 3.5", async () => {
     "const a = state.f64(7).named('a');\nconst b = state.f64(2).named('b');",
     "out.ch(0).at(i).write(f32(a / b));",
   );
-  expect(await firstSample(uwk)).toBe(f64f(7 / 2)); // 3.5
-  expect(await firstSample(uwk)).toBeCloseTo(3.5, 6);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(f64f(7 / 2)); // 3.5
+  expect(await firstLoweredSample(lowered)).toBeCloseTo(3.5, 6);
 });
 
 test("f64: literal divisor lifts to f64 — a / 3 = 0.333...", async () => {
   const uwk = mono("const a = state.f64(1).named('a');", "out.ch(0).at(i).write(f32(a / 3));");
-  expect(await firstSample(uwk)).toBe(f64f(1 / 3));
-  expect(await firstSample(uwk)).toBeCloseTo(0.333333, 5);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(f64f(1 / 3));
+  expect(await firstLoweredSample(lowered)).toBeCloseTo(0.333333, 5);
 });
 
 test("f64: precedence + nesting — (a + b) / c - d", async () => {
@@ -378,8 +399,9 @@ test("f64: precedence + nesting — (a + b) / c - d", async () => {
     "const c = state.f64(2).named('c');\nconst d = state.f64(0.25).named('d');";
   const uwk = mono(decls, "out.ch(0).at(i).write(f32((a + b) / c - d));");
   // (1.5+2.5)/2 - 0.25 = 2.0 - 0.25 = 1.75
-  expect(await firstSample(uwk)).toBe(f64f((1.5 + 2.5) / 2 - 0.25));
-  expect(await firstSample(uwk)).toBeCloseTo(1.75, 6);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(f64f((1.5 + 2.5) / 2 - 0.25));
+  expect(await firstLoweredSample(lowered)).toBeCloseTo(1.75, 6);
 });
 
 test("f64: mod is float fmod — 5.5 % 2 = 1.5", async () => {
@@ -387,8 +409,9 @@ test("f64: mod is float fmod — 5.5 % 2 = 1.5", async () => {
     "const a = state.f64(5.5).named('a');\nconst b = state.f64(2).named('b');",
     "out.ch(0).at(i).write(f32(a % b));",
   );
-  expect(await firstSample(uwk)).toBe(f64f(5.5 % 2)); // 1.5
-  expect(await firstSample(uwk)).toBeCloseTo(1.5, 6);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(f64f(5.5 % 2)); // 1.5
+  expect(await firstLoweredSample(lowered)).toBeCloseTo(1.5, 6);
 });
 
 test("f64: unary neg preserves fraction — -(3.25) = -3.25", async () => {
@@ -415,15 +438,17 @@ test("adversarial: i32 node + literal 0.9 — literal lifts to i32 (0.9 → 0), 
   // 0.9 lifts to i32 = (0.9 | 0) = 0. So a + 0.9 should equal a, NOT a + 0.9 float.
   const uwk = mono("const a = state.i32(5).named('a');", "out.ch(0).at(i).write(f32(a + 0.9));");
   // i32 literal lift truncates 0.9 to 0 → 5 + 0 = 5
-  expect(await firstSample(uwk)).toBe(5);
-  expect(await firstSample(uwk)).not.toBe(Math.fround(5.9));
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(5);
+  expect(await firstLoweredSample(lowered)).not.toBe(Math.fround(5.9));
 });
 
 test("adversarial: i32 node * literal 2.5 — 2.5 lifts to i32 = 2, so a*2.5 == a*2", async () => {
   const uwk = mono("const a = state.i32(4).named('a');", "out.ch(0).at(i).write(f32(a * 2.5));");
   // 2.5 | 0 = 2 → 4 * 2 = 8 (NOT 10)
-  expect(await firstSample(uwk)).toBe(8);
-  expect(await firstSample(uwk)).not.toBe(10);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(8);
+  expect(await firstLoweredSample(lowered)).not.toBe(10);
 });
 
 test("adversarial: number op number stays JS (build-time) — const N = 64; N * 2 not lowered", async () => {
@@ -448,8 +473,9 @@ test("adversarial: literal-on-LEFT lifts to node's i32 type — 2.5 * a = 2 * a"
   // 2.5 is the LEFT operand; it must still lift to the right operand's i32 type
   // (truncate to 2), not stay an f32 literal. a=4 → 2*4 = 8 (NOT 10).
   const uwk = mono("const a = state.i32(4).named('a');", "out.ch(0).at(i).write(f32(2.5 * a));");
-  expect(await firstSample(uwk)).toBe(8);
-  expect(await firstSample(uwk)).not.toBe(10);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(8);
+  expect(await firstLoweredSample(lowered)).not.toBe(10);
 });
 
 test("adversarial: literal numerator lifts to i32 — 9 / a truncates (a=2 → 4)", async () => {
@@ -472,8 +498,9 @@ test("i32 precedence: a / b * c left-assoc truncates at div step (7/2*4 = 12, NO
   const decls =
     "const a = state.i32(7).named('a');\nconst b = state.i32(2).named('b');\nconst c = state.i32(4).named('c');";
   const uwk = mono(decls, "out.ch(0).at(i).write(f32(a / b * c));");
-  expect(await firstSample(uwk)).toBe(i32f(Math.imul(idiv(7, 2), 4))); // 12
-  expect(await firstSample(uwk)).not.toBe(14);
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i32f(Math.imul(idiv(7, 2), 4))); // 12
+  expect(await firstLoweredSample(lowered)).not.toBe(14);
 });
 
 test("i32 unary: -a * b binds neg tighter than mul (3,4 → -12)", async () => {
@@ -505,8 +532,9 @@ test("i64: negative result beyond i32 range survives — 1e9n - i64(5e9n) = -4e9
     "const a = state.i64(1000000000n).named('a');",
     "out.ch(0).at(i).write(f32(a - i64(5000000000n)));",
   );
-  expect(await firstSample(uwk)).toBe(i64f(1000000000n - 5000000000n));
-  expect(await firstSample(uwk)).toBe(Math.fround(-4000000000));
+  const lowered = lower(uwk);
+  expect(await firstLoweredSample(lowered)).toBe(i64f(1000000000n - 5000000000n));
+  expect(await firstLoweredSample(lowered)).toBe(Math.fround(-4000000000));
 });
 
 test("i64: deep nest a * i64(3n) + i64(2n) (a=7n → 23)", async () => {
