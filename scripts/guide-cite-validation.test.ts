@@ -533,26 +533,34 @@ test.each(["L12", "L12-L18", "L12C4", "L12C4-L18C9"])(
   },
 );
 
-test.each([`/${file}`, `./${file}`, `../${file}`, `/checkout/${file}`])(
-  "unmarked local path prefixes are validated before reading: %s",
-  (source) => {
-    for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](${source})`]) {
-      const checked: string[] = [];
-      expect(
-        validateGuideCitations(markdown, (path) => {
-          checked.push(path);
-          return anchor;
-        }).join("\n"),
-      ).toContain("canonical repository-relative path");
-      expect(checked).toEqual([]);
-    }
-  },
-);
+test.each([
+  `/${file}`,
+  `./${file}`,
+  `../${file}`,
+  `/checkout/${file}`,
+  `checkout/${file}`,
+  `file:///checkout/${file}`,
+  `file://${file}`,
+])("unmarked local path prefixes are validated before reading: %s", (source) => {
+  for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](${source})`]) {
+    const checked: string[] = [];
+    expect(
+      validateGuideCitations(markdown, (path) => {
+        checked.push(path);
+        return anchor;
+      }).join("\n"),
+    ).toContain("canonical repository-relative path");
+    expect(checked).toEqual([]);
+  }
+});
 
 test.each([
   `[compiler at L12 in parser](${file})`,
   `[compiler at L12C4-L18C9 in parser](${file})`,
   `[compiler at \`L12\` for the setting](${file})`,
+  `[compiler L12 in parser](${file})`,
+  `[L12C4-L18C9 compiler setting](${file})`,
+  `[compiler **L12** setting](${file})`,
 ])("coordinates with descriptive label suffixes are rejected: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
     "numeric source location",
