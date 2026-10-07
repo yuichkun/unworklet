@@ -1,5 +1,5 @@
 /**
- * Live state X-ray. Reads the `unworklet:state` shared state the plugin server
+ * Live state X-ray. Reads the `unworklet:page-state` shared state the plugin server
  * mirrors from the dev page-script's `devDump()` poll, and keeps a rolling
  * history per scalar slot for sparklines.
  *
@@ -9,8 +9,8 @@
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
-import { getPanelRpc } from "../lib/rpc";
-import { computed, onBeforeUnmount, onMounted, shallowRef } from "vue";
+import { usePageState, type PageSnapshots } from "./usePageState";
+import { computed, shallowRef } from "vue";
 
 export type LiveSlotType = "f32" | "f64" | "i32" | "i64" | "bool" | "u8";
 export type LiveScalar = {
@@ -37,7 +37,7 @@ export type LiveState = { nodes: LiveNodeState[] };
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
-    "unworklet:state": LiveState;
+    "unworklet:page-state": PageSnapshots<LiveState>;
   }
 }
 
@@ -101,27 +101,7 @@ export function useLiveState() {
     for (const key of histories.keys()) if (!present.has(key)) histories.delete(key);
   };
 
-  let active = true;
-  let unsubscribe: (() => void) | undefined;
-  onBeforeUnmount(() => {
-    active = false;
-    unsubscribe?.();
-  });
-
-  onMounted(() => {
-    // Token-trusted devtools connection shared across views (see `getPanelRpc`).
-    const connect = async (): Promise<void> => {
-      const rpc = await getPanelRpc();
-      if (!active) return;
-      const shared = await rpc.sharedState.get("unworklet:state");
-      if (!active) return;
-      apply(shared.value() as LiveState | undefined);
-      unsubscribe = shared.on("updated", (s) => apply(s as LiveState));
-    };
-    void connect().catch(() => {
-      // Dev-only panel; nothing to show if the backend is unreachable.
-    });
-  });
+  usePageState<LiveState>("unworklet:page-state", apply);
 
   const nodes = computed(() => state.value.nodes);
   const totalScalars = computed(() =>

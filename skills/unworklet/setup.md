@@ -93,7 +93,7 @@ export default defineConfig(({ command }) => ({
   extending pattern and add `"node"` to `types` so `process.env` type-checks in
   the config file too: `"types": ["@unworklet/unplugin/client", "node"]`.
 
-(Auto-dock hook: [cite: packages/unplugin/src/index.ts :: `devtools: { setup: (ctx) => {`].)
+(Auto-dock hook: [cite: packages/unplugin/src/index.ts :: `devtools: { setup: async (ctx) => {`].)
 
 ## 3. TypeScript — extend the generated tsconfig
 

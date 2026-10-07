@@ -1,5 +1,5 @@
 /**
- * Live signals X-ray. Reads the `unworklet:signals` shared state the plugin
+ * Live signals X-ray. Reads the `unworklet:page-signals` shared state the plugin
  * server mirrors from the dev page-script's AnalyserNode taps: per output port a
  * live time-domain scope, a normalized spectrum, and RMS/peak levels, plus each
  * node's declared linear-memory layout and the AudioContext's reported latencies.
@@ -12,8 +12,8 @@
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
-import { getPanelRpc } from "../lib/rpc";
-import { computed, onMounted, shallowRef } from "vue";
+import { usePageState, type PageSnapshots } from "./usePageState";
+import { computed, shallowRef, inject, provide, type ComputedRef } from "vue";
 
 export type LiveSignalsPort = {
   name: string;
@@ -51,7 +51,7 @@ export type SignalsStructure = { nodes: SignalsNodeShape[]; context: LiveSignals
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
-    "unworklet:signals": LiveSignals;
+    "unworklet:page-signals": PageSnapshots<LiveSignals>;
   }
 }
 
@@ -94,66 +94,58 @@ export function structureSignature(s: LiveSignals): string {
 
 const frameKey = (nodeId: string, portName: string): string => `${nodeId}::${portName}`;
 
-// ── module-level singleton (one RPC subscription shared by every consumer) ──
-const frames = new Map<string, LiveSignalsPort>();
-const structure = shallowRef<SignalsStructure>({ nodes: [], context: EMPTY_CONTEXT });
-let lastSig = "";
-let started = false;
+type Signals = {
+  nodes: ComputedRef<SignalsNodeShape[]>;
+  context: ComputedRef<LiveSignalsContext>;
+  getFrame: (nodeId: string, portName: string) => LiveSignalsPort | undefined;
+};
+const SIGNALS = "unworklet:signals-view";
+export function useLiveSignals(): Signals {
+  const inherited = inject<Signals | null>(SIGNALS, null);
+  if (inherited) return inherited;
+  const frames = new Map<string, LiveSignalsPort>();
+  const structure = shallowRef<SignalsStructure>({ nodes: [], context: EMPTY_CONTEXT });
+  let lastSig = "";
 
-const apply = (raw: LiveSignals | undefined): void => {
-  const s = normalizeSignals(raw);
-  const present = new Set<string>();
-  for (const n of s.nodes) {
-    for (const p of n.ports) {
-      const k = frameKey(n.id, p.name);
-      frames.set(k, p);
-      present.add(k);
+  const apply = (raw: LiveSignals | undefined): void => {
+    const s = normalizeSignals(raw);
+    const present = new Set<string>();
+    for (const n of s.nodes) {
+      for (const p of n.ports) {
+        const k = frameKey(n.id, p.name);
+        frames.set(k, p);
+        present.add(k);
+      }
     }
-  }
-  // Drop frames for ports that vanished (a disposed node / removed output) so the
-  // non-reactive map doesn't retain their scope/spectrum arrays for the iframe's
-  // lifetime as node ids monotonically increase across processor recreation.
-  for (const k of frames.keys()) if (!present.has(k)) frames.delete(k);
-  const sig = structureSignature(s);
-  if (sig !== lastSig) {
-    lastSig = sig;
-    structure.value = {
-      nodes: s.nodes.map((n) => ({
-        id: n.id,
-        displayName: n.displayName,
-        ports: n.ports.map((p) => p.name),
-        memory: n.memory,
-        memoryBytes: n.memoryBytes,
-      })),
-      context: s.context,
-    };
-  }
-};
-
-const ensureStarted = (): void => {
-  if (started) return;
-  started = true;
-  // Token-trusted devtools connection shared across views (see `getPanelRpc`).
-  const connect = async (): Promise<void> => {
-    const rpc = await getPanelRpc();
-    const shared = await rpc.sharedState.get("unworklet:signals");
-    apply(shared.value() as LiveSignals | undefined);
-    shared.on("updated", (s) => apply(s as LiveSignals));
+    // Drop frames for ports that vanished (a disposed node / removed output) so the
+    // non-reactive map doesn't retain their scope/spectrum arrays for the iframe's
+    // lifetime as node ids monotonically increase across processor recreation.
+    for (const k of frames.keys()) if (!present.has(k)) frames.delete(k);
+    const sig = structureSignature(s);
+    if (sig !== lastSig) {
+      lastSig = sig;
+      structure.value = {
+        nodes: s.nodes.map((n) => ({
+          id: n.id,
+          displayName: n.displayName,
+          ports: n.ports.map((p) => p.name),
+          memory: n.memory,
+          memoryBytes: n.memoryBytes,
+        })),
+        context: s.context,
+      };
+    }
   };
-  void connect().catch(() => {
-    // Dev-only panel; nothing to show if the backend is unreachable.
-    started = false;
-  });
-};
 
-export function useLiveSignals() {
-  onMounted(ensureStarted);
+  usePageState<LiveSignals>("unworklet:page-signals", apply);
   /** Latest per-frame data for a port, read directly by canvas rAF loops. */
   const getFrame = (nodeId: string, portName: string): LiveSignalsPort | undefined =>
     frames.get(frameKey(nodeId, portName));
-  return {
+  const result = {
     nodes: computed(() => structure.value.nodes),
     context: computed(() => structure.value.context),
     getFrame,
   };
+  provide(SIGNALS, result);
+  return result;
 }

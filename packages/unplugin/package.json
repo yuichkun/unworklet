@@ -21,7 +21,8 @@
   },
   "files": [
     "dist",
-    "client.d.ts"
+    "client.d.ts",
+    "devtools.d.mts"
   ],
   "type": "module",
   "exports": {
@@ -38,7 +39,10 @@
     "./client": {
       "types": "./client.d.ts"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./devtools": {
+      "types": "./devtools.d.mts"
+    }
   },
   "publishConfig": {
     "exports": {
@@ -53,7 +57,10 @@
       "./client": {
         "types": "./client.d.ts"
       },
-      "./package.json": "./package.json"
+      "./package.json": "./package.json",
+      "./devtools": {
+        "types": "./devtools.d.mts"
+      }
     },
     "access": "public"
   },
@@ -67,6 +74,7 @@
   },
   "dependencies": {
     "@unworklet/lang": "workspace:^",
+    "devframe": "^0.8.0",
     "typescript": "catalog:",
     "unplugin": "catalog:"
   },
