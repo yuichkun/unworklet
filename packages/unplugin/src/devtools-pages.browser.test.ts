@@ -344,6 +344,24 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await playKey(6);
     await b.waitForFunction("globalThis.received.length === 1");
     expect(await b.evaluate("globalThis.received")).toEqual([71]);
+    const firstKey = panel.locator(".key-white").first();
+    const firstBounds = await firstKey.boundingBox();
+    if (!firstBounds) throw new Error("Piano key is not visible");
+    await panel.keyboard.down("a");
+    await panel.mouse.move(
+      firstBounds.x + firstBounds.width / 2,
+      firstBounds.y + firstBounds.height - 8,
+    );
+    await panel.mouse.down();
+    await panel.keyboard.press("x");
+    await panel.mouse.up();
+    await b.waitForFunction("globalThis.received.length === 2");
+    expect(await b.evaluate("globalThis.received")).toEqual([71, 60]);
+    expect(await b.evaluate("globalThis.released.filter(note => note === 60).length")).toBe(0);
+    await panel.keyboard.up("a");
+    await b.waitForFunction("globalThis.released.includes(60)");
+    expect(await b.evaluate("globalThis.released")).toEqual([71, 60]);
+    await b.waitForFunction("globalThis.audioLevel() < 0.001");
   } finally {
     await browser?.close();
     await closeHmrServer(server);

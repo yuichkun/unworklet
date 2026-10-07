@@ -123,6 +123,15 @@ const onKeyUp = (midiNote: number): void => {
   if (![...physicalKeyToMidi.values()].includes(midiNote)) triggerNoteOff(midiNote);
 };
 const onKeyLeave = onKeyUp;
+watch(
+  octaveBase,
+  () => {
+    for (const note of mouseHeldNotes) {
+      if (!keyboardKeys.value.some((key) => key.midi === note)) onKeyUp(note);
+    }
+  },
+  { flush: "sync" },
+);
 
 // ──────────────────────────────────────────────────────────────────
 // Continuous controllers — auto-send on slider input (no Send button).

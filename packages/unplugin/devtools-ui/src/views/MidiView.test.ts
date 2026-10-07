@@ -117,6 +117,35 @@ test.each(["channel", "target"])(
   },
 );
 
+test.each([false, true])(
+  "octave removal clears mouse ownership with PC hold %s",
+  async (pcHeld) => {
+    const button = root.querySelector<HTMLButtonElement>(".key-white")!;
+    button.dispatchEvent(new MouseEvent("mousedown"));
+    if (pcHeld) key("keydown");
+    key("keydown", "x");
+    await nextTick();
+    expect(button.isConnected).toBe(false);
+    expect(fixture.injectMidi).toHaveBeenCalledTimes(pcHeld ? 1 : 2);
+    root.querySelector<HTMLButtonElement>(".key-white")!.dispatchEvent(new MouseEvent("mouseup"));
+    if (pcHeld) key("keyup");
+    expect(fixture.injectMidi).toHaveBeenCalledTimes(2);
+    expect(fixture.injectMidi).toHaveBeenLastCalledWith(...released());
+  },
+);
+
+test("octave changes retain mouse ownership of keys still rendered", async () => {
+  const button = root.querySelector<HTMLButtonElement>(".key-white")!;
+  button.dispatchEvent(new MouseEvent("mousedown"));
+  key("keydown", "z");
+  await nextTick();
+  expect(button.isConnected).toBe(true);
+  expect(fixture.injectMidi).toHaveBeenCalledTimes(1);
+  button.dispatchEvent(new MouseEvent("mouseup"));
+  expect(fixture.injectMidi).toHaveBeenCalledTimes(2);
+  expect(fixture.injectMidi).toHaveBeenLastCalledWith(...released());
+});
+
 test("route unmount releases notes and removes key listeners", () => {
   key("keydown");
   app!.unmount();
