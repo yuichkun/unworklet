@@ -411,6 +411,16 @@ type ExposeOptions = {
   live, or read it back via `node.snapshot()`. `snapshot: "persistent"` also
   requires a user-defined name. — `declarations.ts:229,240`
 - A published slot is read on the main thread as `node.state.<name>` (§5).
+- In `.uwk.ts`, a trailing `.expose(options)` accepts a variable or helper-call
+  result as well as an object literal. Non-literal options are evaluated once;
+  core reads `name`, `snapshot`, and `publish` lazily from the original object,
+  including inherited getters. An undefined `name` uses the declaration's binding
+  name; an explicit name wins. For example, passing a variable containing
+  `{ snapshot: "transient", publish: { rateFps: 30 } }` to a scalar state
+  declaration named `level` publishes `level` at 30 FPS. Core validation
+  applies equally to variable options: `{ publish: { rateFps: 0 } }` is invalid,
+  and buffers cannot publish. Whole `null` or `undefined` options fail as they do
+  in direct core calls. — `packages/lang/src/passes/autoName.ts`
 
 ### Events — `event<T>` (typed message ports)
 

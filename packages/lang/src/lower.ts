@@ -587,7 +587,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
       userImports.push(stmt);
       continue;
     }
-    declarations.push(autoNameDeclaration(stmt));
+    declarations.push(autoNameDeclaration(stmt, coreModule));
   }
 
   const importedNames = importBoundNames(userImports, { valuesOnly: true });

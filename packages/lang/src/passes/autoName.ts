@@ -13,8 +13,9 @@
  * Name-optional state / buffer derive ONLY through an explicit marker — a
  * `.expose({...})` without a name, or a no-arg `.named()` — so a plain
  * `state.f32(0)` stays anonymous. An explicit `name` / `.named("x")` / a
- * `.expose({ name })` is left untouched, and a non-object options argument (an
- * identifier or spread we cannot read) is left untouched too.
+ * `.expose({ name })` is left untouched. Non-object expose options forward the
+ * core fields lazily, with a binding-name fallback for an undefined name.
+ * Other helpers leave non-object options untouched.
  */
 
 import ts from "typescript";
@@ -93,8 +94,82 @@ function withNameInOptions(call: ts.CallExpression, name: string): ts.CallExpres
   ]);
 }
 
+function withExposeOptions(
+  call: ts.CallExpression,
+  name: string,
+  coreModule: string,
+): ts.CallExpression {
+  const options = f.createIdentifier("__exposeOptions");
+  const exposeName = f.createIdentifier("__exposeName");
+  // Lazy forwarding retains inherited getters, their receiver, and core's read
+  // order/count; spreading would eagerly read even fields core never uses.
+  const getters = ["name", "snapshot", "publish"].map((field) => {
+    const value = f.createPropertyAccessExpression(options, field);
+    const statements =
+      field === "name"
+        ? [
+            f.createVariableStatement(
+              undefined,
+              f.createVariableDeclarationList(
+                [f.createVariableDeclaration(exposeName, undefined, undefined, value)],
+                ts.NodeFlags.Const,
+              ),
+            ),
+            f.createReturnStatement(
+              f.createConditionalExpression(
+                f.createBinaryExpression(
+                  exposeName,
+                  ts.SyntaxKind.EqualsEqualsEqualsToken,
+                  f.createVoidZero(),
+                ),
+                undefined,
+                f.createStringLiteral(name),
+                undefined,
+                exposeName,
+              ),
+            ),
+          ]
+        : [f.createReturnStatement(value)];
+    return f.createGetAccessorDeclaration(
+      undefined,
+      field,
+      [],
+      undefined,
+      f.createBlock(statements, true),
+    );
+  });
+  const adapter = f.createArrowFunction(
+    undefined,
+    undefined,
+    [
+      f.createParameterDeclaration(
+        undefined,
+        undefined,
+        options,
+        undefined,
+        f.createImportTypeNode(
+          f.createLiteralTypeNode(f.createStringLiteral(coreModule)),
+          undefined,
+          f.createIdentifier("ExposeOptions"),
+        ),
+      ),
+    ],
+    undefined,
+    undefined,
+    f.createObjectLiteralExpression(getters, true),
+  );
+  return f.updateCallExpression(call, call.expression, call.typeArguments, [
+    f.createCallExpression(adapter, undefined, [call.arguments[0]!]),
+    ...call.arguments.slice(1),
+  ]);
+}
+
 /** Compute the auto-named initializer, or undefined if nothing to do. */
-function autoNamedInit(init: ts.Expression, name: string): ts.Expression | undefined {
+function autoNamedInit(
+  init: ts.Expression,
+  name: string,
+  coreModule: string,
+): ts.Expression | undefined {
   const root = rootCallee(init);
   const outer = ts.isCallExpression(init) ? init : undefined;
   const outerMethod = outer !== undefined ? calledMethod(outer) : undefined;
@@ -102,7 +177,10 @@ function autoNamedInit(init: ts.Expression, name: string): ts.Expression | undef
   // `.expose({...})` (param / state / buffer) — the name lives in the expose
   // options; derive it from the binding when absent, never clobber an explicit one.
   if (outer !== undefined && outerMethod === "expose") {
-    return optionsHaveName(outer) ? undefined : withNameInOptions(outer, name);
+    if (optionsHaveName(outer)) return undefined;
+    return argIsInjectable(outer)
+      ? withNameInOptions(outer, name)
+      : withExposeOptions(outer, name, coreModule);
   }
   // A no-arg `.named()` marker on a name-optional state / buffer — fill the name.
   if (outer !== undefined && outerMethod === "named" && outer.arguments.length === 0) {
@@ -130,13 +208,16 @@ function autoNamedInit(init: ts.Expression, name: string): ts.Expression | undef
 }
 
 /** Apply auto-name to one module-top-level statement (no-op if not applicable). */
-export function autoNameDeclaration(stmt: ts.Statement): ts.Statement {
+export function autoNameDeclaration(
+  stmt: ts.Statement,
+  coreModule = "@unworklet/core",
+): ts.Statement {
   if (!ts.isVariableStatement(stmt)) return stmt;
   if (stmt.declarationList.declarations.length !== 1) return stmt;
   const decl = stmt.declarationList.declarations[0]!;
   if (!ts.isIdentifier(decl.name) || decl.initializer === undefined) return stmt;
 
-  const newInit = autoNamedInit(decl.initializer, decl.name.text);
+  const newInit = autoNamedInit(decl.initializer, decl.name.text, coreModule);
   if (newInit === undefined) return stmt;
 
   return f.updateVariableStatement(
