@@ -17,6 +17,8 @@ jobs:
           cache: true
       - run: vp install
       - run: vp check
+      - name: Verify test portfolio ownership
+        run: vp exec node --test scripts/test-portfolio/*.test.mjs scripts/lang-coverage/*.test.mjs
 
   vitest:
     name: Vitest (= node-side + browser SAB + browser postMessage)
@@ -35,11 +37,13 @@ jobs:
           vp run --filter @unworklet/lang build
           vp run --filter @unworklet/offline build
           vp run --filter @unworklet/test build
+      - name: Verify complete test ownership
+        run: vp exec node scripts/test-portfolio/check.mjs
       - name: Install playwright chromium (for browser e2e projects)
         working-directory: examples/demo
         run: vp exec playwright install --with-deps chromium
-      - name: Run vitest aggregation
-        run: vp test
+      - name: Run browser, integration and repository invariants
+        run: vp test run --config vite.ci.config.ts
       - name: Run the demo as a standalone consumer app
         working-directory: examples/demo
         run: vp test run
@@ -51,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [core, lang, offline, test, unplugin]
+        package: [core, offline, test, unplugin]
     steps:
       - uses: actions/checkout@v4
       - uses: voidzero-dev/setup-vp@v1
@@ -60,16 +64,141 @@ jobs:
           cache: true
       - run: vp install
       - run: vp run build
+      - name: Record runner resources
+        run: |
+          nproc
+          lscpu | grep -E 'Architecture:|Model name:|CPU MHz:'
+          grep -E 'MemTotal|MemAvailable' /proc/meminfo
+          cat /proc/self/cgroup
+          grep ' - cgroup2 ' /proc/self/mountinfo || true
+          group="/sys/fs/cgroup$(awk -F: '$1 == "0" { print $3 }' /proc/self/cgroup)"
+          while [ -d "$group" ]; do
+            echo "cgroup: $group"
+            for field in cpu.max cpuset.cpus.effective memory.max memory.current memory.peak memory.events; do
+              printf '%s: ' "$field"
+              cat "$group/$field" 2>/dev/null || echo unavailable
+            done
+            [ "$group" = /sys/fs/cgroup ] && break
+            group="$(dirname "$group")"
+          done
       - name: Measure package branches and enforce its threshold
         working-directory: packages/${{ matrix.package }}
         env:
           UWK_DISTS_BUILT: "1"
-        run: vp test run --coverage --maxWorkers=2
+        run: |
+          /usr/bin/time -v vp test run --coverage --maxWorkers=2 \
+            --reporter=default --reporter=json --outputFile.json=coverage/tests.json \
+            --coverage.reporter=text --coverage.reporter=html \
+            --coverage.reporter=json-summary --coverage.reporter=json
+      - name: Record peak runner memory
+        if: always()
+        run: |
+          grep -E 'MemTotal|MemAvailable' /proc/meminfo
+          group="/sys/fs/cgroup$(awk -F: '$1 == "0" { print $3 }' /proc/self/cgroup)"
+          if [ ! -d "$group" ]; then echo "Process cgroup memory accounting unavailable"; fi
+          while [ -d "$group" ]; do
+            echo "cgroup: $group"
+            for field in memory.current memory.peak memory.events; do
+              printf '%s: ' "$field"
+              cat "$group/$field" 2>/dev/null || echo unavailable
+            done
+            [ "$group" = /sys/fs/cgroup ] && break
+            group="$(dirname "$group")"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-${{ matrix.package }}
           path: packages/${{ matrix.package }}/coverage
+
+  lang-shards:
+    name: Lang coverage shard (${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install --frozen-lockfile
+      - run: vp run build
+      - name: Discover the complete lang test inventory
+        working-directory: packages/lang
+        run: vp test list --filesOnly --json=expected-tests.json
+      - name: Run native coverage shard
+        working-directory: packages/lang
+        env:
+          UWK_DISTS_BUILT: "1"
+        run: |
+          /usr/bin/time -v vp test run --coverage --shard=${{ matrix.shard }}/4 --maxWorkers=2 \
+            --coverage.thresholds.branches=0 \
+            --reporter=default --reporter=blob --reporter=json \
+            --outputFile.blob=coverage-shard/blob.json \
+            --outputFile.json=coverage-shard/tests.json \
+            --coverage.reportsDirectory=coverage-shard/coverage \
+            --coverage.reporter=text --coverage.reporter=json --coverage.reporter=json-summary
+      - name: Seal complete successful shard
+        env:
+          COVERAGE_SHARD: ${{ matrix.shard }}
+        run: vp exec node scripts/lang-coverage/verify.mjs record packages/lang/coverage-shard packages/lang/expected-tests.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lang-coverage-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: packages/lang/coverage-shard
+          if-no-files-found: error
+
+  lang-coverage:
+    name: Branch coverage (lang)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+    env:
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install --frozen-lockfile
+      - run: vp run build
+      - name: Discover the complete lang test inventory
+        working-directory: packages/lang
+        run: vp test list --filesOnly --json=expected-tests.json
+      - name: Require all current-attempt shard jobs to succeed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: vp exec node scripts/lang-coverage/coordinator.mjs
+      - name: Download separate current-attempt bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lang-coverage-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: lang-coverage-inputs
+      - name: Verify complete shard identities and coverage union
+        run: vp exec node scripts/lang-coverage/verify.mjs prepare lang-coverage-inputs packages/lang/expected-tests.json
+      - name: Merge native reports and enforce full package threshold
+        working-directory: packages/lang
+        run: |
+          vp test run --merge-reports=merge-blobs --coverage \
+            --reporter=default --reporter=json --outputFile.json=coverage/merged-tests.json \
+            --coverage.reporter=text --coverage.reporter=html \
+            --coverage.reporter=json-summary --coverage.reporter=json
+      - name: Verify native merged tests and covered branch identities
+        run: vp exec node scripts/lang-coverage/verify.mjs compare lang-coverage-inputs packages/lang/expected-tests.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lang
+          path: packages/lang/coverage
+          if-no-files-found: error
 
   devtools-coverage:
     name: Branch coverage (DevTools UI)
