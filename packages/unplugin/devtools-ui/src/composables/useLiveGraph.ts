@@ -1,5 +1,5 @@
 /**
- * Live audio-graph topology (Wire 4). Reads the `unworklet:graph` shared state
+ * Live audio-graph topology (Wire 4). Reads the `unworklet:page-graph` shared state
  * the plugin server mirrors from the dev page-script's `AudioNode.connect`
  * capture, and lays the nodes out left-to-right by longest-path depth.
  *
@@ -8,8 +8,8 @@
  */
 
 import type {} from "@vitejs/devtools-kit"; // makes the bare module augmentable below
-import { getPanelRpc } from "../lib/rpc";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { usePageState, type PageSnapshots } from "./usePageState";
+import { computed, ref } from "vue";
 
 export type LiveGraphNode = {
   id: string;
@@ -27,7 +27,7 @@ export type PlacedNode = LiveGraphNode & { x: number; y: number };
 
 declare module "@vitejs/devtools-kit" {
   interface DevToolsRpcSharedStates {
-    "unworklet:graph": LiveGraph;
+    "unworklet:page-graph": PageSnapshots<LiveGraph>;
   }
 }
 
@@ -73,28 +73,7 @@ export function useLiveGraph() {
     }
   };
 
-  let active = true;
-  let unsubscribe: (() => void) | undefined;
-  onBeforeUnmount(() => {
-    active = false;
-    unsubscribe?.();
-  });
-
-  onMounted(() => {
-    // Token-trusted devtools connection shared across views (see `getPanelRpc`).
-    const connect = async (): Promise<void> => {
-      const rpc = await getPanelRpc();
-      if (!active) return;
-      const shared = await rpc.sharedState.get("unworklet:graph");
-      if (!active) return;
-      // sharedState hands back a deep-readonly view; we only read it, so widen.
-      apply(shared.value() as LiveGraph | undefined);
-      unsubscribe = shared.on("updated", (g) => apply(g as LiveGraph));
-    };
-    void connect().catch(() => {
-      // Dev-only panel; if the backend is unreachable there is nothing to show.
-    });
-  });
+  usePageState<LiveGraph>("unworklet:page-graph", apply);
 
   const placed = computed(() => layout(graph.value));
   const edges = computed(() => graph.value.edges);

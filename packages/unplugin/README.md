@@ -112,7 +112,19 @@ unworklet({
 
 In `vite dev`, the plugin registers an "unworklet" panel in the Vite DevTools
 dock and injects a zero-config page bridge — your app writes no DevTools code.
-The panels read live data from every running node:
+Choose an **Application page** in the sidebar. The panels read live data from
+that page’s running nodes, and MIDI injection targets only its selected input.
+A closed or reloaded page stays disconnected until you select a live page.
+
+Custom DevTools consumers can read page-scoped snapshots and send explicit
+page-targeted MIDI. Unscoped snapshot keys keep the most recently received raw
+snapshot; unscoped MIDI injection can reach matching inputs in multiple pages,
+including retained commands when a fresh page subscribes.
+Use the page-targeted RPC when isolation is required. TypeScript integrations
+load client types with `import type {} from "@unworklet/unplugin/devtools"`.
+See [the DevTools guide](../../skills/unworklet/devtools.md#shared-state-and-rpc-consumers).
+
+The four panels are:
 
 - **Audio graph** — the real Web-Audio topology + a per-node detail pane.
 - **Live state** — each node's WASM slots (scalars + buffers), X-rayed live.
