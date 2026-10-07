@@ -1,0 +1,69 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { validateWorkflow, validateCoveragePolicies, COVERAGE_POLICIES } from "./workflow.mjs";
+
+const workflow = readFileSync(new URL("../../.github/workflows/test.yml", import.meta.url), "utf8");
+
+void test("the complete CI ownership routing is active and all package gates remain required", () => {
+  assert.doesNotThrow(() => validateWorkflow(workflow));
+});
+
+void test("missing owners, worker-policy changes and conditional package gates fail", () => {
+  for (const change of [
+    (text) =>
+      text.replace(
+        "package: [core, lang, offline, test, unplugin]",
+        "package: [core, lang, offline, test]",
+      ),
+    (text) =>
+      text.replace(
+        "package: [core, lang, offline, test, unplugin]",
+        "package: [core, lang, offline, test, unplugin]\n        exclude: [{package: lang}]",
+      ),
+    (text) =>
+      text.replace("  pull_request:\n", "  pull_request:\n    paths: ['packages/core/**']\n"),
+    (text) => text.replace("then workers=4", "then workers=2"),
+    (text) => text.replace("workers=2", "workers=1"),
+    (text) => text.replace("  coverage:\n", "  coverage:\n    needs: vitest\n"),
+    (text) => text.replace("  coverage:\n", "  coverage:\n    if: github.event_name == 'push'\n"),
+    (text) => text.replace("  coverage:\n", "  coverage:\n    continue-on-error: true\n"),
+    (text) =>
+      text.replace(
+        "      - name: Measure package branches and enforce its threshold\n",
+        "      - name: Measure package branches and enforce its threshold\n        if: matrix.package != 'lang'\n",
+      ),
+    (text) =>
+      text.replace(
+        "vp test run --config vite.ci.config.ts",
+        "vp test run --config vite.ci.config.ts --project core-browser-sab",
+      ),
+    (text) => text.replace("vp exec node scripts/test-portfolio/check.mjs", "echo skipped"),
+    (text) =>
+      text.replace(
+        "vp test run --coverage --maxWorkers=1",
+        "vp test run --coverage --maxWorkers=1 --testNamePattern smoke",
+      ),
+  ]) {
+    const changed = change(workflow);
+    assert.notEqual(changed, workflow, "the mutation must hit the actual workflow");
+    assert.throws(() => validateWorkflow(changed));
+  }
+});
+
+void test("each package retains the exact V8 98% branch-only denominator policy", async () => {
+  const policies = {};
+  for (const config of Object.keys(COVERAGE_POLICIES)) {
+    const { default: value } = await import(new URL(`../../${config}`, import.meta.url));
+    policies[config] = value.test.coverage;
+  }
+  assert.doesNotThrow(() => validateCoveragePolicies(policies));
+  for (const config of Object.keys(policies)) {
+    const changed = structuredClone(policies);
+    changed[config].thresholds.branches = 97;
+    assert.throws(() => validateCoveragePolicies(changed), /coverage policy/);
+    const omitted = structuredClone(policies);
+    omitted[config].exclude.push("src/unmeasured.ts");
+    assert.throws(() => validateCoveragePolicies(omitted), /coverage policy/);
+  }
+});
