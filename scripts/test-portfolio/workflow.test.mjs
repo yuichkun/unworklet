@@ -92,3 +92,13 @@ void test("every retained CI check identity remains stable", () => {
     assert.throws(() => validateWorkflow(changed), /check identity/);
   }
 });
+
+void test("every retained job rejects conditional, dependency and ignored-failure bypasses", () => {
+  for (const id of ["coverage", "vitest", "devtools-coverage", "e2e", "check", "packaging"]) {
+    for (const field of ["if: false", "needs: check", "continue-on-error: true"]) {
+      const changed = workflow.replace(`  ${id}:\n`, `  ${id}:\n    ${field}\n`);
+      assert.notEqual(changed, workflow, `mutation must hit ${id}`);
+      assert.throws(() => validateWorkflow(changed), /unconditional/, `${id}: ${field}`);
+    }
+  }
+});

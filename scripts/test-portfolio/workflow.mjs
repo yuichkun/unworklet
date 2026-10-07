@@ -106,7 +106,10 @@ export function validateWorkflow(workflow) {
   const devtools = job(workflow, "devtools-coverage");
   const demoBrowser = job(workflow, "e2e");
   const check = job(workflow, "check");
-  for (const owner of [coverage, vitest, devtools, demoBrowser, check]) requireUnconditional(owner);
+  const packaging = job(workflow, "packaging");
+  for (const owner of [coverage, vitest, devtools, demoBrowser, check, packaging]) {
+    requireUnconditional(owner);
+  }
   assert.match(coverage, /^    name: Branch coverage \(\$\{\{ matrix.package \}\}\)$/m);
   assert.match(coverage, /^        package: \[core, lang, offline, test, unplugin\]$/m);
   const matrix = coverage
