@@ -541,6 +541,8 @@ test.each([
   `checkout/${file}`,
   `file:///checkout/${file}`,
   `file://${file}`,
+  `/home/me/unworklet (1)/${file}`,
+  `/home/me/unworklet [copy]/${file}`,
 ])("unmarked local path prefixes are validated before reading: %s", (source) => {
   for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](${source})`]) {
     const checked: string[] = [];
@@ -569,6 +571,10 @@ test.each([
 
 test.each([
   `[compiler uses L1 cache](${file})`,
+  `[L1/L2 cache](${file})`,
+  `[L1 instruction cache](${file})`,
+  `[L2 data cache](${file})`,
+  `[L1 and L2 caches](${file})`,
   `[source](https://github.com/yuichkun/unworklet/blob/main/${file})`,
   `See https://github.com/yuichkun/unworklet/blob/main/${file}`,
 ])("local path and label checks preserve remote links and cache prose: %s", (markdown) => {

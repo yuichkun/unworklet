@@ -120,8 +120,8 @@ export function validateGuideCitations(
     const references = [...text.matchAll(repositoryFile)];
     for (const reference of references) {
       const file = reference[0];
-      const prefix = /(?:^|[\s`(<])([^\s`<>()[\]"']*\/)$/.exec(text.slice(0, reference.index))?.[1];
-      if (prefix && !/^https?:\/\//i.test(prefix)) {
+      const prefix = /[^\s`]*\/$/.exec(text.slice(0, reference.index))?.[0];
+      if (prefix && !/\bhttps?:\/\/[^\s`]*\/$/i.test(prefix)) {
         errors.push(`${prefix + file}: expected a canonical repository-relative path`);
         continue;
       }
@@ -169,7 +169,10 @@ export function validateGuideCitations(
     if (token.type === "link") {
       inspectProse(token.href);
       if (token.tokens && token.href.match(repositoryFile)) {
-        const label = normalize(linkDestinations(token.tokens).replaceAll("`", ""));
+        const label = normalize(linkDestinations(token.tokens).replaceAll("`", "")).replace(
+          /\bL\d+(?:\s*(?:\/|and|,)\s*L\d+)*(?:\s+(?:data|instruction|unified))?\s+caches?\b/gi,
+          "cache",
+        );
         const location =
           /\bat\s+L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b|\blines?\s+L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?|\s+to\s+L?\d+(?:C\d+)?)?\b|(?:^|[\s(])L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b(?!\s+cache\b)/i.exec(
             label,
