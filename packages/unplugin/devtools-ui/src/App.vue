@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useLivePages } from "./composables/useLivePages";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -8,6 +9,7 @@ import { useRoute, useRouter } from "vue-router";
 import chainSvg from "./assets/unworklet-logo-chain.svg?raw";
 import textSvg from "./assets/unworklet-logo-text.svg?raw";
 
+const { pages, selectedPageId, selectedPage } = useLivePages();
 const router = useRouter();
 const route = useRoute();
 
@@ -30,6 +32,20 @@ const navItems = computed(() =>
         <div class="brand-text" v-html="textSvg"></div>
       </div>
 
+      <label class="page-selector">
+        Application page
+        <select v-model="selectedPageId" aria-label="Application page">
+          <option v-if="!selectedPageId" value="" disabled>Waiting for a page</option>
+          <option v-else-if="!selectedPage" :value="selectedPageId" disabled>
+            Disconnected page
+          </option>
+          <option v-for="page in pages" :key="page.id" :value="page.id">
+            {{ page.title || page.url }} · {{ page.id.slice(0, 8) }}
+          </option>
+        </select>
+        <span v-if="selectedPage" :title="selectedPage.url">{{ selectedPage.url }}</span>
+      </label>
+
       <nav class="nav">
         <router-link
           v-for="item in navItems"
@@ -46,7 +62,7 @@ const navItems = computed(() =>
     <main class="content">
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
-          <component :is="Component" />
+          <component :is="Component" :key="selectedPageId" />
         </transition>
       </router-view>
     </main>
@@ -97,6 +113,23 @@ const navItems = computed(() =>
   width: 100%;
   height: auto;
   padding: 2px;
+}
+
+.page-selector {
+  display: grid;
+  gap: 6px;
+  padding: 0 12px 12px;
+  font-size: 11px;
+  color: var(--u-text-muted);
+}
+.page-selector select {
+  width: 100%;
+  min-width: 0;
+}
+.page-selector span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav {

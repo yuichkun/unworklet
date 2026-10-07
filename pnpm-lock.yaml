@@ -303,6 +303,9 @@ importers:
       '@unworklet/lang':
         specifier: workspace:^
         version: link:../lang
+      devframe:
+        specifier: ^0.8.0
+        version: 0.8.1(cac@7.0.0)(srvx@0.12.5)
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
