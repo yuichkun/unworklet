@@ -120,6 +120,13 @@ export function validateGuideCitations(
     const references = [...text.matchAll(repositoryFile)];
     for (const reference of references) {
       const file = reference[0];
+      const prefix = /(?:^|[\s`(<])((?:\.\.?\/|\/)[\w./-]*)$/.exec(
+        text.slice(0, reference.index),
+      )?.[1];
+      if (prefix) {
+        sourceFor(prefix + file);
+        continue;
+      }
       sourceFor(file);
       const suffix = text.slice(reference.index + file.length).replace(/^\?[^#\s`]*(?=#)/, "");
       const after = afterPath.exec(suffix);
@@ -166,7 +173,7 @@ export function validateGuideCitations(
       if (token.tokens && token.href.match(repositoryFile)) {
         const label = normalize(linkDestinations(token.tokens).replaceAll("`", ""));
         const location =
-          /\blines?\s+L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?|\s+to\s+L?\d+(?:C\d+)?)?\b|(?:^|[\s(])L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?(?=\s*(?:\)|$))/i.exec(
+          /\bat\s+L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b|\blines?\s+L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?|\s+to\s+L?\d+(?:C\d+)?)?\b|(?:^|[\s(])L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?(?=\s*(?:\)|$))/i.exec(
             label,
           );
         if (location)

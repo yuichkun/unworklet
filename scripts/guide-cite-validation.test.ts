@@ -533,6 +533,40 @@ test.each(["L12", "L12-L18", "L12C4", "L12C4-L18C9"])(
   },
 );
 
+test.each([`/${file}`, `./${file}`, `../${file}`, `/checkout/${file}`])(
+  "unmarked local path prefixes are validated before reading: %s",
+  (source) => {
+    for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](${source})`]) {
+      const checked: string[] = [];
+      expect(
+        validateGuideCitations(markdown, (path) => {
+          checked.push(path);
+          return anchor;
+        }).join("\n"),
+      ).toContain("canonical repository-relative path");
+      expect(checked).toEqual([]);
+    }
+  },
+);
+
+test.each([
+  `[compiler at L12 in parser](${file})`,
+  `[compiler at L12C4-L18C9 in parser](${file})`,
+  `[compiler at \`L12\` for the setting](${file})`,
+])("coordinates with descriptive label suffixes are rejected: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+});
+
+test.each([
+  `[compiler uses L1 cache](${file})`,
+  `[source](https://github.com/yuichkun/unworklet/blob/main/${file})`,
+  `See https://github.com/yuichkun/unworklet/blob/main/${file}`,
+])("local path and label checks preserve remote links and cache prose: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
 test.each(["on", "in"])("worded source coordinates accept %s line", (preposition) => {
   for (const markdown of [
     `${file} ${preposition} line L12`,
