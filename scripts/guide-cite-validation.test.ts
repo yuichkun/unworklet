@@ -550,6 +550,9 @@ test.each([
   "C:\\work\\README.md",
   `C:\\work\\unworklet\\${file.replaceAll("/", "\\")}`,
   file.replaceAll("/", "\\"),
+  `https://example.com/${file}`,
+  `https://github.com/another/repo/blob/main/${file}`,
+  `https://example.com/?url=https://github.com/yuichkun/unworklet/blob/main/${file}`,
 ])("unmarked local path prefixes are validated before reading: %s", (source) => {
   for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](${source})`]) {
     const checked: string[] = [];
@@ -588,9 +591,24 @@ test.each([
   `[L1 and L2 caches](${file})`,
   `[source](https://github.com/yuichkun/unworklet/blob/main/${file})`,
   `See https://github.com/yuichkun/unworklet/blob/main/${file}`,
+  `[source](https://raw.githubusercontent.com/yuichkun/unworklet/main/${file})`,
 ])("local path and label checks preserve remote links and cache prose: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
 });
+
+test.each(["archive-README.md", "docs.README.md", "README.md.backup", "README.md-copy"])(
+  "other filenames are not mistaken for root README evidence: %s",
+  (filename) => {
+    const checked: string[] = [];
+    expect(
+      validateGuideCitations(`See \`${filename}\`.`, (path) => {
+        checked.push(path);
+        return anchor;
+      }),
+    ).toEqual([]);
+    expect(checked).toEqual([]);
+  },
+);
 
 test.each(["on", "in"])("worded source coordinates accept %s line", (preposition) => {
   for (const markdown of [

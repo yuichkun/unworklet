@@ -114,7 +114,7 @@ export function validateGuideCitations(
   // The same path grammar establishes both file existence and numeric-location
   // intent. Bare application filenames and orphan line labels are not evidence.
   const repositoryFile =
-    /\b(?:packages|examples|scripts)[/\\][\w./\\-]*\.[A-Za-z0-9_-]+|\bREADME\.md\b/g;
+    /\b(?:packages|examples|scripts)[/\\][\w./\\-]*\.[A-Za-z0-9_-]+|(?<![\w.-])README\.md(?![\w-]|\.[\w])/g;
   const afterPath =
     /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*[([]?\s*(?:(?:at|see|on|in)\s+)?[([]?\s*`?(?:L|lines?\s+`?L?|:)`?\d+)/i;
   const beforePath =
@@ -124,7 +124,12 @@ export function validateGuideCitations(
     for (const reference of references) {
       const file = reference[0];
       const prefix = /[^\s`]*[/\\]$/.exec(text.slice(0, reference.index))?.[0];
-      if (prefix && !/\bhttps?:\/\/[^\s`]*\/$/i.test(prefix)) {
+      if (
+        prefix &&
+        !/(?:^|[<([])https?:\/\/(?:github\.com\/yuichkun\/unworklet\/(?:blob|raw)\/[^/?#\s]+|raw\.githubusercontent\.com\/yuichkun\/unworklet\/[^/?#\s]+)\/$/i.test(
+          prefix,
+        )
+      ) {
         errors.push(`${prefix + file}: expected a canonical repository-relative path`);
         continue;
       }
