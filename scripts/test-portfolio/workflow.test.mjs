@@ -12,14 +12,11 @@ void test("the complete CI ownership routing is active and all package gates rem
 void test("missing owners, worker-policy changes and conditional package gates fail", () => {
   for (const change of [
     (text) =>
-      text.replace(
-        "package: [core, lang, offline, test, unplugin]",
-        "package: [core, lang, offline, test]",
-      ),
+      text.replace("package: [core, offline, test, unplugin]", "package: [core, offline, test]"),
     (text) =>
       text.replace(
-        "package: [core, lang, offline, test, unplugin]",
-        "package: [core, lang, offline, test, unplugin]\n        exclude: [{package: lang}]",
+        "package: [core, offline, test, unplugin]",
+        "package: [core, offline, test, unplugin]\n        exclude: [{package: lang}]",
       ),
     (text) =>
       text.replace("  pull_request:\n", "  pull_request:\n    paths: ['packages/core/**']\n"),

@@ -16,7 +16,7 @@ race exposure between local aggregate and standalone coverage executions.
 ## Commands
 
 ```sh
-vp exec node --test scripts/test-portfolio/*.test.mjs
+vp exec node --test scripts/test-portfolio/*.test.mjs scripts/lang-coverage/*.test.mjs
 # Package dist outputs must already exist: browser configs import the plugin.
 vp exec node scripts/test-portfolio/check.mjs
 ```
@@ -47,7 +47,8 @@ The native guard directory has an explicit owner whose exact workflow command is
 tested. Unknown native test directories fail until a real owner is wired up.
 
 Workflow contracts retain the trigger set, complete package matrix, unconditional
-owner jobs, each package's two workers, DevTools' one worker,
+owner jobs, four native lang shards and their independent merged gate,
+two workers per producer/package, DevTools' one worker,
 unfiltered residual/demo commands and guard ordering. The package config contract
 pins the V8 provider, 98% branch-only gates and existing include/exclude policies.
 An intentional change to these policies must update the contract and its proof.
