@@ -47,7 +47,10 @@ The typed node surface is `params` / `state` / `events` / `midi` / `inputs` / `o
 - **`@unworklet/unplugin/client`** — ambient `declare module "*?worklet"` → default
   `CompiledProcessor<unknown>`. Resolves the import; the per-processor witness is erased to
   `unknown` at this boundary.
-  [cite: packages/unplugin/client.d.ts :: `declare module "*?worklet" {`] [cite: packages/unplugin/package.json :: `"files": [ "dist", "client.d.ts", "devtools.d.mts" ]`]
+  [cite: packages/unplugin/client.d.ts :: `declare module "*?worklet" {`]
+  The workspace and published subpath mappings are
+  [cite: packages/unplugin/package.json :: `"types": "./src/devbridge.ts", "development": "./src/devbridge.ts", "import": "./dist/devbridge.mjs" }, "./client": { "types": "./client.d.ts" }`]
+  and [cite: packages/unplugin/package.json :: `"types": "./dist/devbridge.d.mts", "import": "./dist/devbridge.mjs" }, "./client": { "types": "./client.d.ts" }`].
 - **`.unworklet/worklets.d.ts`** — one `declare module "*/<basename>?worklet"` per processor,
   carrying its concrete `params`/`state`/`events`/`midi`/`inputs`/`outputs`. This is what makes
   `node.params.drive` resolve to the real param. Written by the Vite plugin at dev startup and as it compiles, and

@@ -132,6 +132,24 @@ test("slot exposure and events render as separate headings and fenced examples",
   ]);
 });
 
+test.each(["exports", "publishConfig.exports"])(
+  "the client import citation detects removal of its %s mapping",
+  (scope) => {
+    const markdown = readFileSync(path.join(GUIDE_DIR, "ide-and-typecheck.md"), "utf8");
+    const manifestPath = "packages/unplugin/package.json";
+    const manifest = JSON.parse(readFileSync(path.join(REPO, manifestPath), "utf8"));
+    const exportsMap = scope === "exports" ? manifest.exports : manifest.publishConfig.exports;
+    delete exportsMap["./client"];
+    const errors = validateGuideCitations(markdown, (file) => {
+      if (file === manifestPath) return JSON.stringify(manifest, null, 2);
+      const target = path.join(REPO, file);
+      if (!existsSync(target)) return undefined;
+      return statSync(target).isDirectory() ? "" : readFileSync(target, "utf8");
+    });
+    expect(errors.join("\n")).toContain(`${manifestPath}: anchor not found`);
+  },
+);
+
 test("every explicit guide citation and full repository-file reference resolves to current evidence", () => {
   const guides = readdirSync(GUIDE_DIR).filter((name) => name.endsWith(".md"));
   const errors: string[] = [];
