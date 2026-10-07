@@ -1,5 +1,5 @@
 /**
- * Auto-name pass (RFC-001 S9) — purely syntactic, runs on module-top-level
+ * Auto-name pass (RFC-001 S9) — runs on module-top-level
  * `const X = <decl helper>` declarations. The binding name fills in a missing
  * declared name; an explicit name always wins.
  *
@@ -169,6 +169,8 @@ function autoNamedInit(
   init: ts.Expression,
   name: string,
   coreModule: string,
+  checker: ts.TypeChecker,
+  coreExpose: Set<ts.Declaration>,
 ): ts.Expression | undefined {
   const root = rootCallee(init);
   const outer = ts.isCallExpression(init) ? init : undefined;
@@ -177,6 +179,16 @@ function autoNamedInit(
   // `.expose({...})` (param / state / buffer) — the name lives in the expose
   // options; derive it from the binding when absent, never clobber an explicit one.
   if (outer !== undefined && outerMethod === "expose") {
+    const receiver = ts.getOriginalNode(
+      (outer.expression as ts.PropertyAccessExpression).expression,
+    );
+    const declarations = checker
+      .getNonNullableType(checker.getTypeAtLocation(receiver))
+      .getProperty("expose")?.declarations;
+    // A mixed core/custom union can resolve its call signature to core alone.
+    // Every possible receiver method must originate from a core declaration.
+    if (!declarations?.length || !declarations.every((decl) => coreExpose.has(decl)))
+      return undefined;
     if (optionsHaveName(outer)) return undefined;
     return argIsInjectable(outer)
       ? withNameInOptions(outer, name)
@@ -207,17 +219,49 @@ function autoNamedInit(
   return undefined;
 }
 
-/** Apply auto-name to one module-top-level statement (no-op if not applicable). */
-export function autoNameDeclaration(
-  stmt: ts.Statement,
+/** Bind auto-naming to the canonical core declarations in this program. */
+export function createAutoNameDeclaration(
+  program: ts.Program,
   coreModule = "@unworklet/core",
+): (stmt: ts.Statement) => ts.Statement {
+  const checker = program.getTypeChecker();
+  const ambient = program.getSourceFile(program.getRootFileNames()[0]!)!;
+  const coreImport = ambient.statements.find(ts.isImportDeclaration)!;
+  const coreSymbol = checker.getSymbolAtLocation(coreImport.moduleSpecifier);
+  const coreExpose = new Set<ts.Declaration>();
+  const exposureTypes = new Set([
+    "State",
+    "Buffer",
+    "Param",
+    "StateChain",
+    "BufferChain",
+    "ParamChain",
+  ]);
+  if (coreSymbol !== undefined) {
+    for (const exported of checker.getExportsOfModule(coreSymbol)) {
+      if (!exposureTypes.has(exported.name)) continue;
+      const symbol =
+        exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
+      const type = checker.getDeclaredTypeOfSymbol(symbol);
+      for (const declaration of type.getProperty("expose")!.declarations!)
+        coreExpose.add(declaration);
+    }
+  }
+  return (stmt) => autoNameDeclaration(stmt, coreModule, checker, coreExpose);
+}
+
+function autoNameDeclaration(
+  stmt: ts.Statement,
+  coreModule: string,
+  checker: ts.TypeChecker,
+  coreExpose: Set<ts.Declaration>,
 ): ts.Statement {
   if (!ts.isVariableStatement(stmt)) return stmt;
   if (stmt.declarationList.declarations.length !== 1) return stmt;
   const decl = stmt.declarationList.declarations[0]!;
   if (!ts.isIdentifier(decl.name) || decl.initializer === undefined) return stmt;
 
-  const newInit = autoNamedInit(decl.initializer, decl.name.text, coreModule);
+  const newInit = autoNamedInit(decl.initializer, decl.name.text, coreModule, checker, coreExpose);
   if (newInit === undefined) return stmt;
 
   return f.updateVariableStatement(

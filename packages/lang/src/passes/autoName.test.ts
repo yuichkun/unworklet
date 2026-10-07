@@ -3,10 +3,11 @@ import { expect, test } from "vite-plus/test";
 import { lowerToProcessor } from "../eval-lowered.ts";
 import { lower } from "../lower.ts";
 import { buildProgram } from "../program.ts";
-import { autoNameDeclaration } from "./autoName.ts";
+import { createAutoNameDeclaration } from "./autoName.ts";
 
 function evaluate(source: string): unknown {
-  const sf = ts.createSourceFile("test.ts", source, ts.ScriptTarget.Latest, true);
+  const { program, sourceFile: sf } = buildProgram(source);
+  const autoNameDeclaration = createAutoNameDeclaration(program);
   const transformed = ts.factory.updateSourceFile(
     sf,
     sf.statements.map((stmt) => autoNameDeclaration(stmt)),
@@ -61,7 +62,7 @@ const options = Object.create({
   get publish() { log.push(this === options ? "publish" : "wrong receiver"); return { rateFps: 30 }; },
   get unused() { throw Error("unused getter"); }
 });
-const target = {
+const target: import("@unworklet/core").State<"f32"> = {
   get expose() {
     log.push("method");
     return function(o, extra) {
@@ -99,7 +100,7 @@ for (const name of ["undefined", "null", '""', '"meter"']) {
     expect(
       evaluate(`
 const options = Object.freeze({ name: ${name} });
-const target = { expose(o) { return o.name; } };
+const target: import("@unworklet/core").State<"f32"> = { expose(o) { return o.name; } };
 const level = target.expose(options);
 return level;
 `),
@@ -112,7 +113,7 @@ test("does not eagerly read options ignored by the receiver or capture authored 
     evaluate(`
 const __exposeOptions = { name: "meter", get publish() { throw Error("publish read"); } };
 const __exposeName = "untouched";
-const target = { expose(o) { return [o.name, __exposeName]; } };
+const target: import("@unworklet/core").State<"f32"> = { expose(o) { return [o.name, __exposeName]; } };
 const level = target.expose(__exposeOptions);
 return level;
 `),
@@ -176,7 +177,7 @@ test("does not cache changing name getters or mutate frozen options", () => {
     evaluate(`
 let reads = 0;
 const options = Object.freeze({ get name() { return "meter" + ++reads; } });
-const target = { expose(o) { return [o.name, o.name]; } };
+const target: import("@unworklet/core").State<"f32"> = { expose(o) { return [o.name, o.name]; } };
 const level = target.expose(options);
 return [level, reads];
 `),
@@ -191,7 +192,7 @@ for (const [argument, expected] of [
   test(`literal/omitted naming remains unchanged: ${argument}`, () => {
     expect(
       evaluate(
-        `const target = { expose(o) { return o.name; } }; const level = target.expose(${argument}); return level;`,
+        `const target: import("@unworklet/core").State<"f32"> = { expose(o) { return o.name; } }; const level = target.expose(${argument}); return level;`,
       ),
     ).toBe(expected);
   });
@@ -204,4 +205,169 @@ test("adapter types use the configured core module", () => {
   );
   expect(lowered).toContain('import("custom-core").ExposeOptions');
   expect(lowered).not.toContain('"@unworklet/core"');
+});
+
+for (const argument of ["exposure", "getOptions()", '{ tag: "keep" }', ""]) {
+  test(`custom expose receives unchanged options: ${argument || "omitted"}`, () => {
+    expect(
+      evaluate(`
+const exposure = { name: "custom", tag: "keep" };
+let calls = 0;
+const getOptions = () => { calls++; return exposure; };
+const widget = { expose(value) { return [value, value === exposure]; } };
+const result = widget.expose(${argument});
+return [result, calls];
+`),
+    ).toEqual([
+      argument === ""
+        ? [undefined, false]
+        : argument.startsWith("{")
+          ? [{ tag: "keep" }, false]
+          : [{ name: "custom", tag: "keep" }, true],
+      argument === "getOptions()" ? 1 : 0,
+    ]);
+  });
+}
+
+test("same-named custom types and mixed receivers are not core exposure", () => {
+  const source = `
+type State<T> = { expose(options: { name?: string; tag?: string }): string };
+declare const fake: State<"f32">;
+declare const mixed: import("@unworklet/core").State<"f32"> | State<"f32">;
+const exposure = { name: "custom", tag: "keep" };
+const result = fake.expose(exposure);
+const uncertain = mixed.expose(exposure);
+export { result, uncertain };
+`;
+  const lowered = lower(source);
+  expect(lowered).toContain("fake.expose(exposure)");
+  expect(lowered).toContain("mixed.expose(exposure)");
+  expect(lowered).not.toContain("__exposeOptions");
+});
+
+test("imported custom expose keeps identity, custom fields, and generated types", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const path = await import("node:path");
+  const { loadUwkProcessor } = await import("../index.ts");
+  const dir = mkdtempSync(path.join(import.meta.dirname, "../../.expose-custom-"));
+  try {
+    writeFileSync(
+      path.join(dir, "custom.ts"),
+      `
+export const exposure = { name: "custom", tag: "keep" };
+export const widget = { expose(value: typeof exposure) {
+  if (value !== exposure || value.tag !== "keep") throw Error("options changed");
+  return 1;
+} };`,
+    );
+    const file = path.join(dir, "processor.uwk.ts");
+    const source = processor(`import { widget as state, exposure } from "./custom.ts";
+const result = state.expose(exposure);`);
+    writeFileSync(file, source);
+    const lowered = lower(source, { sourcePath: file });
+    const { program, sourceFile } = buildProgram(lowered, { sourcePath: file });
+    expect(
+      program
+        .getSemanticDiagnostics(sourceFile)
+        .map((d) => ts.flattenDiagnosticMessageText(d.messageText, " ")),
+    ).toEqual([]);
+    await loadUwkProcessor(file);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+for (const [kind, factory, create] of [
+  ["state", "s", "f32(0)"],
+  ["buffer", "s.buffer", "f32({ size: 4 })"],
+  ["param", "p", 'f32({ default: 1, min: 0, max: 2, automationRate: "k-rate" })'],
+] as const) {
+  for (const chain of [false, true]) {
+    test(`core ${kind} ${chain ? "factory" : "handle"} aliases keep inferred exposure names`, () => {
+      const declarations = chain
+        ? `const original = ${factory}; const level = original.expose(exposure); const value = level.${create};`
+        : `const original = ${factory}.${create}; const level = original.expose(exposure);`;
+      const result = lowerToProcessor(
+        processor(`
+import { state as s, param as p } from "@unworklet/core";
+const exposure = { snapshot: "transient" as const };
+${declarations}`),
+      );
+      expect(result.graph).toMatchObject({
+        declarations: expect.arrayContaining([
+          expect.objectContaining({ kind, name: "level", snapshot: "transient" }),
+        ]),
+      });
+    });
+  }
+}
+
+test("core-only unions and optional handles keep exposure adaptation", () => {
+  const lowered = lower(`
+declare const both: import("@unworklet/core").State<"f32"> | import("@unworklet/core").Param;
+declare const maybe: import("@unworklet/core").State<"f32"> | undefined;
+const exposure = { snapshot: "transient" as const };
+const level = both.expose(exposure);
+const optional = maybe?.expose(exposure);
+export { level, optional };`);
+  expect(lowered).toContain('__exposeName === void 0 ? "level"');
+  expect(lowered).toContain('__exposeName === void 0 ? "optional"');
+});
+
+test("unknown and custom intersection receivers keep their options", () => {
+  const lowered = lower(`
+declare const unknownHelper: any;
+declare const extended: import("@unworklet/core").State<"f32"> & { expose(value: { tag: string }): string };
+const exposure = { tag: "keep" };
+const first = unknownHelper.expose(exposure);
+const second = extended.expose(exposure);
+export { first, second };`);
+  expect(lowered).toContain("unknownHelper.expose(exposure)");
+  expect(lowered).toContain("extended.expose(exposure)");
+  expect(lowered).not.toContain("__exposeOptions");
+});
+
+test("captured browser snapshots preserve variable core exposure options", async () => {
+  const { captureFsSnapshot } = await import("../capture.ts");
+  const source = processor(
+    `const exposure = { publish: { rateFps: 30 }, snapshot: "transient" as const }; const level = state.f32(0).expose(exposure);`,
+  );
+  const expected = lowerToProcessor(source);
+  const actual = lowerToProcessor(source, captureFsSnapshot());
+  expect(actual.graph).toEqual(expected.graph);
+  expect(actual.worklet.publishSlots).toEqual(expected.worklet.publishSlots);
+});
+
+test("handles returned by imported helpers retain core exposure naming", async () => {
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const path = await import("node:path");
+  const { loadUwkProcessor } = await import("../index.ts");
+  const dir = mkdtempSync(path.join(import.meta.dirname, "../../.expose-core-"));
+  try {
+    writeFileSync(
+      path.join(dir, "handle.ts"),
+      'import { state } from "@unworklet/core"; export function getHandle() { return state.f32(0); }',
+    );
+    const file = path.join(dir, "processor.uwk.ts");
+    writeFileSync(
+      file,
+      processor(`import { getHandle } from "./handle.ts";
+const exposure = { snapshot: "transient" as const, publish: { rateFps: 30 } };
+const level = getHandle().expose(exposure);`),
+    );
+    const result = await loadUwkProcessor(file);
+    expect(result.worklet.publishSlots.map((slot) => slot.name)).toEqual(["level"]);
+    expect(result.graph).toMatchObject({
+      declarations: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "state",
+          name: "level",
+          snapshot: "transient",
+          publish: { rateFps: 30 },
+        }),
+      ]),
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

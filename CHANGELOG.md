@@ -25,6 +25,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,
   snapshot policies, and scalar publishing. Nameless options retain the binding
   name; option expressions run once and core reads their getters lazily.
+  Custom `expose` methods retain their original options and generated types.
 
 ## 0.5.0 — 2026-10-06
 
