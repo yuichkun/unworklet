@@ -81,7 +81,7 @@ function requireRun(jobText, command, directory) {
   const step = steps(jobText).find((entry) => runText(entry) === command);
   assert(step, `missing exact CI command: ${command}`);
   assert(
-    !/^        (if|continue-on-error):/m.test(step),
+    !/^(?:      - |        )(if|continue-on-error):/m.test(step),
     "owner execution must remain unconditional",
   );
   const cwd = step.match(/^        working-directory: (.*)$/m)?.[1];
@@ -90,6 +90,15 @@ function requireRun(jobText, command, directory) {
 }
 
 export function validateWorkflow(workflow) {
+  for (const [id, name] of Object.entries({
+    check: "Lint + Format + Typecheck (= vp check)",
+    vitest: "Vitest (= node-side + browser SAB + browser postMessage)",
+    "devtools-coverage": "Branch coverage (DevTools UI)",
+    e2e: "Playwright e2e (via dev server)",
+    packaging: "Packaging (publint + arethetypeswrong)",
+  })) {
+    assert.equal(job(workflow, id).match(/^    name: (.*)$/m)?.[1], name, `check identity: ${id}`);
+  }
   const triggers = workflow.match(/^on:\n([\s\S]*?)(?=^\S)/m)?.[1].trim();
   assert.equal(triggers, "push:\n  pull_request:\n  workflow_dispatch:", "test event triggers");
   const coverage = job(workflow, "coverage");

@@ -67,3 +67,28 @@ void test("each package retains the exact V8 98% branch-only denominator policy"
     assert.throws(() => validateCoveragePolicies(omitted), /coverage policy/);
   }
 });
+
+void test("first-key YAML conditions and ignored failures cannot bypass an owner", () => {
+  for (const field of ["if: false", "continue-on-error: true"]) {
+    const changed = workflow.replace(
+      "      - name: Measure package branches and enforce its threshold\n",
+      `      - ${field}\n        name: Measure package branches and enforce its threshold\n`,
+    );
+    assert.notEqual(changed, workflow);
+    assert.throws(() => validateWorkflow(changed), /unconditional/);
+  }
+});
+
+void test("every retained CI check identity remains stable", () => {
+  for (const name of [
+    "Lint + Format + Typecheck (= vp check)",
+    "Vitest (= node-side + browser SAB + browser postMessage)",
+    "Branch coverage (DevTools UI)",
+    "Playwright e2e (via dev server)",
+    "Packaging (publint + arethetypeswrong)",
+  ]) {
+    const changed = workflow.replace(`    name: ${name}\n`, `    name: Renamed ${name}\n`);
+    assert.notEqual(changed, workflow);
+    assert.throws(() => validateWorkflow(changed), /check identity/);
+  }
+});
