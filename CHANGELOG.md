@@ -27,6 +27,11 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   name; option expressions run once and core reads their getters lazily.
   Custom `expose` methods retain their original options and generated types.
 
+- `everyNSamples` preserves its cadence across long-running renders and accepts
+  large positive integer periods without 32-bit truncation or audio-thread traps.
+  Existing stride, nesting, and snapshot behavior is preserved; no migration is
+  required for public snapshots.
+
 ## 0.5.0 — 2026-10-06
 
 Safer processor compilation and testing, more reliable runtime and hot-reload

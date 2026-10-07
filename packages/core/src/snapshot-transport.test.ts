@@ -18,7 +18,8 @@ import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioOutput, state } from "./dsl/declarations.ts";
+import { audioOutput, event, noiseSource, state } from "./dsl/declarations.ts";
+import { f32 } from "./dsl/constructors.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 import { decodeScalar, encodeScalar, type SnapshotSlot } from "./snapshot.ts";
@@ -396,3 +397,78 @@ for (const type of ["i32", "f64"] as const) {
     expect(slots.find((s) => s.name === "samples")!.data).toEqual(new Uint8Array(8));
   });
 }
+
+test("snapshots exclude scheduler counters and restore named values without resetting cadence", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const count = state.named("count").f32(0);
+    return {
+      process: () =>
+        forSample((i, every) => {
+          every(3, () => count.write(count.read().add(1)));
+          every(Number.MAX_VALUE, () => {});
+          out.ch(0).at(i).write(count.read());
+        }),
+    };
+  });
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+  let q = quantum();
+  proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  fireToWorklet(self, { kind: "snapshot-request", requestId: 1 });
+  const slots = lastOfKind(self, "snapshot-response")!["slots"] as SnapshotSlot[];
+  expect(slots.map(({ name }) => name)).toEqual(["count"]);
+  expect(decodeScalar("f32", slots[0]!.data)).toBe(43);
+  fireToWorklet(self, {
+    kind: "restore",
+    requestId: 2,
+    slots: [{ name: "count", kind: "state", type: "f32", data: encodeScalar("f32", 100) }],
+  });
+  expect(lastOfKind(self, "restore-done")!["applied"]).toEqual(["count"]);
+  q = quantum();
+  proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  expect([...q.outputs[0]![0]!]).toEqual(
+    Array.from({ length: 128 }, (_, i) => 100 + Math.floor((i + 2) / 3)),
+  );
+});
+
+test.each([false, true])(
+  "rate-dependent scheduler width preserves worklet MIDI offsets (reverse=%s)",
+  async (reverse) => {
+    const proc = defineProcessor((ctx) => {
+      const input = event.midi({ from: "main", name: "notes", capacity: 16 });
+      const out = audioOutput({ channels: 1, name: "main" });
+      const note = state.f32(0);
+      noiseSource({ seed: 123 });
+      const period = (ctx.sampleRate === 44100) !== reverse ? Number.MAX_VALUE : 3;
+      return {
+        process: () => {
+          input.onEvent("noteOn", ({ note: value }) => note.write(f32(value)));
+          forSample((i, every) => {
+            every(period, () => {});
+            every(5, () => {});
+            out.ch(0).at(i).write(note.read());
+          });
+        },
+      };
+    });
+    const { wasm } = await compile(proc, { sampleRate: 44100 });
+    const self = makeMockSelf();
+    proc.worklet.initialize(self, {
+      processorOptions: {
+        wasm,
+        transport: "postMessage",
+        midiRings: proc.worklet.midiRings,
+      },
+    });
+    fireToWorklet(self, {
+      kind: "midi",
+      ringIndex: 0,
+      item: { status: 0x90, data1: 64, data2: 100, atSample: 0 },
+    });
+    const q = quantum();
+    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+    expect([...q.outputs[0]![0]!]).toEqual(Array<number>(128).fill(64));
+  },
+);

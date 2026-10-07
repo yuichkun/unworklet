@@ -459,18 +459,19 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // Per-call-site counter slots for everyNSamples (§9.1): an i32 4 bytes per
-  // counterId. Collected by recursively walking forSample / everyNSamples /
-  // messageOnReceive bodies. Placing it at the tail keeps totalBytes unchanged
-  // for a graph with no everyNSamples. Zero-initialized memory means counters
-  // start at 0.
+  // Fixed reservations keep transport offsets independent of rate-specific
+  // divisors. Wide counters live after all marshaled regions; the worklet uses
+  // the eager capture's layout, while WASM can be compiled at another rate.
   const everyNSamplesCountersBase = cursor;
   const everyNSamplesCounterSlots: Record<number, number> = {};
+  const wideCounters: { counterId: number; words: number }[] = [];
   const collectEveryNCounters = (nodes: readonly AstNode[]): void => {
     for (const node of nodes) {
       if (node.kind === "everyNSamples") {
         everyNSamplesCounterSlots[node.counterId] = cursor;
         cursor += 4;
+        const words = everyNResetWords(node.divisor, node.stride).length;
+        if (words > 1) wideCounters.push({ counterId: node.counterId, words });
       }
       if (
         node.kind === "forSample" ||
@@ -557,6 +558,10 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  for (const { counterId, words } of wideCounters) {
+    everyNSamplesCounterSlots[counterId] = cursor;
+    cursor += words * 4;
+  }
   const totalBytes = cursor;
 
   // The 4 regions not filled in sub-phase 7.7b all have base = totalBytes
@@ -595,4 +600,27 @@ export function layout(graph: CapturedGraph): Layout {
     },
     totalBytes,
   };
+}
+
+// The call site advances in stride-sized steps, so it fires every N/gcd(N, stride)
+// invocations. BigInt is compile-time only and preserves every accepted number.
+export function everyNResetWords(divisor: number, stride: number): number[] {
+  // Layout runs before the diagnostic error gate; invalid loops still need a
+  // placeholder slot so analysis can report all errors together.
+  if (!Number.isInteger(divisor) || divisor < 1 || !Number.isInteger(stride) || stride < 1) {
+    return [0];
+  }
+  const period = BigInt(divisor);
+  let a = period;
+  let b = BigInt(stride);
+  while (b !== 0n) {
+    [a, b] = [b, a % b];
+  }
+  let remaining = period / a - 1n;
+  const words: number[] = [];
+  do {
+    words.push(Number(remaining & 0xffff_ffffn));
+    remaining >>= 32n;
+  } while (remaining !== 0n);
+  return words;
 }
