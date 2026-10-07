@@ -110,7 +110,9 @@ unworklet is developed with **TDD**. Write comprehensive behavior-based test cas
 - No requirements on line / function / statement coverage — branches only.
 
 The per-package CI command is `vp test run --coverage`, run from each package
-directory with `--maxWorkers=2`. DevTools UI coverage uses one worker. These V8 reports measure the Node-side suites, including
+directory with `--maxWorkers=2`. Lang runs four native file shards and enforces
+the full threshold after native report merge in its independent required gate;
+partial shards cannot satisfy that gate. DevTools UI coverage uses one worker. These V8 reports measure the Node-side suites, including
 runtime helpers in files that also contain type declarations (for example,
 `packages/core/src/compile/ast.ts`). They do not measure browser AudioWorklet
 execution or code running in spawned CLI processes. The core browser projects

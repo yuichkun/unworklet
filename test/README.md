@@ -65,12 +65,13 @@ for the specific assertion and its environment, not just similar test names.
 
 ## Gates and timing
 
-Each `Branch coverage (...)` check is an ordinary dependency-free job. Lang uses
-two native workers on the hosted Ubuntu runner, as do the other packages;
-DevTools uses one. Native Vitest owns collection, failure propagation and the full
-98% threshold. There is no partial-shard threshold or downstream skipped merger
-that can stand in for a completed package gate. Cancellation is not a passing
-coverage result.
+Each `Branch coverage (...)` check starts independently and is normally cancellable.
+Lang executes four native file shards on independent runners, two workers each.
+Its required owner validates current-attempt producer success and complete artifact
+identity before native report merge enforces the full 98% threshold. A partial
+shard or a skipped dependent job cannot substitute for this gate. Other package
+coverage uses two workers and DevTools one. See the
+[lang coverage guard](../scripts/lang-coverage/README.md) for failure and retry semantics.
 
 Timing reports distinguish whole-workflow elapsed time (including queue/setup
 and its slowest required work), individual test time, and summed runner job time.

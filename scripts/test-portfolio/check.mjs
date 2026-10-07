@@ -209,7 +209,7 @@ export async function check(repository) {
     );
   }
   const native = checkoutFiles.filter((file) =>
-    /^scripts\/test-portfolio\/[^/]+\.test\.mjs$/.test(file),
+    /^scripts\/(?:test-portfolio|lang-coverage)\/[^/]+\.test\.mjs$/.test(file),
   );
   return validatePortfolio({ root, ci, coverage, demo, native, files: checkoutFiles });
 }

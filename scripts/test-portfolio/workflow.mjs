@@ -90,6 +90,7 @@ function requireRun(jobText, command, directory) {
 }
 
 export function validateWorkflow(workflow) {
+  validateLangCoverage(workflow);
   for (const [id, name] of Object.entries({
     check: "Lint + Format + Typecheck (= vp check)",
     vitest: "Vitest (= node-side + browser SAB + browser postMessage)",
@@ -111,14 +112,14 @@ export function validateWorkflow(workflow) {
     requireUnconditional(owner);
   }
   assert.match(coverage, /^    name: Branch coverage \(\$\{\{ matrix.package \}\}\)$/m);
-  assert.match(coverage, /^        package: \[core, lang, offline, test, unplugin\]$/m);
+  assert.match(coverage, /^        package: \[core, offline, test, unplugin\]$/m);
   const matrix = coverage
     .split(/^    steps:/m)[0]
     .match(/^      matrix:\n([\s\S]*)/m)?.[1]
     .trim();
   assert.equal(
     matrix,
-    "package: [core, lang, offline, test, unplugin]",
+    "package: [core, offline, test, unplugin]",
     "complete package matrix without filtering",
   );
   assert.match(coverage, /^      fail-fast: false$/m);
@@ -135,7 +136,10 @@ export function validateWorkflow(workflow) {
   requireRun(vitest, "vp test run --config vite.ci.config.ts");
   requireRun(vitest, "vp test run", "examples/demo");
   requireRun(demoBrowser, "vp test run --config vite.browser.config.ts", "examples/demo");
-  requireRun(check, "vp exec node --test scripts/test-portfolio/*.test.mjs");
+  requireRun(
+    check,
+    "vp exec node --test scripts/test-portfolio/*.test.mjs scripts/lang-coverage/*.test.mjs",
+  );
   requireRun(vitest, "vp exec node scripts/test-portfolio/check.mjs");
   assert(
     vitest.indexOf("vp run --filter @unworklet/test build") <
@@ -147,4 +151,67 @@ export function validateWorkflow(workflow) {
       vitest.indexOf("vp test run --config vite.ci.config.ts"),
     "ownership is checked before residual execution",
   );
+}
+
+function validateLangCoverage(workflow) {
+  const shards = job(workflow, "lang-shards");
+  const owner = job(workflow, "lang-coverage");
+  for (const text of [shards, owner]) {
+    requireUnconditional(text);
+    assert.match(
+      text,
+      /^      EXPECTED_HEAD_SHA: \$\{\{ github.event.pull_request.head.sha \|\| github.sha \}\}$/m,
+    );
+    requireRun(text, "vp install --frozen-lockfile");
+    requireRun(text, "vp run build");
+    requireRun(text, "vp test list --filesOnly --json=expected-tests.json", "packages/lang");
+  }
+  assert.match(owner, /^    name: Branch coverage \(lang\)$/m, "required lang check identity");
+  assert.match(shards, /^    name: Lang coverage shard \(\$\{\{ matrix.shard \}\}\/4\)$/m);
+  assert.match(shards, /^    timeout-minutes: 80$/m);
+  assert.match(owner, /^    timeout-minutes: 90$/m);
+  assert.match(shards, /^      fail-fast: false$/m);
+  const matrix = shards
+    .split(/^    env:/m)[0]
+    .match(/^      matrix:\n([\s\S]*)/m)?.[1]
+    .trim();
+  assert.equal(matrix, "shard: [1, 2, 3, 4]", "complete four-shard matrix");
+  assert.match(owner, /^    permissions:\n      actions: read\n      contents: read$/m);
+  const run = requireRun(
+    shards,
+    `/usr/bin/time -v vp test run --coverage --shard=\${{ matrix.shard }}/4 --maxWorkers=2 \\
+  --coverage.thresholds.branches=0 \\
+  --reporter=default --reporter=blob --reporter=json \\
+  --outputFile.blob=coverage-shard/blob.json \\
+  --outputFile.json=coverage-shard/tests.json \\
+  --coverage.reportsDirectory=coverage-shard/coverage \\
+  --coverage.reporter=text --coverage.reporter=json --coverage.reporter=json-summary`,
+    "packages/lang",
+  );
+  assert.match(run, /^          UWK_DISTS_BUILT: "1"$/m);
+  const seal = requireRun(
+    shards,
+    "vp exec node scripts/lang-coverage/verify.mjs record packages/lang/coverage-shard packages/lang/expected-tests.json",
+  );
+  assert.match(seal, /^          COVERAGE_SHARD: \$\{\{ matrix.shard \}\}$/m);
+  requireRun(owner, "vp exec node scripts/lang-coverage/coordinator.mjs");
+  requireRun(
+    owner,
+    "vp exec node scripts/lang-coverage/verify.mjs prepare lang-coverage-inputs packages/lang/expected-tests.json",
+  );
+  requireRun(
+    owner,
+    `vp test run --merge-reports=merge-blobs --coverage \\
+  --reporter=default --reporter=json --outputFile.json=coverage/merged-tests.json \\
+  --coverage.reporter=text --coverage.reporter=html \\
+  --coverage.reporter=json-summary --coverage.reporter=json`,
+    "packages/lang",
+  );
+  requireRun(
+    owner,
+    "vp exec node scripts/lang-coverage/verify.mjs compare lang-coverage-inputs packages/lang/expected-tests.json",
+  );
+  assert(owner.indexOf("coordinator.mjs") < owner.indexOf("verify.mjs prepare"));
+  assert(owner.indexOf("verify.mjs prepare") < owner.indexOf("--merge-reports"));
+  assert(owner.indexOf("--merge-reports") < owner.indexOf("verify.mjs compare"));
 }
