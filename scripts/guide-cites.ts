@@ -111,7 +111,7 @@ export function validateGuideCitations(
   const afterPath =
     /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
   const beforePath =
-    /(?:\bL\d+(?:[-–]L?\d+)?|\blines?\s+`?L?\d+(?:(?:[-–]|\s+to\s+)L?\d+)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
+    /(?:\bL\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?|\blines?\s+`?L?\d+(?:C\d+)?(?:(?:[-–]|\s+to\s+)L?\d+(?:C\d+)?)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
   const inspectProse = (text: string): void => {
     const references = [...text.matchAll(repositoryFile)];
     for (const reference of references) {
@@ -132,7 +132,7 @@ export function validateGuideCitations(
     // establish that context.
     if (references.length > 0) {
       for (const [location] of text.matchAll(
-        /\bat\s+`L\d+(?:-L?\d+)?`(?=\s*(?:[.,;)]|(?:on|in)\b|$))/g,
+        /\bat\s+`L\d+(?:C\d+)?(?:-L?\d+(?:C\d+)?)?`(?=\s*(?:[.,;)]|(?:on|in)\b|$))/g,
       )) {
         errors.push(`numeric source location: ${location}; use a content-anchored [cite:]`);
       }
@@ -162,7 +162,7 @@ export function validateGuideCitations(
       if (token.tokens && token.href.match(repositoryFile)) {
         const label = normalize(linkDestinations(token.tokens).replaceAll("`", ""));
         const location =
-          /\blines?\s+L?\d+(?:\s*[-–]\s*L?\d+|\s+to\s+L?\d+)?\b|(?:^|[\s(])L\d+(?:\s*[-–]\s*L?\d+)?(?=\s*(?:\)|$))/i.exec(
+          /\blines?\s+L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?|\s+to\s+L?\d+(?:C\d+)?)?\b|(?:^|[\s(])L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?(?=\s*(?:\)|$))/i.exec(
             label,
           );
         if (location)

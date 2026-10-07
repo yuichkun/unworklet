@@ -499,6 +499,24 @@ test.each(["L12C4-examples", "L12C4-L18C9-notes"])(
   },
 );
 
+test.each(["L12C4", "L12C4-L18C9", "L12-L18C9", "L12C4-L18"])(
+  "line-and-column coordinates retain source context outside fragments: %s",
+  (coordinate) => {
+    for (const markdown of [
+      `[${coordinate}](${file})`,
+      `[compiler (${coordinate})](${file})`,
+      `[lines ${coordinate}](${file})`,
+      `${coordinate} in \`${file}\``,
+      `lines ${coordinate} in \`${file}\``,
+      `The source is \`${file}\`; see it at \`${coordinate}\`.`,
+    ]) {
+      expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+        "numeric source location",
+      );
+    }
+  },
+);
+
 test.each([
   `[source](${file}) processes 12 lines per block.`,
   `[source](${file}) uses \`L1\` and \`L2\` cache.`,
