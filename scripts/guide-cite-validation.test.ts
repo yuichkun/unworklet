@@ -7,6 +7,39 @@ const anchor = "options.options.skipLibCheck = true;";
 const cite = `[cite: ${file} :: \`${anchor}\`]`;
 const read = (source: string) => (name: string) => (name === file ? source : undefined);
 
+test.each([
+  "```text\n[cite: packages/example.ts :: `placeholder`]\n```",
+  "> ```text\n> [cite: packages/example.ts :: `placeholder`]\n> ```",
+  "- Example\n\n  ```text\n  [cite: packages/example.ts :: `placeholder`]\n  ```",
+  "    [cite: packages/example.ts :: `placeholder`]",
+  "Use ``[cite: packages/example.ts :: `placeholder`]`` as the syntax.",
+  "<!-- [cite: packages/example.ts :: `placeholder`] -->",
+  "Text <!-- [cite: packages/example.ts :: `placeholder`] --> continues.",
+  "```text\n[cite: malformed]\n```",
+])("citation demonstrations and comments do not establish evidence: %s", (markdown) => {
+  const checked: string[] = [];
+  expect(
+    validateGuideCitations(markdown, (file) => {
+      checked.push(file);
+      return undefined;
+    }),
+  ).toEqual([]);
+  expect(checked).toEqual([]);
+});
+
+test("a real citation stays checked alongside demonstrations and comments", () => {
+  const markdown = `${cite}\n\n\`\`\`text\n[cite: packages/example.ts :: \`placeholder\`]\n\`\`\`\n\n<!-- [cite: malformed] -->`;
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+  expect(validateGuideCitations(markdown, read("missing"))).toEqual([
+    `${file}: anchor not found: ${anchor}`,
+  ]);
+});
+
+test("a real citation excerpt can itself contain citation syntax", () => {
+  const excerpt = "[cite: example]";
+  expect(validateGuideCitations(`[cite: ${file} :: \`${excerpt}\`]`, read(excerpt))).toEqual([]);
+});
+
 test("a source insertion or whitespace reflow does not invalidate a content anchor", () => {
   expect(validateGuideCitations(cite, read(anchor))).toEqual([]);
   expect(

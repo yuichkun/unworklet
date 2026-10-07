@@ -14,8 +14,8 @@ function guideReferenceFiles(markdown: string): string[] {
   const prose: string[] = [];
   void marked.walkTokens(marked.lexer(markdown), (token) => {
     if (
-      ["paragraph", "text", "heading", "codespan", "link"].includes(token.type) &&
-      "text" in token
+      (token.type === "text" && !("tokens" in token && token.tokens)) ||
+      (token.type === "codespan" && !token.text.includes("[cite:"))
     ) {
       prose.push(token.text);
     }
@@ -35,6 +35,8 @@ test.each([
   "> ```text\n> packages/lang/src/unworklet-tsc.ts:12\n> ```",
   "- Diagnostic\n\n  ```text\n  packages/lang/src/unworklet-tsc.ts:12\n  ```",
   "    packages/lang/src/unworklet-tsc.ts:12",
+  "Use ``[cite: packages/example.ts :: `placeholder`]`` as the syntax.",
+  "Text <!-- [cite: packages/example.ts :: `placeholder`] --> continues.",
 ])("the evidence backstop excludes fenced and indented diagnostics: %s", (markdown) => {
   expect(guideReferenceFiles(markdown)).toEqual([]);
 });
@@ -115,10 +117,9 @@ test("slot exposure and events render as separate headings and fenced examples",
 test("every explicit guide citation and full repository-file reference resolves to current evidence", () => {
   const guides = readdirSync(GUIDE_DIR).filter((name) => name.endsWith(".md"));
   const errors: string[] = [];
-  let anchors = 0;
+  let references = 0;
   for (const name of guides) {
     const markdown = readFileSync(path.join(GUIDE_DIR, name), "utf8");
-    anchors += [...markdown.matchAll(/\[cite:/g)].length;
     const checked = new Set<string>();
     errors.push(
       ...validateGuideCitations(markdown, (file) => {
@@ -132,9 +133,10 @@ test("every explicit guide citation and full repository-file reference resolves 
     for (const file of guideReferenceFiles(markdown)) {
       expect(checked.has(file), `${name} → unchecked ${file}`).toBe(true);
     }
+    references += checked.size;
   }
   expect(errors).toEqual([]);
-  expect(anchors).toBeGreaterThan(50);
+  expect(references).toBeGreaterThan(50);
 });
 
 test("every sibling guide file the guide sends a reader to exists", () => {

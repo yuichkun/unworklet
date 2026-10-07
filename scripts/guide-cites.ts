@@ -14,8 +14,47 @@ export function validateGuideCitations(
   };
 
   const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
+  const tokens = marked.lexer(markdown);
+  const inlineMarkdown = (tokens: Token[]): string => {
+    let text = "";
+    for (const token of tokens) {
+      if (token.type === "html" || token.type === "code") continue;
+      if (
+        token.type === "codespan" &&
+        token.text.includes("[cite:") &&
+        !/\[cite:\s*[\w./-]+\.[A-Za-z0-9_-]+\s*::\s*$/.test(text)
+      )
+        continue;
+      if (token.type === "link") {
+        text += `[${inlineMarkdown(token.tokens!)}](<${token.href}>)`;
+      } else if ("tokens" in token && token.tokens) {
+        text += inlineMarkdown(token.tokens);
+      } else {
+        text += token.raw;
+      }
+    }
+    return text;
+  };
+  const prose: string[] = [];
+  void marked.walkTokens(tokens, (token) => {
+    if (["paragraph", "heading", "text"].includes(token.type) && "tokens" in token && token.tokens)
+      prose.push(inlineMarkdown(token.tokens));
+    if (token.type === "table") {
+      for (const cell of [...token.header, ...token.rows.flat()]) {
+        prose.push(inlineMarkdown(cell.tokens));
+      }
+    }
+  });
+  if (Object.keys(tokens.links).some((label) => label.startsWith("cite:"))) {
+    errors.push(
+      "citation must not become a Markdown reference definition; omit its trailing colon",
+    );
+  }
+  markdown = prose.join("\n\n");
   let locations = markdown;
+  let citationEnd = 0;
   for (const start of markdown.matchAll(/\[cite:/g)) {
+    if (start.index < citationEnd) continue;
     const citation = /^\[cite:\s*([\w./-]+\.[A-Za-z0-9_-]+)\s*::\s*`([^`]+)`\s*\]/.exec(
       markdown.slice(start.index),
     );
@@ -25,6 +64,7 @@ export function validateGuideCitations(
       );
       continue;
     }
+    citationEnd = start.index + citation[0].length;
     const lineStart = markdown.lastIndexOf("\n", start.index) + 1;
     if (
       /^ {0,3}$/.test(markdown.slice(lineStart, start.index)) &&
