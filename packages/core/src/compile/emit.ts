@@ -17,9 +17,8 @@
  */
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
-import type { Layout } from "./layout.ts";
+import { everyNResetWords, type Layout } from "./layout.ts";
 import { remainderFunction } from "./emit-remainder.ts";
-import { everyNResetWords } from "./every-n.ts";
 import { formatVerifyViolations, verifyRealtimeSafe } from "./verify.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
 
