@@ -1,12 +1,12 @@
 name: Lang gate lifecycle proof
 on:
   push:
-    branches: [validation/lang-gate-lifecycle-145]
+    branches: [validation/lang-gate-lifecycle-145-retired-never-run]
 concurrency:
   group: lang-gate-lifecycle-${{ github.ref }}
   cancel-in-progress: true
 env:
-  PROBE_SCENARIO: cancel-after-merge
+  PROBE_SCENARIO: success
 jobs:
   shards:
     name: Tiny shard ${{ matrix.shard }}
