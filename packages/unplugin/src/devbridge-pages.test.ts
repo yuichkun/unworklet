@@ -320,7 +320,7 @@ test("generated bridge registers on development origins without crypto.randomUUI
   expect(page.send).toHaveBeenCalledTimes(1);
 });
 
-for (const lifecycle of ["disconnect", "pagehide", "HMR"] as const) {
+for (const lifecycle of ["disconnect", "error", "pagehide", "HMR"] as const) {
   test(`generated bridge ${lifecycle} releases held injections on their original ports once`, async () => {
     const page = createPage(await pageBridge());
     const otherSend = vi.fn();
@@ -339,6 +339,7 @@ for (const lifecycle of ["disconnect", "pagehide", "HMR"] as const) {
     page.handles[0]!.node.midi.in = { send: replacement };
     const end = () => {
       if (lifecycle === "disconnect") page.events.get("connection:status")!("disconnected");
+      else if (lifecycle === "error") page.events.get("connection:status")!("error");
       else if (lifecycle === "pagehide") page.windowEvents.get("pagehide")!();
       else page.dispose();
     };
@@ -652,7 +653,7 @@ function sustainConsumer() {
 }
 
 for (const controller of [64, 66, 69]) {
-  for (const lifecycle of ["disconnect", "pagehide", "HMR", "retired input"] as const) {
+  for (const lifecycle of ["disconnect", "error", "pagehide", "HMR", "retired input"] as const) {
     test(`generated bridge ${lifecycle} releases CC${controller} after the key was already released`, async () => {
       const page = createPage(await pageBridge());
       const synth = sustainConsumer();
@@ -668,6 +669,7 @@ for (const controller of [64, 66, 69]) {
       ]);
       expect([...synth.sounding]).toEqual(["0:60"]);
       if (lifecycle === "disconnect") page.events.get("connection:status")!("disconnected");
+      else if (lifecycle === "error") page.events.get("connection:status")!("error");
       else if (lifecycle === "pagehide") page.windowEvents.get("pagehide")!();
       else if (lifecycle === "HMR") page.dispose();
       else {
