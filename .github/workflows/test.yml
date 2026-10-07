@@ -6,7 +6,7 @@ concurrency:
   group: lang-gate-coordinator-${{ github.ref }}
   cancel-in-progress: true
 env:
-  PROBE_SCENARIO: cancel-during-merge
+  PROBE_SCENARIO: cancel-after-merge
 jobs:
   shards:
     name: Tiny shard ${{ matrix.shard }}
