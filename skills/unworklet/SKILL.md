@@ -54,7 +54,7 @@ process(() => {
 });
 ```
 
-Load it (`README.md` quick start; rate gate `packages/core/src/client.ts:350-364`):
+Load it (`README.md` quick start; rate gate [cite: packages/core/src/client.ts :: `contextSampleRate !== bakedSampleRate`]):
 
 ```ts
 import { createNode } from "@unworklet/core";
@@ -65,6 +65,15 @@ const node = await createNode(ctx, stereoGain);
 node.outputs.main.connect(ctx.destination);
 node.params.gain.value = 0.5; // fully-typed AudioParam (name auto-derived from the binding)
 ```
+
+## Reading source references
+
+Source citations pair a repository-relative file with a unique declaration or source
+excerpt after `::`. Search that file for the excerpt; whitespace and line wrapping
+can differ. CI checks that the file exists and the excerpt occurs exactly once, so
+inserting unrelated source lines does not move a reference to different code.
+Whole-file references name the file without an excerpt. The checks locate evidence;
+they do not prove the surrounding behavior claim.
 
 ## Read more (siblings)
 
