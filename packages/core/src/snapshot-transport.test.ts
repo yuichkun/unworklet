@@ -18,7 +18,8 @@ import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioOutput, state } from "./dsl/declarations.ts";
+import { audioOutput, event, noiseSource, state } from "./dsl/declarations.ts";
+import { f32 } from "./dsl/constructors.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 import { decodeScalar, encodeScalar, type SnapshotSlot } from "./snapshot.ts";
@@ -431,3 +432,43 @@ test("snapshots exclude scheduler counters and restore named values without rese
     Array.from({ length: 128 }, (_, i) => 100 + Math.floor((i + 2) / 3)),
   );
 });
+
+test.each([false, true])(
+  "rate-dependent scheduler width preserves worklet MIDI offsets (reverse=%s)",
+  async (reverse) => {
+    const proc = defineProcessor((ctx) => {
+      const input = event.midi({ from: "main", name: "notes", capacity: 16 });
+      const out = audioOutput({ channels: 1, name: "main" });
+      const note = state.f32(0);
+      noiseSource({ seed: 123 });
+      const period = (ctx.sampleRate === 44100) !== reverse ? Number.MAX_VALUE : 3;
+      return {
+        process: () => {
+          input.onEvent("noteOn", ({ note: value }) => note.write(f32(value)));
+          forSample((i, every) => {
+            every(period, () => {});
+            every(5, () => {});
+            out.ch(0).at(i).write(note.read());
+          });
+        },
+      };
+    });
+    const { wasm } = await compile(proc, { sampleRate: 44100 });
+    const self = makeMockSelf();
+    proc.worklet.initialize(self, {
+      processorOptions: {
+        wasm,
+        transport: "postMessage",
+        midiRings: proc.worklet.midiRings,
+      },
+    });
+    fireToWorklet(self, {
+      kind: "midi",
+      ringIndex: 0,
+      item: { status: 0x90, data1: 64, data2: 100, atSample: 0 },
+    });
+    const q = quantum();
+    proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+    expect([...q.outputs[0]![0]!]).toEqual(Array<number>(128).fill(64));
+  },
+);

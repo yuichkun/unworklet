@@ -161,8 +161,8 @@ test("counter storage stays compact and does not overlap adjacent counters or no
   const layout = compiled.memory as unknown as Layout;
   const offsets = Object.values(layout.regions.everyNSamplesCounters.slots);
   const base = offsets[0]!;
-  expect(offsets.map((offset) => offset - base)).toEqual([0, 4, 8, 16, 144]);
-  expect(layout.regions.noiseSources!.base).toBe(base + 148);
+  expect(offsets.map((offset) => offset - base)).toEqual([0, 4, 24, 32, 16]);
+  expect(layout.regions.noiseSources!.base).toBe(base + 20);
   const instance = await compiled.driver.instantiate();
   instance.process();
   instance.process();

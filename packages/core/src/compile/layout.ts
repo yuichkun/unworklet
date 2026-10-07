@@ -459,16 +459,19 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
-  // Countdown words are little-endian and zero-initialized to fire on the first
-  // invocation. Common periods occupy one word; the largest finite number needs
-  // at most 32 words. These internal counters are excluded from snapshots.
+  // Fixed reservations keep transport offsets independent of rate-specific
+  // divisors. Wide counters live after all marshaled regions; the worklet uses
+  // the eager capture's layout, while WASM can be compiled at another rate.
   const everyNSamplesCountersBase = cursor;
   const everyNSamplesCounterSlots: Record<number, number> = {};
+  const wideCounters: { counterId: number; words: number }[] = [];
   const collectEveryNCounters = (nodes: readonly AstNode[]): void => {
     for (const node of nodes) {
       if (node.kind === "everyNSamples") {
         everyNSamplesCounterSlots[node.counterId] = cursor;
-        cursor += everyNResetWords(node.divisor, node.stride).length * 4;
+        cursor += 4;
+        const words = everyNResetWords(node.divisor, node.stride).length;
+        if (words > 1) wideCounters.push({ counterId: node.counterId, words });
       }
       if (
         node.kind === "forSample" ||
@@ -555,6 +558,10 @@ export function layout(graph: CapturedGraph): Layout {
     }
   }
 
+  for (const { counterId, words } of wideCounters) {
+    everyNSamplesCounterSlots[counterId] = cursor;
+    cursor += words * 4;
+  }
   const totalBytes = cursor;
 
   // The 4 regions not filled in sub-phase 7.7b all have base = totalBytes
