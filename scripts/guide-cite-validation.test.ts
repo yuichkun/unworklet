@@ -517,6 +517,22 @@ test.each(["L12C4", "L12C4-L18C9", "L12-L18C9", "L12C4-L18"])(
   },
 );
 
+test.each(["L12", "L12-L18", "L12C4", "L12C4-L18C9"])(
+  "worded coordinates after source paths allow the L prefix: %s",
+  (coordinate) => {
+    for (const markdown of [
+      `${file} at line ${coordinate}`,
+      `[source](${file}) at lines ${coordinate}`,
+      `\`${file}\` (lines \`${coordinate}\`)`,
+      `[source](${file}?plain=1#definition) at lines \`${coordinate}\``,
+    ]) {
+      expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+        "numeric source location",
+      );
+    }
+  },
+);
+
 test.each([
   `[source](${file}) processes 12 lines per block.`,
   `[source](${file}) uses \`L1\` and \`L2\` cache.`,
