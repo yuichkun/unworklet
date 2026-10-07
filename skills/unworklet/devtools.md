@@ -86,8 +86,10 @@ Reloading or reconnecting creates a fresh, temporary page session. A disconnecte
 selection stays empty until you explicitly choose a live page; it does not switch
 the keyboard to another tab. Page data and pending injections are removed on page
 exit or when the server observes its connection closing. Background tabs are not
-expired for being idle. Session cleanup sends matching `noteOff` events for
-held DevTools injections through their original local input ports, even if the
+expired for being idle. Restoring a page from the back-forward cache starts a
+fresh session; if the DevTools client was not available before navigation,
+restoration restarts its bounded discovery attempts. Session cleanup sends
+matching `noteOff` events for held DevTools injections through their original local input ports, even if the
 DevTools connection has closed. Cleanup also sends value 0 for holding pedals
 engaged by DevTools on those same ports/channels, including when the keys were
 already released. This covers Sustain (CC64), Sostenuto (CC66), and Hold 2 (CC69),

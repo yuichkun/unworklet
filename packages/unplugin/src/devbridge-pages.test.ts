@@ -21,7 +21,13 @@ type TestTransport = {
   states: Map<string, ReturnType<typeof createSharedState<any>>>;
 };
 
-function createPage(js: string, failOpen = false, rejectOpen = false, transport?: TestTransport) {
+function createPage(
+  js: string,
+  failOpen = false,
+  rejectOpen = false,
+  transport?: TestTransport,
+  clientReady = true,
+) {
   const timers = new Map<number, () => unknown>();
   const calls: Array<{ name: string; arg: any }> = [];
   const sharedKeys: string[] = [];
@@ -115,6 +121,8 @@ function createPage(js: string, failOpen = false, rejectOpen = false, transport?
     clearTimeout: (ms: number) => timers.delete(ms),
     console,
   });
+  const getClient = context.getDevToolsClientContext;
+  context.getDevToolsClientContext = () => (clientReady ? getClient() : undefined);
   runInContext(js, context);
   return {
     calls,
@@ -125,6 +133,9 @@ function createPage(js: string, failOpen = false, rejectOpen = false, transport?
     handles,
     events,
     windowEvents,
+    setClientReady: () => {
+      clientReady = true;
+    },
     dispose: () => dispose!(),
     inject: (commands: unknown[]) => injectQueue("unworklet:page-midi-inject", commands),
     injectRaw: (commands: unknown[]) => injectQueue("unworklet:midi-inject", commands),
@@ -134,6 +145,28 @@ function createPage(js: string, failOpen = false, rejectOpen = false, transport?
 const flush = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 };
+
+test.each([0, 40])("restored page resumes client discovery after %i retries", async (retries) => {
+  const page = createPage(await pageBridge(), false, false, undefined, false);
+  for (let i = 0; i < retries; i++) {
+    const discover = page.timers.get(100)!;
+    page.timers.delete(100);
+    discover();
+  }
+  page.windowEvents.get("pagehide")!();
+  expect(page.timers.has(100)).toBe(false);
+  expect(page.calls).toEqual([]);
+  page.windowEvents.get("pageshow")!();
+  expect(page.timers.has(100)).toBe(true);
+  page.setClientReady();
+  page.timers.get(100)!();
+  await flush();
+  expect(page.calls.filter((call) => call.name.endsWith("page-open"))).toHaveLength(1);
+  await page.timers.get(150)!();
+  await flush();
+  page.inject([injectCommand(pageId(page))]);
+  expect(page.send).toHaveBeenCalledWith(note);
+});
 
 test("generated bridge isolates two pages whose first MIDI nodes are both n0", async () => {
   const js = await pageBridge();

@@ -1640,7 +1640,15 @@ AN.disconnect = function (target) {
 
 const offNodes = onDevNodesChanged(push);
 const onPageHide = () => { hidden = true; endSession(); };
-const onPageShow = () => { hidden = false; void startSession(); };
+const onPageShow = () => {
+  hidden = false;
+  if (client) void startSession();
+  else {
+    clearTimeout(clientTimer);
+    polls = 0;
+    ensureClient();
+  }
+};
 addEventListener("pagehide", onPageHide);
 addEventListener("pageshow", onPageShow);
 if (import.meta.hot) import.meta.hot.dispose(() => {
