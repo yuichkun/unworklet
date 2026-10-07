@@ -76,6 +76,30 @@ Run the dev server → open the Vite DevTools overlay → pick the **unworklet**
 `/` redirects to `/audio-graph`. (`README.md` L271-274;
 `packages/unplugin/devtools-ui/src/router.ts`)
 
+Use **Application page** in the sidebar to select an app tab. All four panels
+show only that page's nodes; the MIDI keyboard targets that page and its selected
+input. Identical node IDs in other tabs cannot receive the injection. Switching
+pages releases held notes on the original page and clears the view's selection,
+scalar histories, and signal frames.
+
+Reloading or reconnecting creates a fresh, temporary page session. A disconnected
+selection stays empty until you explicitly choose a live page; it does not switch
+the keyboard to another tab. Page data and pending injections are removed on page
+exit or when the server observes its connection closing. Background tabs are not
+expired for being idle. Restoring a page from the back-forward cache starts a
+fresh session; if the DevTools client was not available before navigation,
+restoration restarts its bounded discovery attempts. Session cleanup sends
+matching `noteOff` events for held DevTools injections through their original local input ports, even if the
+DevTools connection has closed. Cleanup also sends value 0 for holding pedals
+engaged by DevTools on those same ports/channels, including when the keys were
+already released. This covers Sustain (CC64), Sostenuto (CC66), and Hold 2 (CC69),
+using the [MIDI on/off threshold](https://midi.org/midi-1-0-control-change-messages)
+of 64. Changing the MIDI target/channel or closing its view sends the same
+releases for holding pedals engaged by that view. `MidiPortSurface.send()` has no delivery
+acknowledgment; this cleanup uses the same bounded transport as other MIDI sends.
+The 0.4 host does not automatically reopen a closed DevTools socket. Reload the
+application page to reconnect; its replacement session must be selected explicitly.
+
 Live state renders signed buffers around a zero baseline. For `i64` buffers,
 List preserves exact decimal integers; Bar chart and Waveform are labeled
 approximate because their numeric projections can round values beyond 2^53.
@@ -84,6 +108,43 @@ Large buffers remain stride-downsampled, including their exact List elements.
 MIDI keys are released on their original target port and channel when routing
 changes or the MIDI view closes. Panic releases held keys and sends All Notes
 Off on every channel of the selected input.
+
+## Shared-state and RPC consumers
+
+Custom TypeScript integrations opt into the client RPC and shared-state types
+with `import type {} from "@unworklet/unplugin/devtools"`. This type-only entry
+augments the DevTools client's interfaces. Ordinary plugin consumers do not
+need this entry. `devframe` is an explicit dependency
+so the opt-in declarations resolve under strict package-manager layouts. The
+plugin adds no runtime import of it, and the DevTools kit remains optional.
+
+The built-in panels read `unworklet:page-graph`, `unworklet:page-state`,
+`unworklet:page-signals`, and `unworklet:page-midi`. Each contains
+`{ pages: { [pageId]: snapshot } }`; `unworklet:pages` lists live page metadata.
+Page telemetry uses the matching `anonymous:unworklet:page-*-update` RPCs with
+`{ pageId, data }`. The server accepts a page's updates only from its registered
+connection.
+
+The unscoped `unworklet:graph`, `unworklet:state`, `unworklet:signals`, and
+`unworklet:midi` keys contain raw snapshots of their published types. Each is the
+most recently received snapshot for that kind, which can come from any page.
+The matching `anonymous:unworklet:*-update` RPCs accept those raw snapshots;
+they do not change page-scoped state.
+
+Trusted clients inject with `unworklet:page-midi-inject` and
+`{ pageId, nodeId, port, event }`. Commands appear in `unworklet:page-midi-inject`
+with their page ID and sequence number. The unscoped `unworklet:midi-inject` RPC
+accepts `{ nodeId, port, event }` and publishes it to the unscoped queue with the
+`DevMidiInjectCommand` shape, even when no application pages are connected. It
+is consumed independently by each bridge, including retained commands when a
+fresh bridge first subscribes. Each bridge advances its unscoped cursor before
+looking up the local node and port, so a command whose local target is missing
+at consumption time is dropped. That cursor persists across reconnects in the
+same bridge instance; a fresh application page starts at zero.
+These calls have no selected page and can reach multiple tabs or fresh pages;
+use the explicit page-targeted RPC whenever isolation is required. The built-in
+panel uses only that explicit path. Scoped commands never enter the unscoped
+queue, and fresh page sessions reject commands targeting an earlier page.
 
 ## The 0.4 pin
 
@@ -105,7 +166,7 @@ to the 0.4 major, marked optional (`packages/unplugin/package.json`):
   an unplugin peer.
 - **Why coupled to the major:** live panels push to the dev server through an
   anonymous RPC scope whose prefix is coupled to the DevTools major
-  (`devframe:anonymous:` on the current line). A mismatched-major host silently
+  (`anonymous:` on the current line). A mismatched-major host silently
   rejects every push (DTK0013) and panels stay empty.
   (`packages/unplugin/src/index.ts` L708-719)
 - **Must be a direct dep:** the panel's page bridge imports

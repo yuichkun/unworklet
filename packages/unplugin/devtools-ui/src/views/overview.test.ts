@@ -66,6 +66,7 @@ const mount = (component: Parameters<typeof createApp>[0]) => {
   roots.push(root);
   const app = createApp(component);
   apps.push(app);
+  app.provide("unworklet:page-id", ref("page-a"));
   app.mount(root);
   return root;
 };
@@ -73,12 +74,20 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve();
   await nextTick();
 };
+const forPage = <T extends object>(shared: ReturnType<typeof createSharedState<T>>) => ({
+  value: () => ({ pages: { "page-a": shared.value() } }),
+  on: (_event: string, callback: (value: unknown) => void) =>
+    shared.on("updated", (value) => callback({ pages: { "page-a": value } })),
+});
 
 test("graph selection shows topology, declared ports and typed state without inventing data", async () => {
   const graph = createSharedState<LiveGraph>({ initialValue: { nodes: [], edges: [] } });
   const state = createSharedState<LiveState>({ initialValue: { nodes: [] } });
   vi.mocked(getPanelRpc).mockResolvedValue({
-    sharedState: { get: async (key: string) => (key === "unworklet:graph" ? graph : state) },
+    sharedState: {
+      get: async (key: string) =>
+        key === "unworklet:page-graph" ? forPage(graph) : forPage(state),
+    },
   } as unknown as PanelRpc);
   const root = mount(AudioGraphView);
   await flush();

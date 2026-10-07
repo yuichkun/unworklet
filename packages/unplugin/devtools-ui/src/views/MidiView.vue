@@ -68,10 +68,27 @@ const program = ref(0);
 const pressure = ref(0);
 
 const pressedKeys = ref(new Map<number, { port: string; channel: number }>());
+const NOTE_HOLD_CONTROLLERS = new Set([64, 66, 69]);
+const holdOrigins = new Map<number, { port: string; channel: number; controller: number }>();
 
 const sendEvent = (event: MidiEventInput): void => {
-  if (!targetPortKey.value) return;
-  injectMidi(targetPortKey.value, event);
+  const port = targetPortKey.value;
+  if (!port) return;
+  injectMidi(port, event);
+  if (event.type === "cc") {
+    if (NOTE_HOLD_CONTROLLERS.has(event.controller)) {
+      if (event.value >= 64)
+        holdOrigins.set(event.controller, {
+          port,
+          channel: event.channel,
+          controller: event.controller,
+        });
+      else holdOrigins.delete(event.controller);
+    } else if (event.controller === 121) {
+      // Routing changes clear these origins before another port or channel can send.
+      holdOrigins.clear();
+    }
+  }
 };
 
 // ──────────────────────────────────────────────────────────────────
@@ -153,10 +170,17 @@ const releaseNotes = (): void => {
   physicalKeyToMidi.clear();
 };
 
-watch([targetPortKey, channel], releaseNotes, { flush: "sync" });
+const releaseRoute = (): void => {
+  releaseNotes();
+  for (const { port, channel, controller } of holdOrigins.values())
+    injectMidi(port, { type: "cc", channel, controller, value: 0 });
+  holdOrigins.clear();
+};
+
+watch([targetPortKey, channel], releaseRoute, { flush: "sync" });
 
 const panic = (): void => {
-  releaseNotes();
+  releaseRoute();
   for (let ch = 0; ch < 16; ch++) {
     sendEvent({ type: "cc", channel: ch, controller: 123, value: 0 });
   }
@@ -254,7 +278,7 @@ onMounted(() => {
   window.addEventListener("keyup", onWindowKeyUp);
 });
 onBeforeUnmount(() => {
-  releaseNotes();
+  releaseRoute();
   window.removeEventListener("keydown", onWindowKeyDown);
   window.removeEventListener("keyup", onWindowKeyUp);
 });

@@ -1873,20 +1873,31 @@ test("devtools.setup wires the graph + live-state + signals shared states and th
   // the setup before asserting the RPC side effects.
   await setup!(ctx);
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:graph");
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:page-graph");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:state");
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:page-state");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:signals");
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:page-signals");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:midi");
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:page-midi");
   expect(ctx.rpc.__sharedStateGets).toContain("unworklet:midi-inject");
+  expect(ctx.rpc.__sharedStateGets).toContain("unworklet:page-midi-inject");
   const registered = ctx.rpc.__registerCalls.map((f) => (f as { name: string }).name);
   // The four page-pushed methods MUST carry the anonymous-RPC prefix, or the
   // untrusted page client is rejected with DTK0013 and the 33ms signals poll floods
   // the console (blocking the panel). MIDI inject is panel-driven (trusted), so it
   // stays unscoped — locking this distinction is the regression guard.
   expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:graph-update`);
+  expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:page-graph-update`);
   expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:state-update`);
+  expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:page-state-update`);
   expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:signals-update`);
+  expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:page-signals-update`);
   expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:midi-update`);
+  expect(registered).toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:page-midi-update`);
   expect(registered).toContain("unworklet:midi-inject");
+  expect(registered).toContain("unworklet:page-midi-inject");
+  expect(registered).not.toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:page-midi-inject`);
   expect(registered).not.toContain(`${ANONYMOUS_RPC_PREFIX}unworklet:midi-inject`);
 });
 
@@ -1895,10 +1906,10 @@ test("the devbridge page-script pushes via anonymous-scoped RPC names (the page 
   // The page pushes graph / state / signals / MIDI here; each must call the
   // anonymous-scoped name registered server-side, or the untrusted page client
   // is rejected with DTK0013 and the 33ms signals poll floods the console.
-  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:signals-update"`);
-  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:graph-update"`);
-  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:state-update"`);
-  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:midi-update"`);
+  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:page-signals-update"`);
+  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:page-graph-update"`);
+  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:page-state-update"`);
+  expect(js).toContain(`"${ANONYMOUS_RPC_PREFIX}unworklet:page-midi-update"`);
   // No unscoped page push slipped through.
   expect(js).not.toMatch(/rpcCall\("unworklet:/);
 });
