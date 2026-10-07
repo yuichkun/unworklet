@@ -51,8 +51,7 @@ jobs:
         id: producers
         env:
           PRODUCER_RESULT: ${{ needs.shards.result }}
-          WAS_CANCELLED: ${{ cancelled() }}
-        run: test "$WAS_CANCELLED" = false && test "$PRODUCER_RESULT" = success
+        run: test "$PRODUCER_RESULT" = success
       - name: Download current-run witnesses
         id: download
         uses: actions/download-artifact@v4
@@ -92,7 +91,6 @@ jobs:
       - name: Final fail-closed verdict
         if: ${{ always() }}
         env:
-          WAS_CANCELLED: ${{ cancelled() }}
           PRODUCER_RESULT: ${{ needs.shards.result }}
           PRODUCERS: ${{ steps.producers.outcome }}
           DOWNLOAD: ${{ steps.download.outcome }}
@@ -102,9 +100,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf 'cancelled=%s producers=%s download=%s inventory=%s merge=%s after_merge=%s\n' "$WAS_CANCELLED" "$PRODUCER_RESULT" "$DOWNLOAD" "$INVENTORY" "$MERGE" "$AFTER_MERGE"
-          test "$WAS_CANCELLED" = false
+          printf 'producers=%s download=%s inventory=%s merge=%s after_merge=%s\n' "$PRODUCER_RESULT" "$DOWNLOAD" "$INVENTORY" "$MERGE" "$AFTER_MERGE"
           for result in "$PRODUCER_RESULT" "$PRODUCERS" "$DOWNLOAD" "$INVENTORY" "$MERGE" "$AFTER_MERGE"; do
             test "$result" = success
           done
           test -f merge-success
+      - name: Reject cancellation after all validation steps
+        if: ${{ always() && cancelled() }}
+        run: |
+          echo 'A cancelled workflow cannot publish a successful required gate.'
+          exit 1
