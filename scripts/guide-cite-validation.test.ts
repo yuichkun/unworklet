@@ -553,6 +553,7 @@ test.each([
   `https://example.com/${file}`,
   `https://github.com/another/repo/blob/main/${file}`,
   `https://example.com/?url=https://github.com/yuichkun/unworklet/blob/main/${file}`,
+  `https://github.com/yuichkun/unworklet/blob/../../../another/repo/${file}`,
 ])("unmarked local path prefixes are validated before reading: %s", (source) => {
   for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](${source})`]) {
     const checked: string[] = [];
@@ -602,6 +603,8 @@ test.each([
   `[source](https://github.com/yuichkun/unworklet/blob/main/${file})`,
   `See https://github.com/yuichkun/unworklet/blob/main/${file}`,
   `[source](https://raw.githubusercontent.com/yuichkun/unworklet/main/${file})`,
+  `[source](https://github.com/yuichkun/unworklet/blob/feature/citations/${file})`,
+  `[source](https://raw.githubusercontent.com/yuichkun/unworklet/feature/citations/${file})`,
 ])("local path and label checks preserve remote links and cache prose: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
 });
@@ -639,6 +642,18 @@ test.each([`${file}/not-a-file`, `${file}\\not-a-file`, "README.md/not-a-file"])
     ).toMatch(/missing file|canonical repository-relative path/);
   },
 );
+
+test.each([
+  `${file} at line #12`,
+  `${file} at lines #12-34`,
+  `line #12 in ${file}`,
+  `[compiler line #12](${file})`,
+  `[compiler lines #12-34](${file})`,
+])("hash-prefixed worded coordinates are rejected: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+});
 
 test.each(["on", "in"])("worded source coordinates accept %s line", (preposition) => {
   for (const markdown of [

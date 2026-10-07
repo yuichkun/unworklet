@@ -116,20 +116,31 @@ export function validateGuideCitations(
   const repositoryFile =
     /\b(?:packages|examples|scripts)[/\\][\w./\\-]*\.[A-Za-z0-9_-]+(?:[/\\][\w./\\-]*)*|(?<![\w.-])README\.md(?![\w-]|\.[\w])(?:[/\\][\w./\\-]*)*/g;
   const afterPath =
-    /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*[([]?\s*(?:(?:at|see|on|in)\s+)?[([]?\s*`?(?:L|lines?\s+`?L?|:)`?\d+)/i;
+    /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*[([]?\s*(?:(?:at|see|on|in)\s+)?[([]?\s*`?(?:L|lines?\s+`?#?L?|:)`?\d+)/i;
   const beforePath =
-    /(?:\bL\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?|\blines?\s+`?L?\d+(?:C\d+)?(?:(?:[-–]|\s+to\s+)L?\d+(?:C\d+)?)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
+    /(?:\bL\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?|\blines?\s+`?#?L?\d+(?:C\d+)?(?:(?:[-–]|\s+to\s+)L?\d+(?:C\d+)?)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
+  const isRepositoryUrlPrefix = (prefix: string): boolean => {
+    const candidate = prefix.replace(/^[<([]/, "");
+    if (!/^https?:\/\//i.test(candidate)) return false;
+    try {
+      const url = new URL(candidate);
+      if (url.username || url.password || url.search || url.hash) return false;
+      return (
+        (url.host === "github.com" &&
+          /^\/yuichkun\/unworklet\/(?:blob|raw)\/.+\/$/i.test(url.pathname)) ||
+        (url.host === "raw.githubusercontent.com" &&
+          /^\/yuichkun\/unworklet\/.+\/$/i.test(url.pathname))
+      );
+    } catch {
+      return false;
+    }
+  };
   const inspectProse = (text: string): void => {
     const references = [...text.matchAll(repositoryFile)];
     for (const reference of references) {
       const file = reference[0];
       const prefix = /[^\s`]*[/\\]$/.exec(text.slice(0, reference.index))?.[0];
-      if (
-        prefix &&
-        !/^[<([]?https?:\/\/(?:github\.com\/yuichkun\/unworklet\/(?:blob|raw)\/[^/?#\s]+|raw\.githubusercontent\.com\/yuichkun\/unworklet\/[^/?#\s]+)\/$/i.test(
-          prefix,
-        )
-      ) {
+      if (prefix && !isRepositoryUrlPrefix(prefix)) {
         errors.push(`${prefix + file}: expected a canonical repository-relative path`);
         continue;
       }
@@ -183,7 +194,7 @@ export function validateGuideCitations(
           "cache",
         );
         const location =
-          /(?:^|[\s(]):\s*L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b|\bat\s+L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b|\blines?\s+L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?|\s+to\s+L?\d+(?:C\d+)?)?\b/i.exec(
+          /(?:^|[\s(]):\s*L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b|\bat\s+L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b|\blines?\s+#?L?\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?|\s+to\s+L?\d+(?:C\d+)?)?\b/i.exec(
             label,
           ) ?? /(?:^|[\s(])L\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?\b/i.exec(withoutCacheTerms);
         if (location)
