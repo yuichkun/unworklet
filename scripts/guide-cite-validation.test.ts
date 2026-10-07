@@ -20,6 +20,7 @@ test.each([
   "Syntax: <code>[cite: packages/example.ts :: `placeholder`]</code>.",
   "<script>const example = '[cite: packages/example.ts :: `placeholder`]';</script>",
   "<style>/* [cite: packages/example.ts :: `placeholder`] */</style>",
+  "<template>[cite: packages/example.ts :: `placeholder`]</template>",
   "```text\n[cite: malformed]\n```",
 ])("citation demonstrations and comments do not establish evidence: %s", (markdown) => {
   const checked: string[] = [];
@@ -473,6 +474,28 @@ test.each([".", "!", "?", ":"])(
         ),
       ).toContain("numeric source location");
     }
+  },
+);
+
+test.each(["L12C4", "L12C4-L18C9", "L12-L18C9", "L12C4-L18"])(
+  "line-and-column fragments are numeric source coordinates: %s",
+  (fragment) => {
+    for (const markdown of [
+      `[source](${file}#${fragment})`,
+      `\`${file}?plain=1#${fragment}\``,
+      `See ${file}#${fragment}.`,
+    ]) {
+      expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+        "numeric source location",
+      );
+    }
+  },
+);
+
+test.each(["L12C4-examples", "L12C4-L18C9-notes"])(
+  "line-and-column prefixes can belong to semantic fragments: %s",
+  (fragment) => {
+    expect(validateGuideCitations(`[source](${file}#${fragment})`, read(anchor))).toEqual([]);
   },
 );
 

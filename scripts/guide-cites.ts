@@ -16,7 +16,7 @@ export function validateGuideCitations(
   const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
   const htmlProse = (text: string): string =>
     text.replace(
-      /(\[cite:\s*[\w./-]+\.[A-Za-z0-9_-]+\s*::\s*`[^`]+`\s*\])|<!--[\s\S]*?(?:-->|$)|<(pre|code|script|style)\b[^>]*>[\s\S]*?(?:<\/\2\s*>|$)/gi,
+      /(\[cite:\s*[\w./-]+\.[A-Za-z0-9_-]+\s*::\s*`[^`]+`\s*\])|<!--[\s\S]*?(?:-->|$)|<(pre|code|script|style|template)\b[^>]*>[\s\S]*?(?:<\/\2\s*>|$)/gi,
       (match, citation: string | undefined) => (citation ? match : ""),
     );
   const tokens = marked.lexer(markdown);
@@ -32,7 +32,7 @@ export function validateGuideCitations(
       }
       if (token.type === "code") continue;
       if (token.type === "html") {
-        htmlCodeTag = /^<(pre|code|script|style)\b[^>]*>$/i.exec(token.raw)?.[1];
+        htmlCodeTag = /^<(pre|code|script|style|template)\b[^>]*>$/i.exec(token.raw)?.[1];
         text += htmlProse(token.raw);
         continue;
       }
@@ -109,7 +109,7 @@ export function validateGuideCitations(
   const repositoryFile =
     /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g;
   const afterPath =
-    /^`?(?:#L?\d+(?:[-–]L?\d+)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
+    /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
   const beforePath =
     /(?:\bL\d+(?:[-–]L?\d+)?|\blines?\s+`?L?\d+(?:(?:[-–]|\s+to\s+)L?\d+)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
   const inspectProse = (text: string): void => {

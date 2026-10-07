@@ -13,7 +13,7 @@ const GUIDE_DIR = path.join(REPO, "skills/unworklet");
 function guideReferenceFiles(markdown: string): string[] {
   const locations = markdown
     .replace(/(\[cite:\s*[\w./-]+\.[A-Za-z0-9_-]+\s*::\s*)`[^`]+`(\s*\])/g, "$1`excerpt`$2")
-    .replace(/<(pre|code|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "");
+    .replace(/<(pre|code|script|style|template)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "");
   const prose: string[] = [];
   void marked.walkTokens(marked.lexer(locations), (token) => {
     if (
@@ -27,7 +27,7 @@ function guideReferenceFiles(markdown: string): string[] {
       prose.push(
         token.raw
           .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
-          .replace(/<(pre|code|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ""),
+          .replace(/<(pre|code|script|style|template)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ""),
       );
   });
   return prose.flatMap((text) =>
@@ -54,6 +54,7 @@ test.each([
   "Use ``[cite: packages/example.ts :: `placeholder`]`` as the syntax.",
   "Text <!-- [cite: packages/example.ts :: `placeholder`] --> continues.",
   "<pre><code>[cite: packages/example.ts :: `placeholder`]</code></pre>",
+  "<template>[cite: packages/example.ts :: `placeholder`]</template>",
   "Syntax: <code>[cite: packages/example.ts :: `placeholder`]</code>.",
   "<!-- [cite: packages/example.ts :: `placeholder`]",
 ])("the evidence backstop excludes fenced and indented diagnostics: %s", (markdown) => {
