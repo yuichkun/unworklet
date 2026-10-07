@@ -51,7 +51,7 @@ export function validateGuideCitations(
   const repositoryFile =
     /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g;
   const afterPath =
-    /^`?(?:[#:]\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
+    /^`?(?:#L?\d+(?:[-–]L?\d+)?(?=$|[\s`)\]>"',;])|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
   const beforePath =
     /(?:\bL\d+(?:[-–]L?\d+)?|\blines?\s+`?L?\d+(?:(?:[-–]|\s+to\s+)L?\d+)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
   const inspectProse = (text: string): void => {
@@ -59,7 +59,10 @@ export function validateGuideCitations(
     for (const reference of references) {
       const file = reference[0];
       sourceFor(file);
-      const after = afterPath.exec(text.slice(reference.index + file.length));
+      const suffix = text
+        .slice(reference.index + file.length)
+        .replace(/^\?[^#\s`<>()[\]"']*(?=#)/, "");
+      const after = afterPath.exec(suffix);
       const before = beforePath.exec(text.slice(0, reference.index));
       const location = after?.[0] ?? before?.[0];
       if (location) {
@@ -98,7 +101,7 @@ export function validateGuideCitations(
       if ("tokens" in token && token.tokens) inspectProse(linkDestinations(token.tokens));
     }
     if (token.type === "link") {
-      inspectProse(token.href.replace(/\?[^#]*/, ""));
+      inspectProse(token.href);
       if (token.tokens && token.href.match(repositoryFile)) {
         const label = normalize(linkDestinations(token.tokens).replaceAll("`", ""));
         const location =

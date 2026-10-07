@@ -342,6 +342,41 @@ test.each([
   );
 });
 
+test.each(
+  proseContainers.flatMap(([name, render]) =>
+    [
+      `${file}?plain=1#L12`,
+      `\`${file}?plain=1#L12-L34\``,
+      `\`https://github.com/yuichkun/unworklet/blob/main/${file}?plain=1#128\``,
+    ].map((content) => [name, render(content)]),
+  ),
+)("query-bearing numeric references are rejected in every prose form: %s", (_, markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+});
+
+test.each(
+  ["L1-cache-behavior", "128-sample-blocks", "L12-L34-examples", "128.samples"].flatMap(
+    (fragment) => [
+      `[source](${file}#${fragment})`,
+      `[source](${file}?plain=1#${fragment})`,
+      `\`${file}?plain=1#${fragment}\``,
+      `See ${file}#${fragment}`,
+    ],
+  ),
+)("complete semantic fragments remain valid: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
+test.each([
+  `\`\`\`text\n${file}?plain=1#L12\n\`\`\``,
+  "`src/check.uwk.ts?plain=1#L12`",
+  `\`${file}?example=L12\``,
+])("query inspection retains code and consumer controls: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
 test.each([
   `[source](${file}) processes 12 lines per block.`,
   `[source](${file}) uses \`L1\` and \`L2\` cache.`,
