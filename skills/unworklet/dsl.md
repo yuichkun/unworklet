@@ -885,6 +885,14 @@ saved element type and byte length to match the destination declaration; incompa
 slots are skipped. This also applies to offline restore. Use a migration to convert
 values when changing a slot's type.
 
+Live restore validates slots before setting accepted native AudioParam values and
+committing persistent state. Scheduled automation and modulation connections remain
+active; restoring saved scalar values does not rewind an automation timeline.
+Overlapping restores and intervening snapshot or DevTools captures retain their
+request order. Suspended captures still use the parameter settings from invocation.
+A failure after native parameter assignment can leave those assignments in effect;
+restore does not provide transactional rollback.
+
 ### `inspect(blob)`
 
 Pure, non-realtime blob decode — needs no `AudioContext` or live node.
