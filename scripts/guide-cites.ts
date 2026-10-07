@@ -7,7 +7,10 @@ export function validateGuideCitations(
   const errors: string[] = [];
   const sources = new Map<string, string | undefined>();
   const sourceFor = (file: string): string | undefined => {
-    if (file.split("/").some((part) => part === "" || part === "." || part === "..")) {
+    if (
+      file.includes("\\") ||
+      file.split("/").some((part) => part === "" || part === "." || part === "..")
+    ) {
       errors.push(`${file}: expected a canonical repository-relative path`);
       return undefined;
     }
@@ -111,7 +114,7 @@ export function validateGuideCitations(
   // The same path grammar establishes both file existence and numeric-location
   // intent. Bare application filenames and orphan line labels are not evidence.
   const repositoryFile =
-    /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|\bREADME\.md\b/g;
+    /\b(?:packages|examples|scripts)[/\\][\w./\\-]*\.[A-Za-z0-9_-]+|\bREADME\.md\b/g;
   const afterPath =
     /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*[([]?\s*(?:(?:at|see|on|in)\s+)?[([]?\s*`?(?:L|lines?\s+`?L?|:)`?\d+)/i;
   const beforePath =

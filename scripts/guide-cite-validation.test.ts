@@ -548,6 +548,8 @@ test.each([
   "./README.md",
   "/checkout/README.md",
   "C:\\work\\README.md",
+  `C:\\work\\unworklet\\${file.replaceAll("/", "\\")}`,
+  file.replaceAll("/", "\\"),
 ])("unmarked local path prefixes are validated before reading: %s", (source) => {
   for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](${source})`]) {
     const checked: string[] = [];
