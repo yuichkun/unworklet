@@ -156,12 +156,14 @@ test("event: dispose clears all subscribers and stops further firing", async () 
   expect(calls.length).toBe(beforeDispose);
 });
 
-test("event: render completes normally with no subscribers", async () => {
+test("event: audio passes through unchanged without any subscriber", async () => {
   const { ctx, source } = buildContext(4);
   const node = await createNode(ctx, eventEmitter);
   source.connect(node.inputs["main"]!);
   node.outputs["main"]!.connect(ctx.destination);
   source.start();
-  await ctx.startRendering();
+  const rendered = await ctx.startRendering();
+  expect(rendered.numberOfChannels).toBe(1);
+  expect(rendered.getChannelData(0)).toEqual(new Float32Array(512).fill(0.7));
   node.dispose();
 });
