@@ -15,9 +15,10 @@ export function validateGuideCitations(
 
   const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
   const htmlProse = (text: string): string =>
-    text
-      .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
-      .replace(/<(pre|code|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "");
+    text.replace(
+      /(\[cite:\s*[\w./-]+\.[A-Za-z0-9_-]+\s*::\s*`[^`]+`\s*\])|<!--[\s\S]*?(?:-->|$)|<(pre|code|script|style)\b[^>]*>[\s\S]*?(?:<\/\2\s*>|$)/gi,
+      (match, citation: string | undefined) => (citation ? match : ""),
+    );
   const tokens = marked.lexer(markdown);
   const inlineMarkdown = (tokens: Token[]): string => {
     let text = "";

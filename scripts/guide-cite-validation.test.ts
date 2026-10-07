@@ -66,6 +66,15 @@ test("visible HTML whole-file evidence reaches the source reader", () => {
   expect(validateGuideCitations(`<div>${file}#L1-cache-behavior</div>`, read(anchor))).toEqual([]);
 });
 
+test("HTML syntax inside a real citation excerpt remains source text", () => {
+  const excerpt = 'const html = "<code><!-- example -->";';
+  const markdown = `<div>[cite: ${file} :: \`${excerpt}\`]</div>`;
+  expect(validateGuideCitations(markdown, read(excerpt))).toEqual([]);
+  expect(validateGuideCitations(markdown, read("missing"))).toEqual([
+    `${file}: anchor not found: ${excerpt}`,
+  ]);
+});
+
 test("a source insertion or whitespace reflow does not invalidate a content anchor", () => {
   expect(validateGuideCitations(cite, read(anchor))).toEqual([]);
   expect(
