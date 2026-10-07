@@ -610,6 +610,26 @@ test.each(["archive-README.md", "docs.README.md", "README.md.backup", "README.md
   },
 );
 
+test("an embedded repository URL cannot exempt an unrelated destination", () => {
+  const source = `https://example.com/(https://github.com/yuichkun/unworklet/blob/main/${file}`;
+  for (const markdown of [`See ${source}`, `See \`${source}\``, `[source](<${source}>)`]) {
+    expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+      "canonical repository-relative path",
+    );
+  }
+});
+
+test.each([`${file}/not-a-file`, `${file}\\not-a-file`, "README.md/not-a-file"])(
+  "complete evidence paths cannot resolve through an existing file prefix: %s",
+  (source) => {
+    expect(
+      validateGuideCitations(`See \`${source}\`.`, (path) =>
+        path === file || path === "README.md" ? anchor : undefined,
+      ).join("\n"),
+    ).toMatch(/missing file|canonical repository-relative path/);
+  },
+);
+
 test.each(["on", "in"])("worded source coordinates accept %s line", (preposition) => {
   for (const markdown of [
     `${file} ${preposition} line L12`,
