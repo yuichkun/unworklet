@@ -1,204 +1,110 @@
-name: Test
-
+name: Lang gate lifecycle proof
 on:
   push:
-  pull_request:
-  workflow_dispatch:
-
+    branches: [validation/lang-gate-lifecycle-145]
+concurrency:
+  group: lang-gate-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  PROBE_SCENARIO: success
 jobs:
-  check:
-    name: Lint + Format + Typecheck (= vp check)
+  shards:
+    name: Tiny shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version: "24"
-          cache: true
-      - run: vp install
-      - run: vp check
-      - name: Verify test portfolio ownership
-        run: vp exec node --test scripts/test-portfolio/*.test.mjs
-
-  vitest:
-    name: Vitest (= node-side + browser SAB + browser postMessage)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version: "24"
-          cache: true
-      - run: vp install
-      - name: Build packages in dependency order (avoid cycles; unplugin → core → lang → offline → test; vp run -r fails on cycle detection)
-        run: |
-          vp run --filter @unworklet/unplugin build
-          vp run --filter @unworklet/core build
-          vp run --filter @unworklet/lang build
-          vp run --filter @unworklet/offline build
-          vp run --filter @unworklet/test build
-      - name: Verify complete test ownership
-        run: vp exec node scripts/test-portfolio/check.mjs
-      - name: Install playwright chromium (for browser e2e projects)
-        working-directory: examples/demo
-        run: vp exec playwright install --with-deps chromium
-      - name: Run browser, integration and repository invariants
-        run: vp test run --config vite.ci.config.ts
-      - name: Run the demo as a standalone consumer app
-        working-directory: examples/demo
-        run: vp test run
-
-  coverage:
-    name: Branch coverage (${{ matrix.package }})
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.package == 'lang' && 90 || 45 }}
+    timeout-minutes: 2
     strategy:
       fail-fast: false
       matrix:
-        package: [core, lang, offline, test, unplugin]
+        shard: [1, 2, 3, 4]
     steps:
-      - uses: actions/checkout@v4
-      - uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version: "24"
-          cache: true
-      - run: vp install
-      - run: vp run build
-      - name: Record runner resources
-        run: |
-          nproc
-          lscpu | grep -E 'Architecture:|Model name:|CPU MHz:'
-          grep -E 'MemTotal|MemAvailable' /proc/meminfo
-          cat /proc/self/cgroup
-          grep ' - cgroup2 ' /proc/self/mountinfo || true
-          group="/sys/fs/cgroup$(awk -F: '$1 == "0" { print $3 }' /proc/self/cgroup)"
-          while [ -d "$group" ]; do
-            echo "cgroup: $group"
-            for field in cpu.max cpuset.cpus.effective memory.max memory.current memory.peak memory.events; do
-              printf '%s: ' "$field"
-              cat "$group/$field" 2>/dev/null || echo unavailable
-            done
-            [ "$group" = /sys/fs/cgroup ] && break
-            group="$(dirname "$group")"
-          done
-      - name: Measure package branches and enforce its threshold
-        working-directory: packages/${{ matrix.package }}
+      - name: Produce shard witness
+        shell: bash
         env:
-          UWK_DISTS_BUILT: "1"
+          SLOT: ${{ matrix.shard }}
         run: |
-          /usr/bin/time -v vp test run --coverage --maxWorkers=2 \
-            --reporter=default --reporter=json --outputFile.json=coverage/tests.json \
-            --coverage.reporter=text --coverage.reporter=html \
-            --coverage.reporter=json-summary --coverage.reporter=json
-      - name: Record peak runner memory
-        if: always()
-        run: |
-          grep -E 'MemTotal|MemAvailable' /proc/meminfo
-          group="/sys/fs/cgroup$(awk -F: '$1 == "0" { print $3 }' /proc/self/cgroup)"
-          if [ ! -d "$group" ]; then echo "Process cgroup memory accounting unavailable"; fi
-          while [ -d "$group" ]; do
-            echo "cgroup: $group"
-            for field in memory.current memory.peak memory.events; do
-              printf '%s: ' "$field"
-              cat "$group/$field" 2>/dev/null || echo unavailable
-            done
-            [ "$group" = /sys/fs/cgroup ] && break
-            group="$(dirname "$group")"
-          done
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-${{ matrix.package }}
-          path: packages/${{ matrix.package }}/coverage
-
-  devtools-coverage:
-    name: Branch coverage (DevTools UI)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version: "24"
-          cache: true
-      - run: vp install
-      - run: vp run build
-      - name: Measure all DevTools TypeScript and Vue branches
-        working-directory: packages/unplugin/devtools-ui
-        run: vp test run --coverage --maxWorkers=1
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: coverage-devtools-ui
-          path: packages/unplugin/devtools-ui/coverage
-
-  e2e:
-    name: Playwright e2e (via dev server)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version: "24"
-          cache: true
-      - run: vp install
-      - name: Build packages in dependency order (avoid cycles; unplugin → core → lang → offline → test; vp run -r fails on cycle detection)
-        run: |
-          vp run --filter @unworklet/unplugin build
-          vp run --filter @unworklet/core build
-          vp run --filter @unworklet/lang build
-          vp run --filter @unworklet/offline build
-          vp run --filter @unworklet/test build
-      - name: Install playwright chromium
-        working-directory: examples/demo
-        run: vp exec playwright install --with-deps chromium
-      - name: Run the demo runtime-compile browser e2e
-        working-directory: examples/demo
-        run: vp test run --config vite.browser.config.ts
-      - name: Retain playground layout screenshots
-        if: always()
+          set -euo pipefail
+          if [[ "$SLOT" == 4 ]]; then
+            case "$PROBE_SCENARIO" in
+              failure) exit 1 ;;
+              timeout) sleep 180 ;;
+              cancel-before-owner) echo 'WAITING_BEFORE_OWNER'; sleep 90 ;;
+            esac
+          fi
+          mkdir witness
+          printf '%s\n' "$GITHUB_SHA $GITHUB_RUN_ID $GITHUB_RUN_ATTEMPT $SLOT" > "witness/$SLOT.txt"
+      - name: Upload shard witness
+        if: ${{ success() && !(env.PROBE_SCENARIO == 'missing-artifact' && matrix.shard == 4) }}
         uses: actions/upload-artifact@v4
         with:
-          name: playground-layout-chromium
-          path: examples/demo/src/**/__screenshots__/**
-          if-no-files-found: warn
-          retention-days: 14
-
-  packaging:
-    name: Packaging (publint + arethetypeswrong)
+          name: gate-proof-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: witness
+          if-no-files-found: error
+          retention-days: 1
+  coverage:
+    name: Branch coverage (lang)
     runs-on: ubuntu-latest
+    timeout-minutes: 4
+    needs: shards
+    if: ${{ always() }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: voidzero-dev/setup-vp@v1
+      - name: Require successful producers
+        id: producers
+        env:
+          PRODUCER_RESULT: ${{ needs.shards.result }}
+          WAS_CANCELLED: ${{ cancelled() }}
+        run: test "$WAS_CANCELLED" = false && test "$PRODUCER_RESULT" = success
+      - name: Download current-run witnesses
+        id: download
+        uses: actions/download-artifact@v4
         with:
-          node-version: "24"
-          cache: true
-      - run: vp install
-      - name: Build packages in dependency order (unplugin → core → lang → offline → test)
+          pattern: gate-proof-${{ github.run_id }}-${{ github.run_attempt }}-*
+          merge-multiple: true
+          path: witnesses
+      - name: Validate exact artifact inventory
+        id: inventory
+        shell: bash
         run: |
-          vp run --filter @unworklet/unplugin build
-          vp run --filter @unworklet/core build
-          vp run --filter @unworklet/lang build
-          vp run --filter @unworklet/offline build
-          vp run --filter @unworklet/test build
-      - name: publint + attw on each packed tarball
-        # Verifies the PUBLISHED surface (publishConfig.exports → dist/.d.mts/.mjs),
-        # the path source tests never exercise (they resolve the `development` →
-        # src condition). `fallback-condition` is the known TS50762 quirk for an
-        # ESM-only package carrying both a dev (src) and publish (dist) export
-        # condition — types still resolve, so it is ignored; real breaks (a missing
-        # dist target, a broken .d.mts, an unresolved subpath) still fail the gate.
-        run: |
-          set -e
-          packed_dir="$(mktemp -d)"
-          for p in core lang offline test unplugin; do
-            echo "::group::@unworklet/$p"
-            # lang's ./typescript-plugin export is a tsserver plugin (referenced by
-            # name in tsconfig `plugins`, never type-imported), so it intentionally
-            # ships no .d.ts → ignore attw's untyped-resolution for lang only.
-            ignore=(fallback-condition)
-            if [ "$p" = "lang" ]; then ignore=(fallback-condition untyped-resolution); fi
-            ( cd "packages/$p" && vp pm pack --pack-destination "$packed_dir" )
-            vp dlx -- publint "$packed_dir/unworklet-$p-"*.tgz --strict
-            vp dlx -- @arethetypeswrong/cli "$packed_dir/unworklet-$p-"*.tgz --profile esm-only --ignore-rules "${ignore[@]}"
-            echo "::endgroup::"
+          set -euo pipefail
+          test "$(find witnesses -type f | wc -l)" -eq 4
+          for slot in 1 2 3 4; do
+            test "$(cat "witnesses/$slot.txt")" = "$GITHUB_SHA $GITHUB_RUN_ID $GITHUB_RUN_ATTEMPT $slot"
           done
+      - name: Simulate native merge
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PROBE_SCENARIO" == cancel-during-merge ]]; then
+            echo 'WAITING_DURING_MERGE'
+            sleep 90
+          fi
+          printf 'native merge completed\n' > merge-success
+      - name: Pause after merge for cancellation proof
+        id: after_merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f merge-success
+          if [[ "$PROBE_SCENARIO" == cancel-after-merge ]]; then
+            echo 'WAITING_AFTER_MERGE'
+            sleep 90
+          fi
+      - name: Final fail-closed verdict
+        if: ${{ always() }}
+        env:
+          WAS_CANCELLED: ${{ cancelled() }}
+          PRODUCER_RESULT: ${{ needs.shards.result }}
+          PRODUCERS: ${{ steps.producers.outcome }}
+          DOWNLOAD: ${{ steps.download.outcome }}
+          INVENTORY: ${{ steps.inventory.outcome }}
+          MERGE: ${{ steps.merge.outcome }}
+          AFTER_MERGE: ${{ steps.after_merge.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'cancelled=%s producers=%s download=%s inventory=%s merge=%s after_merge=%s\n' "$WAS_CANCELLED" "$PRODUCER_RESULT" "$DOWNLOAD" "$INVENTORY" "$MERGE" "$AFTER_MERGE"
+          test "$WAS_CANCELLED" = false
+          for result in "$PRODUCER_RESULT" "$PRODUCERS" "$DOWNLOAD" "$INVENTORY" "$MERGE" "$AFTER_MERGE"; do
+            test "$result" = success
+          done
+          test -f merge-success

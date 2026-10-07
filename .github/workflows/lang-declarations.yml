@@ -2,6 +2,7 @@ name: Lang declaration compatibility
 
 on:
   push:
+    branches-ignore: [validation/lang-gate-lifecycle-145]
   pull_request:
   workflow_dispatch:
 
