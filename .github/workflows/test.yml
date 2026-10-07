@@ -3,7 +3,7 @@ on:
   push:
     branches: [validation/lang-gate-coordinator-145]
 concurrency:
-  group: lang-gate-coordinator-${{ github.ref }}
+  group: lang-gate-coordinator-blocker-${{ github.run_id }}
   cancel-in-progress: true
 env:
   PROBE_SCENARIO: success
@@ -44,10 +44,15 @@ jobs:
     name: Branch coverage (lang)
     runs-on: ubuntu-latest
     timeout-minutes: 4
+    concurrency:
+      group: lang-coordinator-owner-queue-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       actions: read
       contents: read
     steps:
+      - name: Hold validation-only owner queue lock
+        run: sleep 120
       - name: Wait for exact current-attempt producers
         id: producers
         env:
