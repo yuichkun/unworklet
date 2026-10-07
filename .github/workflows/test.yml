@@ -1,7 +1,7 @@
 name: Lang coordinator lifecycle proof
 on:
   push:
-    branches: [validation/lang-gate-coordinator-145]
+    branches: [validation/lang-gate-coordinator-145-retired-never-run]
 concurrency:
   group: lang-gate-coordinator-${{ github.ref }}
   cancel-in-progress: true
