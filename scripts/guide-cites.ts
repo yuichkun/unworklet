@@ -120,9 +120,7 @@ export function validateGuideCitations(
     const references = [...text.matchAll(repositoryFile)];
     for (const reference of references) {
       const file = reference[0];
-      const prefix = /(?:^|[\s`(<])([^\s`<>()\[\]"']*\/)$/.exec(
-        text.slice(0, reference.index),
-      )?.[1];
+      const prefix = /(?:^|[\s`(<])([^\s`<>()[\]"']*\/)$/.exec(text.slice(0, reference.index))?.[1];
       if (prefix && !/^https?:\/\//i.test(prefix)) {
         errors.push(`${prefix + file}: expected a canonical repository-relative path`);
         continue;
