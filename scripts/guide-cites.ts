@@ -118,7 +118,7 @@ export function validateGuideCitations(
   const afterPath =
     /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*[([]?\s*(?:(?:at|see|on|in)\s+)?[([]?\s*`?(?:L|lines?\s+`?#?L?|:)`?\d+)/i;
   const beforePath =
-    /(?:\bL\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?|\blines?\s+`?#?L?\d+(?:C\d+)?(?:(?:[-–]|\s+to\s+)#?L?\d+(?:C\d+)?)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
+    /(?:\bL\d+(?:C\d+)?(?:\s*[-–]\s*L?\d+(?:C\d+)?)?|\blines?\s+#?L?\d+(?:C\d+)?(?:(?:\s*[-–]\s*|\s+to\s+)#?L?\d+(?:C\d+)?)?)\s+(?:in|of|from|at)\s+$/i;
   const isRepositoryUrlPrefix = (prefix: string): boolean => {
     const candidate = prefix.replace(/^[<([]/, "");
     if (!/^https?:\/\//i.test(candidate)) return false;
@@ -147,7 +147,7 @@ export function validateGuideCitations(
       sourceFor(file);
       const suffix = text.slice(reference.index + file.length).replace(/^\?[^#\s`]*(?=#)/, "");
       const after = afterPath.exec(suffix);
-      const before = beforePath.exec(text.slice(0, reference.index));
+      const before = beforePath.exec(text.slice(0, reference.index).replaceAll("`", ""));
       const location = after?.[0] ?? before?.[0];
       if (location) {
         errors.push(

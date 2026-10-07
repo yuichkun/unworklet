@@ -649,6 +649,11 @@ test.each([
   `line #12 in ${file}`,
   `lines #12-#34 in ${file}`,
   `lines #12 to #34 in ${file}`,
+  `lines #12 - #34 in ${file}`,
+  `lines #12 – #34 in ${file}`,
+  `L12 - L34 in ${file}`,
+  `lines \`#12\` - \`#34\` in \`${file}\``,
+  `\`L12\` – \`L34\` in \`${file}\``,
   `[compiler line #12](${file})`,
   `[compiler lines #12-34](${file})`,
 ])("hash-prefixed worded coordinates are rejected: %s", (markdown) => {
