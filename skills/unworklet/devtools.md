@@ -105,6 +105,8 @@ List preserves exact decimal integers; Bar chart and Waveform are labeled
 approximate because their numeric projections can round values beyond 2^53.
 Large buffers remain stride-downsampled, including their exact List elements.
 
+Mouse leave/up releases only mouse-held notes. When the mouse and PC keyboard
+hold the same note, it stays on until both inputs release it.
 MIDI keys are released on their original target port and channel when routing
 changes or the MIDI view closes. Panic releases held keys and sends All Notes
 Off on every channel of the selected input.

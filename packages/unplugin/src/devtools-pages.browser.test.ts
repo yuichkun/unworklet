@@ -304,6 +304,8 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
         .count(),
     ).toBe(0);
     await panel.keyboard.down("h");
+    // Leaving a hovered piano key must not release the note held by the PC keyboard.
+    await panel.mouse.move(0, 0);
     await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 2");
     for (const controller of [66, 69])
       await injectEvent(reloadedId, input(reloadedId)!.nodeId, {

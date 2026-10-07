@@ -113,11 +113,16 @@ const triggerNoteOff = (midiNote: number): void => {
   });
 };
 
-const onKeyDown = (midiNote: number): void => triggerNoteOn(midiNote, velocity.value);
-const onKeyUp = (midiNote: number): void => triggerNoteOff(midiNote);
-const onKeyLeave = (midiNote: number): void => {
-  if (pressedKeys.value.has(midiNote)) triggerNoteOff(midiNote);
+const mouseHeldNotes = new Set<number>();
+const onKeyDown = (midiNote: number): void => {
+  mouseHeldNotes.add(midiNote);
+  triggerNoteOn(midiNote, velocity.value);
 };
+const onKeyUp = (midiNote: number): void => {
+  if (!mouseHeldNotes.delete(midiNote)) return;
+  if (![...physicalKeyToMidi.values()].includes(midiNote)) triggerNoteOff(midiNote);
+};
+const onKeyLeave = onKeyUp;
 
 // ──────────────────────────────────────────────────────────────────
 // Continuous controllers — auto-send on slider input (no Send button).
@@ -168,6 +173,7 @@ const sendProgramChange = (): void => {
 const releaseNotes = (): void => {
   for (const note of pressedKeys.value.keys()) triggerNoteOff(note);
   physicalKeyToMidi.clear();
+  mouseHeldNotes.clear();
 };
 
 const releaseRoute = (): void => {
@@ -270,7 +276,7 @@ const onWindowKeyUp = (event: KeyboardEvent): void => {
   const note = physicalKeyToMidi.get(key);
   if (note === undefined) return;
   physicalKeyToMidi.delete(key);
-  triggerNoteOff(note);
+  if (!mouseHeldNotes.has(note)) triggerNoteOff(note);
 };
 
 onMounted(() => {
