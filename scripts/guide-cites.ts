@@ -59,9 +59,7 @@ export function validateGuideCitations(
     for (const reference of references) {
       const file = reference[0];
       sourceFor(file);
-      const suffix = text
-        .slice(reference.index + file.length)
-        .replace(/^\?[^#\s`<>()[\]"']*(?=#)/, "");
+      const suffix = text.slice(reference.index + file.length).replace(/^\?[^#\s`]*(?=#)/, "");
       const after = afterPath.exec(suffix);
       const before = beforePath.exec(text.slice(0, reference.index));
       const location = after?.[0] ?? before?.[0];

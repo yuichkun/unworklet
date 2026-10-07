@@ -369,6 +369,24 @@ test.each(
   expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
 });
 
+test.each(
+  ["view[mode]=raw", "view=(raw)", "view='raw'", 'view="raw"'].flatMap((query) =>
+    proseContainers.map(([name, render]) => [name, render(`\`${file}?${query}#L12-L34\``)]),
+  ),
+)("query punctuation cannot hide numeric fragments in %s", (_, markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+});
+
+test.each([
+  `\`${file}?view[mode]=(raw)#L1-cache-behavior\``,
+  `\`${file}?view=(raw)\` is an example. The identifier is #L12.`,
+  `${file}?view=raw is an example. The identifier is #L12.`,
+])("query normalization stays inside its source reference: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
 test.each([
   `\`\`\`text\n${file}?plain=1#L12\n\`\`\``,
   "`src/check.uwk.ts?plain=1#L12`",
