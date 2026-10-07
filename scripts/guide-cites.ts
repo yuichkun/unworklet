@@ -14,11 +14,27 @@ export function validateGuideCitations(
   };
 
   const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
+  const htmlProse = (text: string): string =>
+    text
+      .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
+      .replace(/<(pre|code|script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "");
   const tokens = marked.lexer(markdown);
   const inlineMarkdown = (tokens: Token[]): string => {
     let text = "";
+    let htmlCodeTag: string | undefined;
     for (const token of tokens) {
-      if (token.type === "html" || token.type === "code") continue;
+      if (htmlCodeTag) {
+        if (token.type === "html" && new RegExp(`^</${htmlCodeTag}\\s*>$`, "i").test(token.raw)) {
+          htmlCodeTag = undefined;
+        }
+        continue;
+      }
+      if (token.type === "code") continue;
+      if (token.type === "html") {
+        htmlCodeTag = /^<(pre|code|script|style)\b[^>]*>$/i.exec(token.raw)?.[1];
+        text += htmlProse(token.raw);
+        continue;
+      }
       if (
         token.type === "codespan" &&
         token.text.includes("[cite:") &&
@@ -37,6 +53,7 @@ export function validateGuideCitations(
   };
   const prose: string[] = [];
   void marked.walkTokens(tokens, (token) => {
+    if (token.type === "html") prose.push(htmlProse(token.raw));
     if (["paragraph", "heading", "text"].includes(token.type) && "tokens" in token && token.tokens)
       prose.push(inlineMarkdown(token.tokens));
     if (token.type === "table") {
@@ -91,7 +108,7 @@ export function validateGuideCitations(
   const repositoryFile =
     /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g;
   const afterPath =
-    /^`?(?:#L?\d+(?:[-–]L?\d+)?(?=$|[\s`)\]>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
+    /^`?(?:#L?\d+(?:[-–]L?\d+)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
   const beforePath =
     /(?:\bL\d+(?:[-–]L?\d+)?|\blines?\s+`?L?\d+(?:(?:[-–]|\s+to\s+)L?\d+)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
   const inspectProse = (text: string): void => {
@@ -129,6 +146,7 @@ export function validateGuideCitations(
       })
       .join("");
   void marked.walkTokens(marked.lexer(locations), (token) => {
+    if (token.type === "html") inspectProse(token.raw);
     // Inline code is how the guide spells paths, but fenced examples/output
     // are not source-reference prose. Links carry evidence in their destination.
     if (

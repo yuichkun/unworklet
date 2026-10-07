@@ -15,6 +15,11 @@ test.each([
   "Use ``[cite: packages/example.ts :: `placeholder`]`` as the syntax.",
   "<!-- [cite: packages/example.ts :: `placeholder`] -->",
   "Text <!-- [cite: packages/example.ts :: `placeholder`] --> continues.",
+  "<!-- [cite: packages/example.ts :: `placeholder`]",
+  "<pre><code>[cite: packages/example.ts :: `placeholder`]</code></pre>",
+  "Syntax: <code>[cite: packages/example.ts :: `placeholder`]</code>.",
+  "<script>const example = '[cite: packages/example.ts :: `placeholder`]';</script>",
+  "<style>/* [cite: packages/example.ts :: `placeholder`] */</style>",
   "```text\n[cite: malformed]\n```",
 ])("citation demonstrations and comments do not establish evidence: %s", (markdown) => {
   const checked: string[] = [];
@@ -38,6 +43,27 @@ test("a real citation stays checked alongside demonstrations and comments", () =
 test("a real citation excerpt can itself contain citation syntax", () => {
   const excerpt = "[cite: example]";
   expect(validateGuideCitations(`[cite: ${file} :: \`${excerpt}\`]`, read(excerpt))).toEqual([]);
+});
+
+test.each([
+  `<div>${cite}</div>`,
+  `<details>\n<summary>Evidence</summary>\n${cite}\n</details>`,
+  `<div><!-- [cite: packages/example.ts :: \`placeholder\`] -->${cite}</div>`,
+])("visible HTML citations still validate their source: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+  expect(validateGuideCitations(markdown, read("missing"))).toEqual([
+    `${file}: anchor not found: ${anchor}`,
+  ]);
+});
+
+test("visible HTML whole-file evidence reaches the source reader", () => {
+  expect(validateGuideCitations(`<div>${file}</div>`, () => undefined)).toEqual([
+    `${file}: missing file`,
+  ]);
+  expect(validateGuideCitations(`<div>${file}#L12</div>`, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+  expect(validateGuideCitations(`<div>${file}#L1-cache-behavior</div>`, read(anchor))).toEqual([]);
 });
 
 test("a source insertion or whitespace reflow does not invalidate a content anchor", () => {
