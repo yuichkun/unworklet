@@ -121,6 +121,36 @@ const proseContainers: [string, (content: string) => string][] = [
   ["table header", (content) => `| ${content} |\n| --- |\n| setting |`],
   ["table body", (content) => `| Evidence |\n| --- |\n| ${content} |`],
 ];
+test.each(
+  proseContainers.flatMap(([name, render]) =>
+    [
+      `[source](${file}?plain=1#L12)`,
+      `[source](https://github.com/yuichkun/unworklet/blob/main/${file}?plain=1#L12-L34)`,
+      `[source][compiler]`,
+      `[compiler (L12-L34)](${file})`,
+      `[compiler at L12](${file})`,
+      `[(L12)](${file})`,
+      `[compiler **(L12–L34)**](${file}?plain=1#definition)`,
+    ].map((content) => [name, `${render(content)}\n\n[compiler]: ${file}?plain=1#L12-L34`]),
+  ),
+)("source links retain numeric fragments and contextual labels in %s", (_, markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
+    "numeric source location",
+  );
+});
+
+test.each([
+  `[source](${file}?plain=1#definition)`,
+  `[L1 cache](${file}?plain=1#definition)`,
+  `[compiler cache[L1]](${file})`,
+  `[source](${file}?example=L12#definition)`,
+  "[compiler (L12-L34)](src/check.uwk.ts?plain=1#L12)",
+  "[source](https://example.com/manual?plain=1#L12)",
+  `\`\`\`text\n[source](${file}?plain=1#L12)\n\`\`\``,
+])("non-location fragments and non-source links remain valid: %s", (markdown) => {
+  expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
+});
+
 test.each([
   `[line 12](${file})`,
   `[lines 12-34](${file})`,

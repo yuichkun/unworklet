@@ -98,11 +98,11 @@ export function validateGuideCitations(
       if ("tokens" in token && token.tokens) inspectProse(linkDestinations(token.tokens));
     }
     if (token.type === "link") {
-      inspectProse(token.href);
+      inspectProse(token.href.replace(/\?[^#]*/, ""));
       if (token.tokens && token.href.match(repositoryFile)) {
         const label = normalize(linkDestinations(token.tokens).replaceAll("`", ""));
         const location =
-          /\blines?\s+L?\d+(?:\s*[-–]\s*L?\d+|\s+to\s+L?\d+)?\b|^L\d+(?:\s*[-–]\s*L?\d+)?$/i.exec(
+          /\blines?\s+L?\d+(?:\s*[-–]\s*L?\d+|\s+to\s+L?\d+)?\b|(?:^|[\s(])L\d+(?:\s*[-–]\s*L?\d+)?(?=\s*(?:\)|$))/i.exec(
             label,
           );
         if (location)
