@@ -395,6 +395,19 @@ test.each([
   expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
 });
 
+test.each([".", "!", "?", ":"])(
+  "numeric fragments remain locations before sentence punctuation %s",
+  (punctuation) => {
+    for (const fragment of ["L12", "L12-L34", "128"]) {
+      expect(
+        validateGuideCitations(`See ${file}?plain=1#${fragment}${punctuation}`, read(anchor)).join(
+          "\n",
+        ),
+      ).toContain("numeric source location");
+    }
+  },
+);
+
 test.each([
   `[source](${file}) processes 12 lines per block.`,
   `[source](${file}) uses \`L1\` and \`L2\` cache.`,

@@ -51,7 +51,7 @@ export function validateGuideCitations(
   const repositoryFile =
     /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g;
   const afterPath =
-    /^`?(?:#L?\d+(?:[-–]L?\d+)?(?=$|[\s`)\]>"',;])|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
+    /^`?(?:#L?\d+(?:[-–]L?\d+)?(?=$|[\s`)\]>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*(?:(?:at|see)\s+)?[([]?\s*`?(?:L|lines?\s+|:)`?\d+)/i;
   const beforePath =
     /(?:\bL\d+(?:[-–]L?\d+)?|\blines?\s+`?L?\d+(?:(?:[-–]|\s+to\s+)L?\d+)?`?)`?\s+(?:in|of|from|at)\s+`?$/i;
   const inspectProse = (text: string): void => {

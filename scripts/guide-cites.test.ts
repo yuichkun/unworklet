@@ -10,6 +10,43 @@ import { validateGuideCitations } from "./guide-cites.ts";
 const REPO = path.resolve(import.meta.dirname, "..");
 const GUIDE_DIR = path.join(REPO, "skills/unworklet");
 
+function guideReferenceFiles(markdown: string): string[] {
+  const prose: string[] = [];
+  void marked.walkTokens(marked.lexer(markdown), (token) => {
+    if (
+      ["paragraph", "text", "heading", "codespan", "link"].includes(token.type) &&
+      "text" in token
+    ) {
+      prose.push(token.text);
+    }
+    if (token.type === "link") prose.push(token.href);
+  });
+  return prose.flatMap((text) =>
+    [
+      ...text.matchAll(
+        /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g,
+      ),
+    ].map(([file]) => file),
+  );
+}
+
+test.each([
+  "```text\npackages/lang/src/unworklet-tsc.ts:12\n```",
+  "> ```text\n> packages/lang/src/unworklet-tsc.ts:12\n> ```",
+  "- Diagnostic\n\n  ```text\n  packages/lang/src/unworklet-tsc.ts:12\n  ```",
+  "    packages/lang/src/unworklet-tsc.ts:12",
+])("the evidence backstop excludes fenced and indented diagnostics: %s", (markdown) => {
+  expect(guideReferenceFiles(markdown)).toEqual([]);
+});
+
+test.each([
+  "See `packages/lang/src/unworklet-tsc.ts`.",
+  "[source](packages/lang/src/unworklet-tsc.ts)",
+  "| Source |\n| --- |\n| [compiler][source] |\n\n[source]: packages/lang/src/unworklet-tsc.ts",
+])("the evidence backstop retains prose and linked repository paths: %s", (markdown) => {
+  expect(guideReferenceFiles(markdown)).toContain("packages/lang/src/unworklet-tsc.ts");
+});
+
 test("the authoring-form reference identifies both successful client import cases", () => {
   const guide = readFileSync(path.join(GUIDE_DIR, "setup.md"), "utf8");
   const section = guide.split("## 4. File conventions")[1]!.split("## 5.")[0]!;
@@ -92,9 +129,7 @@ test("every explicit guide citation and full repository-file reference resolves 
     );
     // All repository evidence in the shipped guides must reach the reader;
     // Markdown tokenization must not silently drop a migrated reference.
-    for (const [file] of markdown.matchAll(
-      /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g,
-    )) {
+    for (const file of guideReferenceFiles(markdown)) {
       expect(checked.has(file), `${name} → unchecked ${file}`).toBe(true);
     }
   }
