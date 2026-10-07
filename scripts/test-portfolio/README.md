@@ -11,7 +11,7 @@ invariants, the required DevTools UI witness and the root build barrier. The MID
 runs once more without coverage: its fast-check inputs are unseeded, so the
 coverage invocation and this invocation preserve two sampling opportunities.
 This is not a promise of identical random vectors, scheduling, or incidental
-race exposure between the former aggregate and standalone coverage executions.
+race exposure between local aggregate and standalone coverage executions.
 
 ## Commands
 
@@ -37,9 +37,8 @@ The required DevTools witness must have exactly the same collection, happy-dom
 environment and execution settings as its coverage owner. Removing it fails even
 if the optional coverage job still discovers all UI files. Its live file count
 plus the one MIDI resample is the explicitly permitted repeated execution budget.
-At the reviewed inventory, the local aggregate has 207 direct file executions and
-the residual has 47: the reduction is 160, not 175. Coverage retains 176 files,
-the demo retains 17, and the three native guard files run independently.
+The guard reports the live inventory and each execution owner; change-specific
+counts and timing comparisons belong in the relevant pull request.
 
 The checkout inventory includes tracked and non-ignored untracked `.test.*` and
 `.spec.*` files. New matching tests enter their owner automatically; tests that
@@ -57,36 +56,35 @@ Collection proves ownership of files and execution settings, not assertion
 success or equivalent timing. Full CI still has to execute every owner. The
 guard cannot prove that future edits preserve every assertion inside a file.
 
-## Performance comparison
+## Performance measurement
 
-Compare the original Test workflow and candidate on the same product source,
+For an orchestration experiment, compare revisions with matching product source,
 lockfile, Vite+/Node versions and runner class. Record exact workflow/source SHAs,
-run IDs, attempts, event/ref context and cache state. A push head and PR synthetic
-merge are distinct baselines. Keep full local root execution as a separate
-compatibility check; do not add it to every measured candidate run.
+run IDs, attempts, event/ref context and cache state. Push heads and PR synthetic
+merge trees are distinct execution contexts. Keep the complete local aggregate
+as an explicit compatibility check rather than silently adding its cost to every
+measured CI run.
 
-Run paired original/candidate workflows on hosted runners. Use at least three
-successful pairs, alternating order. Retain failures, cancellations and memory
-pressure as outcomes; do not report only the fastest successful result. If a
-complete baseline does not finish, report that limitation rather than derive a
-speedup from partial timings.
+Use hosted runs, report all observed outcomes, and repeat measurements when
+runner variability changes the conclusion. Retain failures, cancellations and
+memory pressure as outcomes; do not select only the fastest successful result.
+If a run does not finish, disclose that limitation rather than infer a speedup
+from partial timings.
 
 For each attempt report:
 
 - Whole elapsed time: workflow creation to the latest required job completion,
   including queue delay. Also report first-job start to last-job completion to
   separate queued latency from execution critical path.
-- Runner sum: sum of `completed_at - started_at` for **every** job attempt in that
-  workflow, including builds, installation, artifact transfer, guards and any
-  experimental jobs present in the baseline. This is not the sum of test timers.
-- Per-job and per-test-step wall time; lang peak process RSS and cgroup memory
-  peak/events; worker count; failures/retries; all owner file/case counts; skips;
-  coverage source/branch identities and six package branch percentages.
+- Runner sum: sum of `completed_at - started_at` for every job attempt in that
+  workflow, including builds, installation, artifact transfer and guards.
+  This is not the sum of test timers.
+- Per-job and per-test-step wall time; aggregate cgroup memory peak/events;
+  worker count; failures/retries; all owner file/case counts; skips; coverage
+  source/branch identities and the six package branch percentages.
 
-Report original versus candidate medians and each raw pair. Attribute the removal
-of duplicate aggregate work separately from lang worker tuning and removal of
-experimental shard jobs. A diagnostic intermediate configuration can isolate
-each contribution, but only full-workflow timings answer the end-to-end question.
-The two acceptance axes are whole elapsed time and runner sum; reducing one does
-not establish a reduction in the other. Keep every existing coverage denominator,
-branch threshold, browser transport, demo, packaging, compatibility and soak lane.
+Keep revision comparisons, raw run links, measured changes and attribution in
+pull-request evidence. Full-workflow elapsed time and runner sum are separate
+acceptance axes: reducing one does not establish a reduction in the other.
+Preserve every coverage denominator, threshold, browser transport, demo,
+packaging, compatibility and soak lane when interpreting an optimization.
