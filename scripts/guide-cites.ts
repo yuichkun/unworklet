@@ -111,7 +111,15 @@ export function validateGuideCitations(
     const source = sourceFor(file!);
     if (source === undefined) continue;
     const anchor = normalize(excerpt!);
-    const matches = normalize(source).split(anchor).length - 1;
+    const sourceText = normalize(source);
+    let matches = 0;
+    for (
+      let position = sourceText.indexOf(anchor);
+      position !== -1;
+      position = sourceText.indexOf(anchor, position + 1)
+    ) {
+      matches++;
+    }
     if (matches === 0) errors.push(`${file}: anchor not found: ${anchor}`);
     else if (matches > 1)
       errors.push(`${file}: anchor is ambiguous (${matches} matches): ${anchor}`);

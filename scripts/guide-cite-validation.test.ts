@@ -8,6 +8,16 @@ const cite = `[cite: ${file} :: \`${anchor}\`]`;
 const read = (source: string) => (name: string) => (name === file ? source : undefined);
 
 test.each([
+  ["aaa", "aa"],
+  ["ababa", "aba"],
+  ["a\n a\t a", "a a"],
+])("overlapping anchor occurrences are ambiguous: %s / %s", (source, excerpt) => {
+  expect(validateGuideCitations(`[cite: ${file} :: \`${excerpt}\`]`, read(source))).toContain(
+    `${file}: anchor is ambiguous (2 matches): ${excerpt}`,
+  );
+});
+
+test.each([
   "```text\n[cite: packages/example.ts :: `placeholder`]\n```",
   "> ```text\n> [cite: packages/example.ts :: `placeholder`]\n> ```",
   "- Example\n\n  ```text\n  [cite: packages/example.ts :: `placeholder`]\n  ```",
