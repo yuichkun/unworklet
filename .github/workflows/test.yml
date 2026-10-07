@@ -67,6 +67,7 @@ jobs:
       - name: Record runner resources
         run: |
           nproc
+          lscpu | grep -E 'Architecture:|Model name:|CPU MHz:'
           grep -E 'MemTotal|MemAvailable' /proc/meminfo
           cat /proc/self/cgroup
           grep ' - cgroup2 ' /proc/self/mountinfo || true
@@ -85,9 +86,7 @@ jobs:
         env:
           UWK_DISTS_BUILT: "1"
         run: |
-          workers=2
-          if [ "${{ matrix.package }}" = "lang" ]; then workers=4; fi
-          /usr/bin/time -v vp test run --coverage --maxWorkers="$workers" \
+          /usr/bin/time -v vp test run --coverage --maxWorkers=2 \
             --reporter=default --reporter=json --outputFile.json=coverage/tests.json \
             --coverage.reporter=text --coverage.reporter=html \
             --coverage.reporter=json-summary --coverage.reporter=json

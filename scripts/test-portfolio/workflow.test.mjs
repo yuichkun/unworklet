@@ -23,8 +23,8 @@ void test("missing owners, worker-policy changes and conditional package gates f
       ),
     (text) =>
       text.replace("  pull_request:\n", "  pull_request:\n    paths: ['packages/core/**']\n"),
-    (text) => text.replace("then workers=4", "then workers=2"),
-    (text) => text.replace("workers=2", "workers=1"),
+    (text) => text.replace("--maxWorkers=2", "--maxWorkers=4"),
+    (text) => text.replace("--maxWorkers=2", "--maxWorkers=1"),
     (text) => text.replace("  coverage:\n", "  coverage:\n    needs: vitest\n"),
     (text) => text.replace("  coverage:\n", "  coverage:\n    if: github.event_name == 'push'\n"),
     (text) => text.replace("  coverage:\n", "  coverage:\n    continue-on-error: true\n"),

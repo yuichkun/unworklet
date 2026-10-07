@@ -41,7 +41,7 @@ It also retains the DevTools UI assertions under the required aggregate check,
 because the separate UI coverage check is not a required repository rule.
 The MIDI property project intentionally retains an extra uninstrumented sample.
 Demo, compatibility, packaging and soak workflows keep their own environments and
-frequencies. Removing duplicate orchestration does not remove test source,
+frequencies. Consolidating product-test execution does not remove product test source,
 assertions, scalar boundaries, negative controls or a supported environment.
 
 The portfolio collection guard compares the actual project configurations and
@@ -66,8 +66,8 @@ for the specific assertion and its environment, not just similar test names.
 ## Gates and timing
 
 Each `Branch coverage (...)` check is an ordinary dependency-free job. Lang uses
-four native workers on the hosted Ubuntu runner; other package coverage uses two
-and DevTools one. Native Vitest owns collection, failure propagation and the full
+two native workers on the hosted Ubuntu runner, as do the other packages;
+DevTools uses one. Native Vitest owns collection, failure propagation and the full
 98% threshold. There is no partial-shard threshold or downstream skipped merger
 that can stand in for a completed package gate. Cancellation is not a passing
 coverage result.

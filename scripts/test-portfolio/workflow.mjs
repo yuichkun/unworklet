@@ -121,9 +121,7 @@ export function validateWorkflow(workflow) {
   assert.match(coverage, /^      fail-fast: false$/m);
   const coverageStep = requireRun(
     coverage,
-    `workers=2
-if [ "\${{ matrix.package }}" = "lang" ]; then workers=4; fi
-/usr/bin/time -v vp test run --coverage --maxWorkers="$workers" \\
+    `/usr/bin/time -v vp test run --coverage --maxWorkers=2 \\
   --reporter=default --reporter=json --outputFile.json=coverage/tests.json \\
   --coverage.reporter=text --coverage.reporter=html \\
   --coverage.reporter=json-summary --coverage.reporter=json`,

@@ -47,7 +47,7 @@ The native guard directory has an explicit owner whose exact workflow command is
 tested. Unknown native test directories fail until a real owner is wired up.
 
 Workflow contracts retain the trigger set, complete package matrix, unconditional
-owner jobs, lang's four workers, other packages' two workers, DevTools' one worker,
+owner jobs, each package's two workers, DevTools' one worker,
 unfiltered residual/demo commands and guard ordering. The package config contract
 pins the V8 provider, 98% branch-only gates and existing include/exclude policies.
 An intentional change to these policies must update the contract and its proof.
