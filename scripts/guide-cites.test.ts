@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { marked, type Tokens } from "marked";
@@ -12,7 +12,7 @@ const GUIDE_DIR = path.join(REPO, "skills/unworklet");
 
 function guideReferenceFiles(markdown: string): string[] {
   const locations = markdown
-    .replace(/(\[cite:\s*[\w./-]+\.[A-Za-z0-9_-]+\s*::\s*)`[^`]+`(\s*\])/g, "$1`excerpt`$2")
+    .replace(/(\[cite:\s*[\w./-]+\s*::\s*)`[^`]+`(\s*\])/g, "$1`excerpt`$2")
     .replace(/<(pre|code|script|style|template)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "");
   const prose: string[] = [];
   void marked.walkTokens(marked.lexer(locations), (token) => {
@@ -31,11 +31,9 @@ function guideReferenceFiles(markdown: string): string[] {
       );
   });
   return prose.flatMap((text) =>
-    [
-      ...text.matchAll(
-        /\b(?:packages|examples|scripts)\/[\w./-]*\.[A-Za-z0-9_-]+|(?<![\w/])README\.md\b/g,
-      ),
-    ].map(([file]) => file),
+    [...text.matchAll(/\b(?:packages|examples|scripts)\/[\w./-]+|(?<![\w/])README\.md\b/g)].map(
+      ([file]) => file.replace(/(?<=[\w-])\.+$/, ""),
+    ),
   );
 }
 
@@ -145,7 +143,8 @@ test("every explicit guide citation and full repository-file reference resolves 
       ...validateGuideCitations(markdown, (file) => {
         checked.add(file);
         const target = path.join(REPO, file);
-        return existsSync(target) ? readFileSync(target, "utf8") : undefined;
+        if (!existsSync(target)) return undefined;
+        return statSync(target).isDirectory() ? "" : readFileSync(target, "utf8");
       }).map((error) => `${name} → ${error}`),
     );
     // All repository evidence in the shipped guides must reach the reader;

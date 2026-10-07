@@ -605,6 +605,8 @@ test.each([
   `[source](https://raw.githubusercontent.com/yuichkun/unworklet/main/${file})`,
   `[source](https://github.com/yuichkun/unworklet/blob/feature/citations/${file})`,
   `[source](https://raw.githubusercontent.com/yuichkun/unworklet/feature/citations/${file})`,
+  `[source](https://github.com/yuichkun/unworklet/blob/feature/scripts/citations/${file})`,
+  `[source](https://raw.githubusercontent.com/yuichkun/unworklet/feature/scripts/citations/${file})`,
 ])("local path and label checks preserve remote links and cache prose: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor))).toEqual([]);
 });
@@ -659,6 +661,44 @@ test.each([
 ])("hash-prefixed worded coordinates are rejected: %s", (markdown) => {
   expect(validateGuideCitations(markdown, read(anchor)).join("\n")).toContain(
     "numeric source location",
+  );
+});
+
+test("extensionless whole-file evidence reaches the source reader", () => {
+  const checked: string[] = [];
+  expect(
+    validateGuideCitations("See `packages/core/LICENSE`.", (path) => {
+      checked.push(path);
+      return "license text";
+    }),
+  ).toEqual([]);
+  expect(checked).toContain("packages/core/LICENSE");
+  expect(validateGuideCitations("See `packages/core/LICENCE`.", () => undefined)).toContain(
+    "packages/core/LICENCE: missing file",
+  );
+});
+
+test("extensionless files support content-anchored citations", () => {
+  expect(
+    validateGuideCitations("[cite: packages/core/LICENSE :: `license text`]", () => "license text"),
+  ).toEqual([]);
+});
+
+test("directory evidence can resolve without file contents", () => {
+  const checked: string[] = [];
+  expect(
+    validateGuideCitations("See `packages/core/`.", (path) => {
+      checked.push(path);
+      return path === "packages/core/" ? "" : undefined;
+    }),
+  ).toEqual([]);
+  expect(checked).toContain("packages/core/");
+});
+
+test("ambiguous remote source suffixes require repository-relative evidence", () => {
+  const url = `https://github.com/yuichkun/unworklet/blob/feature/scripts/citations/${file}`;
+  expect(validateGuideCitations(`[source](${url})`, () => anchor).join("\n")).toContain(
+    "ambiguous remote source path",
   );
 });
 

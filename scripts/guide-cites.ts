@@ -6,16 +6,22 @@ export function validateGuideCitations(
 ): string[] {
   const errors: string[] = [];
   const sources = new Map<string, string | undefined>();
+  const canonicalPath = (file: string): boolean =>
+    !file.includes("\\") &&
+    !file
+      .replace(/\/$/, "")
+      .split("/")
+      .some((part) => part === "" || part === "." || part === "..");
+  const lookupSource = (file: string): string | undefined => {
+    if (!sources.has(file)) sources.set(file, readSource(file));
+    return sources.get(file);
+  };
   const sourceFor = (file: string): string | undefined => {
-    if (
-      file.includes("\\") ||
-      file.split("/").some((part) => part === "" || part === "." || part === "..")
-    ) {
+    if (!canonicalPath(file)) {
       errors.push(`${file}: expected a canonical repository-relative path`);
       return undefined;
     }
-    if (!sources.has(file)) sources.set(file, readSource(file));
-    const source = sources.get(file);
+    const source = lookupSource(file);
     if (source === undefined) errors.push(`${file}: missing file`);
     return source;
   };
@@ -23,7 +29,7 @@ export function validateGuideCitations(
   const normalize = (text: string): string => text.replace(/\s+/g, " ").trim();
   const htmlProse = (text: string): string =>
     text.replace(
-      /(\[cite:\s*[\w./-]+\.[A-Za-z0-9_-]+\s*::\s*`[^`]+`\s*\])|<!--[\s\S]*?(?:-->|$)|<(pre|code|script|style|template)\b[^>]*>[\s\S]*?(?:<\/\2\s*>|$)/gi,
+      /(\[cite:\s*[\w./-]+\s*::\s*`[^`]+`\s*\])|<!--[\s\S]*?(?:-->|$)|<(pre|code|script|style|template)\b[^>]*>[\s\S]*?(?:<\/\2\s*>|$)/gi,
       (match, citation: string | undefined) => (citation ? match : ""),
     );
   const tokens = marked.lexer(markdown);
@@ -46,7 +52,7 @@ export function validateGuideCitations(
       if (
         token.type === "codespan" &&
         token.text.includes("[cite:") &&
-        !/\[cite:\s*[\w./-]+\.[A-Za-z0-9_-]+\s*::\s*$/.test(text)
+        !/\[cite:\s*[\w./-]+\s*::\s*$/.test(text)
       )
         continue;
       if (token.type === "link") {
@@ -80,7 +86,7 @@ export function validateGuideCitations(
   let citationEnd = 0;
   for (const start of markdown.matchAll(/\[cite:/g)) {
     if (start.index < citationEnd) continue;
-    const citation = /^\[cite:\s*([\w./-]+\.[A-Za-z0-9_-]+)\s*::\s*`([^`]+)`\s*\]/.exec(
+    const citation = /^\[cite:\s*([\w./-]+)\s*::\s*`([^`]+)`\s*\]/.exec(
       markdown.slice(start.index),
     );
     if (!citation || citation[1]!.split("/").includes("..") || !normalize(citation[2]!)) {
@@ -114,7 +120,7 @@ export function validateGuideCitations(
   // The same path grammar establishes both file existence and numeric-location
   // intent. Bare application filenames and orphan line labels are not evidence.
   const repositoryFile =
-    /\b(?:packages|examples|scripts)[/\\][\w./\\-]*\.[A-Za-z0-9_-]+(?:[/\\][\w./\\-]*)*|(?<![\w.-])README\.md(?![\w-]|\.[\w])(?:[/\\][\w./\\-]*)*/g;
+    /\b(?:packages|examples|scripts)[/\\][\w./\\-]+|(?<![\w.-])README\.md(?![\w-]|\.[\w])(?:[/\\][\w./\\-]*)*/g;
   const afterPath =
     /^`?(?:#L?\d+(?:C\d+)?(?:[-–]L?\d+(?:C\d+)?)?(?=$|[\s`)\]<>"',;]|[.!?:]+(?:\s|$))|:\s*L?\d+|\s*[,;:.]?\s*[([]?\s*(?:(?:at|see|on|in)\s+)?[([]?\s*`?(?:L|lines?\s+`?#?L?|:)`?\d+)/i;
   const beforePath =
@@ -138,14 +144,33 @@ export function validateGuideCitations(
   const inspectProse = (text: string): void => {
     const references = [...text.matchAll(repositoryFile)];
     for (const reference of references) {
-      const file = reference[0];
+      let file = reference[0].replace(/(?<=[\w-])\.+$/, "");
+      const pathEnd = reference.index + file.length;
       const prefix = /[^\s`]*[/\\]$/.exec(text.slice(0, reference.index))?.[0];
       if (prefix && !isRepositoryUrlPrefix(prefix)) {
         errors.push(`${prefix + file}: expected a canonical repository-relative path`);
         continue;
       }
+      if (prefix) {
+        if (!isRepositoryUrlPrefix(prefix + file + "/")) {
+          errors.push(`${prefix + file}: expected a canonical repository-relative path`);
+          continue;
+        }
+        const candidates = [
+          ...file.matchAll(/(?<![\w.-])(?=((?:packages|examples|scripts)\/[^\s]+|README\.md)$)/g),
+        ]
+          .map((match) => match[1]!)
+          .filter((candidate) => canonicalPath(candidate) && lookupSource(candidate) !== undefined);
+        if (candidates.length > 1) {
+          errors.push(
+            `${prefix + file}: ambiguous remote source path; use a repository-relative path`,
+          );
+          continue;
+        }
+        file = candidates[0] ?? file;
+      }
       sourceFor(file);
-      const suffix = text.slice(reference.index + file.length).replace(/^\?[^#\s`]*(?=#)/, "");
+      const suffix = text.slice(pathEnd).replace(/^\?[^#\s`]*(?=#)/, "");
       const after = afterPath.exec(suffix);
       const before = beforePath.exec(text.slice(0, reference.index).replaceAll("`", ""));
       const location = after?.[0] ?? before?.[0];
