@@ -9,7 +9,23 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ## Unreleased
 
+### Breaking
+
+- **The `.expose(options)` preservation bug fix restores core validation for
+  non-literal options.** For example, variable options with
+  `publish: { rateFps: 0 }`, buffer `publish`, or whole `null` / `undefined`
+  arguments fail instead of being silently discarded. Use a positive finite
+  scalar publish rate, remove buffer publishing (use `node.snapshot()` or publish
+  scalar slots), and pass a valid options object. Valid nameless options keep
+  their inferred binding name. This restored validation requires the next minor
+  release under the pre-1.0 compatibility policy.
+
 ### Fixed
+
+- `.uwk.ts` preserves variable and helper-call `.expose(options)` names,
+  snapshot policies, and scalar publishing. Nameless options retain the binding
+  name; option expressions run once and core reads their getters lazily.
+  Custom `expose` methods retain their original options and generated types.
 
 - `everyNSamples` preserves its cadence across long-running renders and accepts
   large positive integer periods without 32-bit truncation or audio-thread traps.
