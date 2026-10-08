@@ -42,6 +42,9 @@ jobs:
       - name: Install playwright chromium (for browser e2e projects)
         working-directory: examples/demo
         run: vp exec playwright install --with-deps chromium
+      - name: Characterize native AudioParam suspension boundary (issue 155; not a fix gate)
+        working-directory: examples/demo
+        run: vp exec node diagnostics/native-param-boundary.mjs
       - name: Run browser, integration and repository invariants
         run: vp test run --config vite.ci.config.ts
       - name: Run the demo as a standalone consumer app
