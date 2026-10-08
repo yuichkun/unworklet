@@ -14,6 +14,7 @@ import { playwright } from "vite-plus/test/browser-playwright";
 import { defineConfig } from "vite-plus";
 
 import { renderCrossRealmOracle } from "./src/__tests__/browser/fixtures/crossrealm-oracle.ts";
+import { renderGenericIngress } from "./src/__tests__/generic-ingress-offline.ts";
 
 export default defineConfig({
   plugins: [unworklet({ crossOriginIsolation: false })],
@@ -23,6 +24,7 @@ export default defineConfig({
     browser: {
       enabled: true,
       commands: {
+        renderGenericIngress: () => renderGenericIngress(),
         renderCrossRealmOracle: (_context, name, sampleRate) =>
           renderCrossRealmOracle(name, sampleRate),
       },

@@ -88,6 +88,55 @@ other inbound element types, oversized/clipped payloads, malformed wire input,
 concurrent publishers, real-browser transport, all capacities and MIDI/sysex
 remain outside this corpus.
 
+## Generic-message ingress across realms
+
+`packages/core/src/__tests__/browser/generic-ingress.test.ts` and its postMessage
+entrypoint own a separate, native 48 kHz, four-quantum ingress differential.
+Each entrypoint pins its transport. One inbound event carries identity, fractional
+gain, a boolean and a `Float32Array`; the corpus includes empty/short views with
+nonzero byte offsets and sentinel backing elements. Lengths vary across slot reuse,
+including nonempty-to-empty transitions. Capacity-16 batches
+`[0, 20, 2, 17]` retain `[0, 16, 2, 16]` in FIFO order and report cumulative
+browser overflow `[0, 4, 4, 5]` after processing.
+
+Suspensions at samples 0, 128, 256 and 384 stop rendering before each admission.
+The actual public `snapshot()` reply follows earlier sends on the same port;
+unchanged persistent bytes prove the handler has not consumed that batch yet.
+This is an admission barrier, not a realtime delivery guarantee. All 512 PCM
+bit patterns, all 34 accepted history rows, the complete 38-record ledger
+(including quantum identity and FIFO order within each ring), and every byte of
+all five persistent slots at each boundary are compared with `renderOffline({ messages })` and an independent
+literal FIFO/f32 model. Offline prefix renders provide intermediate snapshots;
+the offline public result has no ingress overflow counter, so exact overflow
+is asserted through the browser node diagnostics. No MIDI or 44.1 kHz fixture is
+imported. Independent SAB ring captures may interleave; comparisons group packets
+by ring without sorting or changing their within-ring order.
+
+The Node suites and their model, offline and lifecycle helpers are co-located in
+`packages/core/src/__tests__/`; the native processor and browser driver remain in
+`browser/fixtures/`. These Node helpers participate in core V8 coverage.
+`generic-ingress-oracle.test.ts` owns the literal/offline comparison and controls
+for reversed queues, incorrect array byte offsets, stale messages, missing
+intermediate records, changed ledger fields, PCM bits and late snapshot bytes.
+`generic-ingress-lifecycle.test.ts` uses test doubles for pending/rejected native
+operations and cleanup failures. Listeners copy observations and report errors to
+the awaited body. Teardown shares one short deadline across remaining suspensions,
+resume operations and render completion, attempts every disposer, and preserves
+the first failure with cleanup diagnostics. A watchdog only bounds JavaScript
+waiting: pending native work is reported explicitly, not claimed cancelled.
+
+Focused commands from `packages/core`:
+
+```sh
+vp test run generic-ingress
+vp test run --config vite.browser.config.ts generic-ingress
+vp test run --config vite.browser-postmessage.config.ts generic-ingress
+```
+
+These focused checks do not substitute for the aggregate suite or the existing
+98% per-package branch gates. This corpus does not cover concurrent ingress,
+wall-clock deadlines, arbitrary payload sizes or other browser engines.
+
 ## Consolidation policy
 
 The five package coverage jobs own their ordinary Node assertions once per Test workflow.
