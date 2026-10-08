@@ -1,6 +1,9 @@
 import { expect, test } from "vite-plus/test";
 import { decodeSnapshot, encodeSnapshot } from "../snapshotBlob.ts";
-import { observeCrossRealm } from "./browser/fixtures/crossrealm-observation.ts";
+import {
+  observeCrossRealm,
+  corruptCrossRealmAutomation,
+} from "./browser/fixtures/crossrealm-observation.ts";
 import { renderCrossRealmOracle } from "./browser/fixtures/crossrealm-oracle.ts";
 
 for (const sampleRate of [44_100, 48_000]) {
@@ -17,6 +20,32 @@ for (const sampleRate of [44_100, 48_000]) {
     expect(result.snapshot.slots).toEqual([
       { name: "gain", kind: "param", type: "f32", data: [0, 0, 0, 63] },
     ]);
+  });
+
+  test(`cross-realm oracle: sample-accurate gain steps at ${sampleRate} Hz`, async () => {
+    const result = await renderCrossRealmOracle("automated-stereo", sampleRate);
+    const expectedGain = (i: number) =>
+      i < 64 ? 0.5 : i < 128 ? 0.25 : i < 255 ? 1 : i < 384 ? 0 : 2;
+    const expected = [
+      Float32Array.from({ length: 512 }, (_, i) => (i / 1024) * expectedGain(i)),
+      Float32Array.from({ length: 512 }, (_, i) => (-(i + 1) / 2048) * expectedGain(i)),
+    ];
+    expect(result.pcm).toEqual(
+      expected.map((channel) => Array.from(new Uint32Array(channel.buffer))),
+    );
+    expect(result.events).toEqual([]);
+    expect(result.snapshot.slots).toEqual([
+      { name: "gain", kind: "param", type: "f32", data: [0, 0, 0, 64] },
+    ]);
+    const raw = result.pcm.map((bits) => new Float32Array(Uint32Array.from(bits).buffer));
+    const snapshot = encodeSnapshot(
+      result.snapshot.schemaHash,
+      result.snapshot.profile,
+      result.snapshot.slots.map((slot) => ({ ...slot, data: Uint8Array.from(slot.data) })),
+      result.snapshot.processorId,
+    );
+    for (const corrupted of corruptCrossRealmAutomation(raw))
+      expect(observeCrossRealm(corrupted, result.events, snapshot)).not.toEqual(result);
   });
 
   test(`cross-realm oracle: stateful input, complete events and snapshot at ${sampleRate} Hz`, async () => {

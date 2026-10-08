@@ -5,6 +5,7 @@ import { crossrealmStateful } from "./crossrealm-stateful.processor.ts";
 import {
   CROSSREALM_SAMPLES,
   crossRealmInputs,
+  crossRealmGainSamples,
   observeCrossRealm,
   type CrossRealmCase,
   type CrossRealmEvent,
@@ -13,12 +14,17 @@ import {
 export async function renderCrossRealmOracle(name: CrossRealmCase, sampleRate: number) {
   const inputs = crossRealmInputs(name);
   const result = await renderOffline(
-    { saw, stereo: stereoGain, stateful: crossrealmStateful }[name],
+    { saw, stereo: stereoGain, "automated-stereo": stereoGain, stateful: crossrealmStateful }[name],
     {
       sampleRate,
       duration: CROSSREALM_SAMPLES / sampleRate,
       inputs: { main: inputs },
-      params: name === "stereo" ? { gain: [0.5] } : {},
+      params:
+        name === "automated-stereo"
+          ? { gain: crossRealmGainSamples() }
+          : name === "stereo"
+            ? { gain: [0.5] }
+            : {},
     },
   );
   if (result.diagnostics.scrubbedSamples !== 0)

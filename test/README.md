@@ -51,6 +51,14 @@ The context suspends after each quantum so transport delivery is drained before
 continuing; the fourth suspension captures state at exactly the compared boundary.
 An extra unobserved quantum lets the context finish after that snapshot.
 
+The stereo automation row schedules gain values 0.5, 0.25, 1, 0 and 2 at samples
+0, 64, 128, 255 and 384. It compares every PCM bit and the final persistent gain
+against per-sample offline inputs, including within-quantum and quantum-boundary
+changes. Independent piecewise expectations pin the offline output. Negative
+controls alter raw native and offline PCM before projection, modeling a one-sample
+late first transition and holding that transition until the next quantum. This
+schedule is not a guarantee about every floating-point time-to-sample boundary.
+
 The Node oracle tests independently pin stereo/stateful PCM and complete event and
 state values at 44.1 and 48 kHz. Negative controls mutate raw PCM, events and decoded state before the observation
 projection, then require the same exact equality assertion to
@@ -59,8 +67,8 @@ state scalar and a changed byte beyond the snapshot preview. The existing saw
 range/reference and repeated-render checks remain separate witnesses.
 
 This is a bounded renderer/transport comparison using shared compiler code, not
-an independent compiler proof. It covers static params and audio inputs, not all
-processors, scheduled messages/MIDI, automation, snapshot restore/migration,
+an independent compiler proof. It covers static params, audio inputs, and one bounded a-rate step schedule, not all
+processors, scheduled messages/MIDI, other automation curves, snapshot restore/migration,
 other native sample rates (the plugin artifact rejects mismatches), real-time
 contention, deadlines or other browsers.
 

@@ -5,6 +5,8 @@ import { createNode } from "../../index.ts";
 import {
   CROSSREALM_SAMPLES,
   crossRealmInputs,
+  crossRealmGainSteps,
+  corruptCrossRealmAutomation,
   observeCrossRealm,
   type CrossRealmEvent,
 } from "./fixtures/crossrealm-observation.ts";
@@ -56,20 +58,28 @@ test("cross-realm: the real AudioWorklet output is the finite, bounded sawtooth"
   expect(real.some((s) => s !== real[0])).toBe(true);
 });
 
-for (const name of ["saw", "stereo", "stateful"] as const) {
+for (const name of ["saw", "stereo", "automated-stereo", "stateful"] as const) {
   const sampleRate = SR;
   test(`cross-realm: ${name} PCM/events/snapshot match renderOffline at ${sampleRate} Hz`, async () => {
     const oracle = await commands.renderCrossRealmOracle(name, sampleRate);
     const ctx = new OfflineAudioContext({
-      numberOfChannels: name === "stereo" ? 2 : 1,
+      numberOfChannels: name === "stereo" || name === "automated-stereo" ? 2 : 1,
       length: CROSSREALM_SAMPLES + 128,
       sampleRate,
     });
     const node = await createNode(
       ctx,
-      { saw: sawWorklet, stereo: stereoWorklet, stateful: statefulWorklet }[name],
+      {
+        saw: sawWorklet,
+        stereo: stereoWorklet,
+        "automated-stereo": stereoWorklet,
+        stateful: statefulWorklet,
+      }[name],
       { initial: name === "stereo" ? { gain: 0.5 } : {} },
     );
+    if (name === "automated-stereo")
+      for (const { sample, value } of crossRealmGainSteps)
+        node.params.gain!.setValueAtTime(value, sample / sampleRate);
     const received: CrossRealmEvent[] = [];
     const unsubscribe =
       name === "stateful"
@@ -122,6 +132,9 @@ for (const name of ["saw", "stereo", "stateful"] as const) {
         rendered.getChannelData(i).slice(0, CROSSREALM_SAMPLES),
       );
       expect(observeCrossRealm(pcm, received, state)).toEqual(oracle);
+      if (name === "automated-stereo")
+        for (const corrupted of corruptCrossRealmAutomation(pcm))
+          expect(observeCrossRealm(corrupted, received, state)).not.toEqual(oracle);
     } finally {
       unsubscribe();
       source?.disconnect();
