@@ -210,7 +210,7 @@ unworklet({ crossOriginIsolation: false });
 ```
 
 unworklet then uses the postMessage transport in dev. (Opt-out branch:
-[cite: packages/unplugin/src/index.ts :: `if (!crossOriginIsolation) return { define };`]; client-side SAB→postMessage switch:
+[cite: packages/unplugin/src/index.ts :: `if (!crossOriginIsolation) return gates;`]; client-side SAB→postMessage switch:
 [cite: packages/core/src/client.ts :: `const transportMode: "sab" | "postMessage" = sabAvailable ? "sab" : "postMessage";`].)
 
 ## Plugin options (full surface)
