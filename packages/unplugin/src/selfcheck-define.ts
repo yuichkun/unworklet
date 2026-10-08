@@ -37,6 +37,9 @@ export function defineDevSelfcheck(code: string, id: string) {
     if (ts.isIdentifier(node) && node.text === flag) {
       const parent = node.parent;
       if (
+        ts.isLabeledStatement(parent) ||
+        ts.isBreakStatement(parent) ||
+        ts.isContinueStatement(parent) ||
         (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
         ((ts.isPropertyAssignment(parent) || ts.isShorthandPropertyAssignment(parent)) &&
           parent.name === node)

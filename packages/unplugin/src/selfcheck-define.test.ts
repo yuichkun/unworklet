@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { SourceMap } from "node:module";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { createServer } from "vite-plus";
 import { expect, test } from "vite-plus/test";
 
 import unworklet from "./index.ts";
@@ -85,6 +86,8 @@ export const enabled = typeof __UNWORKLET_SELFCHECK__ !== "undefined" && __UNWOR
 for (const file of [runtime, path.join(core, "dist/worklet-fixture.mjs")]) {
   test.each([
     'const text = "__UNWORKLET_SELFCHECK__";',
+    "__UNWORKLET_SELFCHECK__: for (;;) { break __UNWORKLET_SELFCHECK__; }",
+    "__UNWORKLET_SELFCHECK__: for (;;) { continue __UNWORKLET_SELFCHECK__; }",
     "const __UNWORKLET_SELFCHECK__ = false; export { __UNWORKLET_SELFCHECK__ };",
     'import { __UNWORKLET_SELFCHECK__ } from "./other"; console.log(__UNWORKLET_SELFCHECK__);',
     "function f(__UNWORKLET_SELFCHECK__) { return { __UNWORKLET_SELFCHECK__ }; }",
@@ -132,5 +135,38 @@ test.each([
     expect(await transform(code, id)).toBeUndefined();
   } finally {
     await close();
+  }
+});
+
+test("Vite composes the runtime edit map with its TypeScript transform", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "uwk-selfcheck-map-"));
+  const server = await createServer({
+    root,
+    configFile: false,
+    logLevel: "silent",
+    plugins: [unworklet()],
+    server: { watch: null, fs: { allow: [core, root] } },
+    optimizeDeps: { noDiscovery: true },
+  });
+  try {
+    const result = await server.transformRequest(`/@fs/${runtime}`);
+    const original = await readFile(runtime, "utf8");
+    const sourceAt = original.indexOf("typeof __UNWORKLET_SELFCHECK__") + "typeof ".length;
+    const generatedAt = result!.code.indexOf("typeof true") + "typeof ".length;
+    expect(generatedAt).toBeGreaterThan("typeof ".length);
+    const location = (code: string, at: number) => {
+      const lines = code.slice(0, at).split("\n");
+      return { line: lines.length - 1, column: lines.at(-1)!.length };
+    };
+    const before = location(original, sourceAt);
+    const after = location(result!.code, generatedAt);
+    const map = new SourceMap(JSON.parse(JSON.stringify(result!.map)));
+    expect(map.findEntry(after.line, after.column)).toMatchObject({
+      originalLine: before.line,
+      originalColumn: before.column,
+    });
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
   }
 });
