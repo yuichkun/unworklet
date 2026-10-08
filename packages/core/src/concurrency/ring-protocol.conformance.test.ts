@@ -72,7 +72,7 @@ const emptyQuantum = () => ({
  * (tagged with whether its destination overlaps the 12-byte header).
  */
 const capturePublish = (
-  sab: ArrayBuffer,
+  sab: ArrayBufferLike,
   ringSabOffset: number,
   ringTotalBytes: number,
   run: () => void,
@@ -381,6 +381,97 @@ test("conformance: the MIDI out-ring publish matches the model's safe op-order",
   );
 
   expect(captured).toEqual(OUT_RING_PUBLISH_OPS);
+});
+
+test.each([
+  { boundary: "ordinary counters", initial: 0 },
+  { boundary: "signed head wrap on drop", initial: 0x7fffffff - 16 },
+  { boundary: "signed tail wrap on drop", initial: 0x7fffffff },
+  { boundary: "unsigned head wrap on drop", initial: 0xffffffff - 16 },
+  { boundary: "unsigned tail wrap on drop", initial: 0xffffffff },
+])("conformance: MIDI drop-oldest publication at $boundary", async ({ initial }) => {
+  const capacity = 16;
+  const proc = defineProcessor(() => {
+    const midiOut = event.midi({ to: "main", name: "out", capacity });
+    const emitted = stateDecl.i32(0);
+    return {
+      process: () => {
+        midiOut.emitIf(true, {
+          type: "noteOn",
+          channel: 3,
+          note: emitted.read().add(60),
+          velocity: 100,
+          atSample: emitted.read(),
+        });
+        emitted.write(emitted.read().add(1));
+      },
+    };
+  });
+  const { wasm } = await compile(proc);
+  const midiRings = proc.worklet.midiRings;
+  expect(midiRings).toHaveLength(1);
+  expect(midiRings[0]!.capacity).toBe(capacity);
+  const ringTotalBytes = 12 + capacity * 8;
+  const sab = new SharedArrayBuffer(ringTotalBytes);
+  const egressAccessBuffer = new SharedArrayBuffer(4);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "sab",
+      ingressAccessBuffer: new SharedArrayBuffer(8),
+      midiRings,
+      midiRingsBuffer: sab,
+      egressAccessBuffer,
+      midiRingSabOffsets: [0],
+      sysexContentSabOffsets: [0],
+    },
+  });
+
+  // Seed both copies of an empty ring so boundary cases need only 17 quanta.
+  const stateKey = Object.getOwnPropertySymbols(self).find(
+    (symbol) => symbol.description === "unworklet.workletState",
+  );
+  expect(stateKey).toBeDefined();
+  const state = (self as unknown as Record<symbol, { midiRingsWasmHeaderViews: Int32Array[] }>)[
+    stateKey!
+  ]!;
+  const header = new Int32Array(sab, 0, 3);
+  header.set([initial, initial, 0]);
+  state.midiRingsWasmHeaderViews[0]!.set(header);
+  const q = emptyQuantum();
+  for (let quantum = 0; quantum < capacity; quantum++) {
+    expect(proc.worklet.process(self, q.inputs, q.outputs, q.parameters)).toBe(true);
+  }
+  expect(Array.from(header)).toEqual([(initial + capacity) | 0, initial | 0, 0]);
+
+  const captured = capturePublish(
+    sab,
+    0,
+    ringTotalBytes,
+    () => {
+      expect(proc.worklet.process(self, q.inputs, q.outputs, q.parameters)).toBe(true);
+    },
+    egressAccessBuffer,
+  );
+
+  expect(captured).toEqual(OUT_RING_PUBLISH_OPS_TAIL_ADVANCE);
+  expect(Array.from(header)).toEqual([(initial + capacity + 1) | 0, (initial + 1) | 0, 1]);
+  expect(Atomics.load(new Int32Array(egressAccessBuffer), 0)).toBe(0);
+
+  const bytes = new DataView(sab);
+  const retained = Array.from({ length: capacity }, (_, index) => {
+    const offset = 12 + ((initial + index + 1) % capacity) * 8;
+    return [
+      bytes.getUint8(offset),
+      bytes.getUint8(offset + 1),
+      bytes.getUint8(offset + 2),
+      bytes.getUint32(offset + 4, true),
+    ];
+  });
+  expect(retained).toEqual(
+    Array.from({ length: capacity }, (_, index) => [0x93, 61 + index, 100, index + 1]),
+  );
 });
 
 // ── message in-ring (worklet.ts message mirror) ─────────────────────────────
