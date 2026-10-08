@@ -543,11 +543,7 @@ export function lower(source: string, options: LowerOptions = {}): string {
     sourcePath: options.sourcePath,
   });
   const { program, checker, sourceFile } = built;
-  const constructors = instantiateArgumentConstructors(source, built, {
-    snapshot: options.snapshot,
-    record: options.captureInto,
-    sourcePath: options.sourcePath,
-  });
+  const constructors = instantiateArgumentConstructors(built);
   const autoNameDeclaration = createAutoNameDeclaration(program, coreModule);
   const generatedAliases = new Map<string, ts.Identifier>();
   const sf = ts.transform(sourceFile, [

@@ -2,7 +2,7 @@ import ts from "typescript";
 
 import { isDspExpr } from "../classify.ts";
 import { unwrapValue } from "../container-values.ts";
-import { buildProgram, type BuiltProgram, type BuildProgramOptions } from "../program.ts";
+import type { BuiltProgram } from "../program.ts";
 
 type ScalarConstructor = "f32" | "f64" | "i32" | "bool";
 
@@ -73,11 +73,24 @@ function scalarTarget(
   return scalar;
 }
 
+function subgraphArguments(
+  checker: ts.TypeChecker,
+  type: ts.Type,
+  brandName: ts.__String,
+  location: ts.Node,
+): ts.Type | undefined {
+  if (type.isUnion() || (type.flags & ts.TypeFlags.TypeParameter) !== 0) return undefined;
+  const brand = type.getProperties().find((property) => property.escapedName === brandName);
+  if (brand === undefined) return undefined;
+  const witness = checker.getTypeOfSymbolAtLocation(brand, location);
+  if (witness.isUnion()) return undefined;
+  const args = witness.getProperty("args");
+  return args === undefined ? undefined : checker.getTypeOfSymbolAtLocation(args, location);
+}
+
 /** Constructor choices use the original declaration, never LiftArgs' widened context. */
 export function instantiateArgumentConstructors(
-  source: string,
   original: BuiltProgram,
-  options: BuildProgramOptions = {},
 ): Map<ts.Expression, ScalarConstructor> {
   const result = new Map<ts.Expression, ScalarConstructor>();
   const canonical = coreExports(original).get("instantiate");
@@ -95,17 +108,33 @@ export function instantiateArgumentConstructors(
 
   // The general sugar checker erases nullability. A separate query keeps
   // undefined arguments unchanged without altering the other sugar passes.
-  const precise = buildProgram(source, { ...options, strictNullChecks: true });
+  const precise = original.withStrictNullChecks();
   const { checker } = precise;
   const exports = coreExports(precise);
   const subgraphSymbol = exports.get("SubgraphDecl")!;
+  const brands = checker
+    .getDeclaredTypeOfSymbol(subgraphSymbol)
+    .getProperties()
+    .filter((property) =>
+      property.declarations?.some(
+        (declaration) =>
+          ts.isPropertySignature(declaration) && ts.isComputedPropertyName(declaration.name),
+      ),
+    );
+  if (brands.length !== 1) return result;
+  const brandName = brands[0]!.escapedName;
   const nodeSymbol = exports.get("Node")!;
   const visit = (node: ts.Node): void => {
     const originalCall = candidates.get(`${node.pos}:${node.end}`);
     if (ts.isCallExpression(node) && originalCall !== undefined && node.arguments.length > 0) {
-      const subgraph = checker.getTypeAtLocation(node.arguments[0]!);
-      if (subgraph.symbol === subgraphSymbol) {
-        const args = checker.getTypeArguments(subgraph as ts.TypeReference)[0]!;
+      const location = node.arguments[0]!;
+      const args = subgraphArguments(
+        checker,
+        checker.getTypeAtLocation(location),
+        brandName,
+        location,
+      );
+      if (args !== undefined) {
         if (!checker.isTupleType(args) && !checker.isArrayType(args)) {
           ts.forEachChild(node, visit);
           return;

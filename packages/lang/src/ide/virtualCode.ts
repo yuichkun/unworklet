@@ -206,9 +206,7 @@ export function generateVirtualCode(
 ): VirtualCodeResult {
   const built = buildProgram(source, { snapshot: options.snapshot });
   const { checker, sourceFile } = built;
-  const constructors = instantiateArgumentConstructors(source, built, {
-    snapshot: options.snapshot,
-  });
+  const constructors = instantiateArgumentConstructors(built);
   const text = sourceFile.text;
   const b = new Builder();
   b.raw(MODULE_PREFIX);

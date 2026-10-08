@@ -86,6 +86,8 @@ export type BuiltProgram = {
   checker: ts.TypeChecker;
   /** The pristine `.uwk.ts` SourceFile — query against this, never a rewritten tree. */
   sourceFile: ts.SourceFile;
+  /** A null-aware checker over this exact source graph, sharing parsed files. */
+  withStrictNullChecks(): BuiltProgram;
 };
 
 /**
@@ -123,8 +125,6 @@ export type FsSnapshot = {
 };
 
 export type BuildProgramOptions = {
-  /** Keep nullable primitive arguments distinct when planning constructor sugar. */
-  strictNullChecks?: boolean;
   /** Replay this snapshot instead of touching disk (browser mode). */
   snapshot?: FsSnapshot;
   /**
@@ -299,16 +299,17 @@ function diskHost(source: string, entryDir: string, record?: FsSnapshot): ts.Com
 }
 
 function buildFrom(
-  source: string,
   host: ts.CompilerHost,
   selfDir: string,
   strictNullChecks = false,
+  oldProgram?: ts.Program,
 ): BuiltProgram {
   const inputPath = inputPathFor(selfDir);
   const program = ts.createProgram(
     [ambientPathFor(selfDir), inputPath],
     { ...COMPILER_OPTIONS, strictNullChecks },
     host,
+    oldProgram,
   );
   const checker = program.getTypeChecker();
   const sourceFile = program.getSourceFile(inputPath);
@@ -318,7 +319,28 @@ function buildFrom(
   if (sourceFile === undefined) {
     throw new Error("unworklet/lang: failed to build the .uwk.ts program (input not found)");
   }
-  return { program, checker, sourceFile };
+  return {
+    program,
+    checker,
+    sourceFile,
+    withStrictNullChecks: () =>
+      buildFrom(
+        {
+          ...host,
+          getSourceFile: (fileName, languageVersionOrOptions, onError, shouldCreateNewSourceFile) =>
+            (!shouldCreateNewSourceFile && program.getSourceFile(fileName)) ||
+            host.getSourceFile(
+              fileName,
+              languageVersionOrOptions,
+              onError,
+              shouldCreateNewSourceFile,
+            ),
+        },
+        selfDir,
+        true,
+        program,
+      ),
+  };
 }
 
 /**
@@ -333,12 +355,7 @@ export function buildProgram(source: string, options: BuildProgramOptions = {}):
     // Replay: build with the snapshot's record-time directory so resolution
     // matches the recorded host answers (the live SELF_DIR is the browser's
     // `/__uwk__` fallback, which would never match a Node-recorded snapshot).
-    return buildFrom(
-      source,
-      replayHost(source, options.snapshot),
-      options.snapshot.selfDir,
-      options.strictNullChecks,
-    );
+    return buildFrom(replayHost(source, options.snapshot), options.snapshot.selfDir);
   }
   // Disk mode: when the caller knows the source's real path, root virtuals in
   // its directory so a relative import like `./onepole.uwk.ts` resolves against
@@ -346,10 +363,5 @@ export function buildProgram(source: string, options: BuildProgramOptions = {}):
   // sourcePath (existing runtime-compile path, no cross-file support), fall
   // back to `SELF_DIR` — the check-only browser path preserves its behaviour.
   const entryDir = options.sourcePath !== undefined ? dirnameOf(options.sourcePath) : SELF_DIR;
-  return buildFrom(
-    source,
-    diskHost(source, entryDir, options.record),
-    entryDir,
-    options.strictNullChecks,
-  );
+  return buildFrom(diskHost(source, entryDir, options.record), entryDir);
 }

@@ -705,7 +705,9 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
   `as` / type assertions, `satisfies`, and explicit callee type instantiation preserve
   this binding check. Custom functions/objects, local or assigned aliases, and
   computed-property, conditional, or comma-expression callees are left unchanged.
-  Cross-file subgraphs retain their declared argument types.
+  Cross-file subgraphs retain their declared argument types. Metadata intersections,
+  interface inheritance, and readonly wrappers retain the original Args through
+  core's unique subgraph brand; conflicting argument witnesses stay explicit.
 - Construction happens before the subgraph body runs, so arithmetic uses the
   declared scalar even when every supplied value is primitive. With a
   `Node<"f64">` coefficient of `1e8`, `(coef + 1) - coef` evaluates to `1`.

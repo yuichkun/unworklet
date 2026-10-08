@@ -205,9 +205,9 @@ test("files without canonical calls do not build a null-aware program", () => {
 const a = instantiate(2);
 process(() => {});`;
   const original = programs.buildProgram(source);
-  const build = vi.spyOn(programs, "buildProgram");
+  const build = vi.spyOn(original, "withStrictNullChecks");
   try {
-    expect(instantiateArgumentConstructors(source, original).size).toBe(0);
+    expect(instantiateArgumentConstructors(original).size).toBe(0);
     expect(build).not.toHaveBeenCalled();
   } finally {
     build.mockRestore();
@@ -219,10 +219,10 @@ test("eligible calls change only the null-check option of their separate query",
 const a = instantiate(sg, 2);
 process(() => {});`;
   const original = programs.buildProgram(source);
-  const build = vi.spyOn(programs, "buildProgram");
+  const build = vi.spyOn(original, "withStrictNullChecks");
   try {
-    expect(instantiateArgumentConstructors(source, original).size).toBe(1);
-    expect(build).toHaveBeenCalledExactlyOnceWith(source, { strictNullChecks: true });
+    expect(instantiateArgumentConstructors(original).size).toBe(1);
+    expect(build).toHaveBeenCalledExactlyOnceWith();
     expect(original.program.getCompilerOptions().strictNullChecks).toBe(false);
     const precise = build.mock.results[0]!.value as programs.BuiltProgram;
     expect(precise.program.getCompilerOptions()).toEqual({
@@ -259,7 +259,7 @@ test("an unavailable core module leaves argument construction unresolved", () =>
   const source = "instantiate(graph, 1);";
   const snapshot = programs.emptySnapshot();
   const original = programs.buildProgram(source, { snapshot });
-  expect(instantiateArgumentConstructors(source, original, { snapshot }).size).toBe(0);
+  expect(instantiateArgumentConstructors(original).size).toBe(0);
 });
 
 for (const [mode, emit] of Object.entries(emitters)) {
@@ -418,5 +418,41 @@ process(() => {});`;
     for (const value of [1, 2, 3, 4, 5]) expect(code).toContain(`(sg, f32(${value}))`);
     expect(code).toContain("(sg, 6)");
     expect(code).toContain("(sg, 7)");
+  });
+}
+
+for (const [mode, emit] of Object.entries(emitters)) {
+  test(`${mode}: subgraph metadata, base interfaces and readonly wrappers retain original Args`, () => {
+    const source = `import type { SubgraphDecl } from "@unworklet/core";
+const base = defineSubgraph((value: Node<"f32">) => ({ tick: () => value.add(1) }));
+const decorated = Object.assign(base, { tag: "gain", args: [99] });
+interface Tagged extends SubgraphDecl<[Node<"f32">], { tick: () => Node<"f32"> }> { tag: string; }
+const inherited: Tagged = decorated;
+const readonly: Readonly<SubgraphDecl<[Node<"f32">], { tick: () => Node<"f32"> }>> = base;
+const a = instantiate(decorated, 1);
+const b = instantiate(inherited, 2);
+const c = instantiate(readonly, 3);
+process(() => {});`;
+    const code = emit(source);
+    expect(code).toContain("instantiate(decorated, f32(1))");
+    expect(code).toContain("instantiate(inherited, f32(2))");
+    expect(code).toContain("instantiate(readonly, f32(3))");
+  });
+
+  test(`${mode}: counterfeit brands and conflicting wrapped Args are not guessed`, () => {
+    const source = `import type { SubgraphDecl as RealSubgraph } from "@unworklet/core";
+declare const subgraphBrand: unique symbol;
+interface SubgraphDecl<A, M> { readonly [subgraphBrand]: { args: A; methods: M }; }
+declare const counterfeit: SubgraphDecl<[Node<"f32">], {}>;
+declare const conflict: RealSubgraph<[Node<"f32">], {}> & RealSubgraph<[Node<"f64">], {}>;
+declare const union: RealSubgraph<[Node<"f32">], {}> | RealSubgraph<[Node<"f64">], {}>;
+const a = instantiate(counterfeit, 1);
+const b = instantiate(conflict, 2);
+const c = instantiate(union, 3);
+function generic<T extends RealSubgraph<unknown[], {}>>(graph: T) { return instantiate(graph, 4); }
+process(() => {});`;
+    const code = emit(source);
+    for (const call of ["counterfeit, 1", "conflict, 2", "union, 3", "graph, 4"])
+      expect(code).toContain(`instantiate(${call})`);
   });
 }

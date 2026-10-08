@@ -152,6 +152,25 @@ const g = (fake as unknown as { instantiate: (...args: any[]) => any }).instanti
     await expectSamples(processor, 33);
   });
 
+  test(`${mode}: decorated and inherited subgraphs preserve metadata and construct their original Args`, async () => {
+    const processor = lower(
+      mono(
+        `import type { SubgraphDecl } from "@unworklet/core";
+const base = defineSubgraph((value: Node<"f32">) => ({ tick: () => value.add(1) }));
+const decorated = Object.assign(base, { tag: "gain", args: [99] });
+interface Tagged extends SubgraphDecl<[Node<"f32">], { tick: () => Node<"f32"> }> { tag: string; }
+const inherited: Tagged = decorated;
+const readonly: Readonly<SubgraphDecl<[Node<"f32">], { tick: () => Node<"f32"> }>> = Object.freeze(base);
+const a = instantiate(decorated, 1);
+const b = instantiate(inherited, 2);
+const c = instantiate(readonly, 3);
+if (decorated.tag !== "gain" || decorated.args[0] !== 99) throw new Error("metadata changed");`,
+        "a.tick().add(b.tick()).add(c.tick())",
+      ),
+    );
+    await expectSamples(processor, 9);
+  });
+
   test(`${mode}: argument expressions evaluate once and existing Node identity is retained`, async () => {
     const processor = lower(
       mono(
