@@ -18,6 +18,7 @@
 export const WORKLET_REALM_FILES = [
   "src/worklet-entry.ts",
   "src/worklet.ts",
+  "src/restoreBoundaryTrace.ts",
   "src/snapshot.ts",
   "src/types.ts",
   "src/compile/ast.ts",

@@ -1,3 +1,5 @@
+import { flushBoundaryTrace } from "./fixtures/boundary-trace-flush.ts";
+import { BoundaryTrace, boundaryContexts } from "../../restoreBoundaryTrace.ts";
 import { expect, test } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { createNode, inspectSnapshot, replaceProcessor } from "../../index.ts";
@@ -80,8 +82,26 @@ test("suspended snapshots round-trip through restore and replacement before rend
 
 test("live restore keeps a frozen accumulator unchanged while the main thread is busy", async () => {
   const ctx = new AudioContext({ sampleRate: 48000 });
+  const trace = new BoundaryTrace(256);
+  boundaryContexts.set(ctx, trace);
+  let nativeFreeze: AudioParam | undefined;
+  const mark = (phase: number): void =>
+    trace.record(
+      phase,
+      trace.requestId,
+      ctx.currentTime,
+      ctx.state === "running" ? 1 : ctx.state === "suspended" ? 2 : 3,
+      NaN,
+      nativeFreeze?.value ?? NaN,
+      0,
+      NaN,
+      NaN,
+    );
+  mark(40);
   await ctx.suspend();
+  mark(41);
   const node = await createNode(ctx, frozenCounter);
+  nativeFreeze = node.params.freeze;
   const mute = ctx.createGain();
   mute.gain.value = 0;
   node.outputs.main!.connect(mute);
@@ -91,7 +111,9 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
   document.body.append(start);
   try {
     const saved = await node.snapshot();
+    mark(48);
     node.params.freeze!.value = 0;
+    mark(49);
     const resumed = new Promise<void>((resolve, reject) => {
       start.addEventListener("click", () => void ctx.resume().then(resolve, reject), {
         once: true,
@@ -99,6 +121,7 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
     });
     await userEvent.click(start);
     await resumed;
+    mark(50);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(inspectSnapshot(await node.snapshot()).slots.count).not.toEqual({
       kind: "state",
@@ -117,12 +140,19 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
       type: "f32",
       value: 0,
     });
+    mark(48);
     node.params.freeze!.value = 0;
+    mark(49);
     await new Promise((resolve) => setTimeout(resolve, 30));
+    mark(42);
     const crossingSuspension = node.restore(saved);
+    mark(43);
     await ctx.suspend();
+    mark(44);
     expect((await crossingSuspension).ok).toBe(true);
+    mark(45);
     await ctx.resume();
+    mark(46);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
       kind: "state",
@@ -130,10 +160,33 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
       value: 0,
     });
   } finally {
-    node.dispose();
-    mute.disconnect();
-    start.remove();
-    await ctx.close();
+    try {
+      mark(47);
+      // Flush only after the original assertions; no worklet egress during measurement.
+      const workletTrace = await flushBoundaryTrace(node.node.port);
+      console.log(
+        "RESTORE_BOUNDARY_TRACE",
+        JSON.stringify({
+          sampleRate: ctx.sampleRate,
+          transport: node.diagnostics.transport,
+          userAgent: navigator.userAgent,
+          main: {
+            rows: Array.from(trace.rows.subarray(0, trace.used * 9)),
+            used: trace.used,
+            dropped: trace.dropped,
+          },
+          worklet: workletTrace,
+        }),
+      );
+    } catch {
+      // Diagnostic failures must not replace assertions or skip original cleanup.
+    } finally {
+      boundaryContexts.delete(ctx);
+      node.dispose();
+      mute.disconnect();
+      start.remove();
+      await ctx.close();
+    }
   }
 });
 

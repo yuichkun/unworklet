@@ -22,6 +22,8 @@
  * Q80) share this function namespace as their common foundation.
  */
 
+import { BoundaryTrace } from "./restoreBoundaryTrace.ts";
+
 import type {
   AudioPortDecl,
   BufferDecl,
@@ -348,6 +350,9 @@ type WorkletState = {
 };
 
 type SelfWithState = {
+  boundaryTrace?: BoundaryTrace;
+  boundaryCount?: Float32Array;
+  boundaryFreeze?: Float32Array;
   port: { postMessage: (m: unknown, transfer?: Transferable[]) => void };
   [STATE_KEY]?: WorkletState;
   [INIT_CALLED_KEY]?: boolean;
@@ -356,6 +361,7 @@ type SelfWithState = {
 
 type ProcessorOptionsBag = {
   processorOptions?: {
+    boundaryTrace?: boolean;
     /**
      * Pre-compiled `WebAssembly.Module` minted on the main thread. Audio
      * thread only does `new WebAssembly.Instance(module)` (= fast,
@@ -1146,6 +1152,27 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       // reads persistent state / buffer / param; restore writes state / buffer
       // (param is applied to the AudioParam on the main side). Mirrors the same logic
       // as offline's end-of-render capture / config.restore.
+      if (opts.processorOptions?.boundaryTrace) {
+        self.boundaryTrace = new BoundaryTrace();
+        self.boundaryCount = new Float32Array(memory.buffer, lay.regions.states.slots.count!, 1);
+        self.boundaryFreeze = paramViews[meta.params.findIndex((p) => p.name === "freeze")]!;
+      }
+      const traceBoundary = (phase: number, requestId: number): void => {
+        const trace = self.boundaryTrace;
+        if (!trace) return;
+        trace.requestId = requestId;
+        trace.record(
+          phase,
+          requestId,
+          (globalThis as { currentFrame?: number }).currentFrame ?? -1,
+          trace.protocol,
+          self.boundaryCount![0]!,
+          NaN,
+          0,
+          NaN,
+          self.boundaryFreeze![0]!,
+        );
+      };
       const captureSnapshotSlots = (profile: string | undefined): SnapshotSlot[] => {
         const out: SnapshotSlot[] = [];
         const buf = memory.buffer;
@@ -1343,6 +1370,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             | null
             | undefined;
           if (typeof data !== "object" || data === null) return;
+          if (data.kind === "boundary-trace-flush" && self.boundaryTrace) {
+            const trace = self.boundaryTrace;
+            self.port.postMessage({
+              kind: "boundary-trace-result",
+              rows: trace.rows,
+              used: trace.used,
+              dropped: trace.dropped,
+            });
+            return;
+          }
           if (data.kind === "shutdown") {
             (self as SelfWithState)[STATE_KEY]!.stopped = true;
             return;
@@ -1432,10 +1469,14 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             return;
           }
           if (data.kind === "restore-barrier") {
+            traceBoundary(22, Number(data.requestId));
+            if (self.boundaryTrace) self.boundaryTrace.protocol = 2;
             self.port.postMessage({ kind: "restore-barrier-done", requestId: data.requestId });
             return;
           }
           if (data.kind === "restore" || data.kind === "restore-prepare") {
+            traceBoundary(data.kind === "restore" ? 23 : 20, Number(data.requestId));
+            if (self.boundaryTrace) self.boundaryTrace.protocol = data.kind === "restore" ? 3 : 1;
             const slots = Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [];
             const profile = typeof data.profile === "string" ? data.profile : undefined;
             // Preparation validates without writing; commit validates the complete
@@ -1452,6 +1493,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
                 missing: [],
               };
             }
+            traceBoundary(data.kind === "restore" ? 24 : 21, Number(data.requestId));
             self.port.postMessage({
               kind: data.kind === "restore" ? "restore-done" : "restore-prepared",
               requestId: data.requestId,
@@ -1776,6 +1818,20 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
+    const boundaryTrace = self.boundaryTrace;
+    const boundaryFreeze = parameters.freeze;
+    if (boundaryTrace)
+      boundaryTrace.record(
+        30,
+        boundaryTrace.requestId,
+        (globalThis as { currentFrame?: number }).currentFrame ?? -1,
+        boundaryTrace.protocol,
+        self.boundaryCount![0]!,
+        boundaryFreeze?.[0] ?? NaN,
+        boundaryFreeze?.length ?? 0,
+        boundaryFreeze?.[boundaryFreeze.length - 1] ?? NaN,
+        self.boundaryFreeze![0]!,
+      );
     try {
       state.process();
     } catch (err) {
@@ -1795,6 +1851,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       });
       return true;
     }
+
+    if (boundaryTrace)
+      boundaryTrace.record(
+        31,
+        boundaryTrace.requestId,
+        (globalThis as { currentFrame?: number }).currentFrame ?? -1,
+        boundaryTrace.protocol,
+        self.boundaryCount![0]!,
+        boundaryFreeze?.[0] ?? NaN,
+        boundaryFreeze?.length ?? 0,
+        boundaryFreeze?.[boundaryFreeze.length - 1] ?? NaN,
+        self.boundaryFreeze![0]!,
+      );
 
     // Marshal outputs from linear memory ioScratch.outputs[port][channel].
     const outputViews = state.outputViews;

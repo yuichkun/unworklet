@@ -23,6 +23,8 @@ import "./dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 
 import { expect, test, vi } from "vite-plus/test";
 
+import { BoundaryTrace, boundaryContexts } from "./restoreBoundaryTrace.ts";
+import { restoreFrozenCounter } from "./__tests__/browser/fixtures/restore-frozen-counter.processor.ts";
 import { createNode } from "./client.ts";
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
@@ -40,6 +42,7 @@ type RestoreQueues = {
   tasks: Array<() => void>;
 };
 type LoopbackOptions = {
+  boundaryTrace?: BoundaryTrace;
   crossOriginIsolated: boolean;
   beforeRestoreDone?: () => void;
   queues?: RestoreQueues;
@@ -296,6 +299,10 @@ const bootLoopback = async (
 ): Promise<LoopbackSession> => {
   const { wasm } = await compile(processor);
   const harness = installLoopback(wasm, opts);
+  if (opts.boundaryTrace) {
+    boundaryContexts.set(harness.context, opts.boundaryTrace);
+    Object.assign(harness.context, { currentTime: 1.2026666666666668, state: "suspended" });
+  }
   const patched = withWorkletUrls(processor);
   const nodePromise = createNode(harness.context as never, patched, undefined);
   // Wait until addModule + fetch + the REAL WebAssembly.compile settled, the
@@ -1145,6 +1152,38 @@ for (const transport of ["sab", "postMessage"] as const) {
         0,
       );
     } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+for (const transport of ["sab", "postMessage"] as const) {
+  test(`boundary trace (${transport}): main records native assignment and each protocol phase`, async () => {
+    const trace = new BoundaryTrace(64);
+    const session = await bootLoopback(restoreFrozenCounter, {
+      crossOriginIsolated: transport === "sab",
+      boundaryTrace: trace,
+    });
+    try {
+      session.node.params.freeze!.value = 1;
+      session.runQuantum();
+      const saved = await session.node.snapshot();
+      session.node.params.freeze!.value = 0;
+      session.runQuantum();
+      expect((await session.node.restore(saved)).ok).toBe(true);
+      expect(session.harness.capturedProcessorOptions().boundaryTrace).toBe(true);
+      const rows = Array.from({ length: trace.used }, (_, i) =>
+        Array.from(trace.rows.slice(i * 9, i * 9 + 9)),
+      );
+      expect(rows.map((row) => row[0])).toEqual([10, 11, 12, 13, 14, 17, 15, 18, 16]);
+      expect(new Set(rows.map((row) => row[1])).size).toBe(1);
+      expect(rows.every((row) => row[2] === 1.2026666666666668 && row[3] === 2)).toBe(true);
+      expect(rows.find((row) => row[0] === 12)?.[5]).toBe(0);
+      expect(rows.find((row) => row[0] === 13)?.[5]).toBe(1);
+      expect(trace.dropped).toBe(0);
+    } finally {
+      boundaryContexts.delete(session.harness.context);
       session.node.dispose();
       session.harness.cleanup();
     }

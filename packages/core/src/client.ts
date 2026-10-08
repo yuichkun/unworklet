@@ -12,6 +12,8 @@
  * - `inspect(blob)` — non-realtime free function (Q48); needs no `AudioContext`.
  */
 
+import { boundaryContexts } from "./restoreBoundaryTrace.ts";
+
 import type {
   AudioPortDescriptor,
   BufferElementType,
@@ -1269,6 +1271,7 @@ export async function createNode<C>(
   // Web Audio requires at least one native input or output. A portless DSP
   // gets a silent native output, without adding a public audio port.
   const needsSilentOutput = inputs.length === 0 && outputs.length === 0;
+  const boundaryTrace = boundaryContexts.get(context);
   const nodeOptions: AudioWorkletNodeOptions = {
     numberOfInputs: inputs.length,
     numberOfOutputs: needsSilentOutput ? 1 : outputs.length,
@@ -1278,6 +1281,7 @@ export async function createNode<C>(
     // `new WebAssembly.Instance(module)` (= no sync compile on the audio
     // thread = no first-quantum glitch potential).
     processorOptions: {
+      ...(boundaryTrace ? { boundaryTrace: true } : {}),
       ...(egressAccessBuffer === null ? {} : { egressAccessBuffer }),
       ...(ingressAccessBuffer === null ? {} : { ingressAccessBuffer }),
       module: wasmModule,
@@ -1654,6 +1658,20 @@ export async function createNode<C>(
   // writes linear memory in onmessage (= the render-quantum boundary), so it is
   // block-atomic (= §6.1). Each request gets a sequential id, and the worklet's
   // response is matched against the pending map to resolve.
+  const traceBoundary = (phase: number, requestId: number, state: number): void => {
+    if (boundaryTrace) boundaryTrace.requestId = requestId;
+    boundaryTrace?.record(
+      phase,
+      requestId,
+      context.currentTime,
+      context.state === "running" ? 1 : context.state === "suspended" ? 2 : 3,
+      state,
+      params.freeze?.value ?? NaN,
+      0,
+      NaN,
+      NaN,
+    );
+  };
   let snapshotRequestSeq = 0;
   type RestoreReport = { applied: string[]; skipped: string[]; missing: string[] };
   const pendingSnapshots = new Map<
@@ -1673,6 +1691,7 @@ export async function createNode<C>(
     for (const [requestId, pending] of pendingRestores) {
       if (pending.phase !== "queued") return;
       pending.phase = "prepare";
+      traceBoundary(10, requestId, 1);
       try {
         node.port.postMessage({
           kind: "restore-prepare",
@@ -1756,6 +1775,17 @@ export async function createNode<C>(
       const pending = pendingRestores.get(data.requestId);
       if (pending === undefined) return;
       try {
+        traceBoundary(
+          data.kind === "restore-prepared" ? 11 : data.kind === "restore-barrier-done" ? 17 : 18,
+          data.requestId,
+          pending.phase === "prepare"
+            ? 1
+            : pending.phase === "barrier"
+              ? 2
+              : pending.phase === "commit"
+                ? 3
+                : 0,
+        );
         if (data.kind === "restore-prepared" && pending.phase === "prepare") {
           const applied = Array.isArray(data.applied) ? (data.applied as string[]) : [];
           const settings: Array<[AudioParam, number]> = [];
@@ -1764,14 +1794,18 @@ export async function createNode<C>(
             const ap = params[slot.name];
             if (ap) settings.push([ap, Number(decodeScalar("f32", slot.data))]);
           }
+          traceBoundary(12, data.requestId, 1);
           for (const [ap, value] of settings) ap.value = value;
+          traceBoundary(13, data.requestId, 1);
           pending.phase = "barrier";
+          traceBoundary(14, data.requestId, 2);
           node.port.postMessage({ kind: "restore-barrier", requestId: data.requestId });
         } else if (data.kind === "restore-barrier-done" && pending.phase === "barrier") {
           // Web Audio drains control messages before a captured batch of port tasks.
           // The barrier reply forces commit into a later batch, after native param
           // updates have crossed that drain, without replacing automation/modulation.
           pending.phase = "commit";
+          traceBoundary(15, data.requestId, 3);
           node.port.postMessage({
             kind: "restore",
             requestId: data.requestId,
@@ -1779,6 +1813,7 @@ export async function createNode<C>(
             profile: pending.profile,
           });
         } else if (data.kind === "restore-done" && pending.phase === "commit") {
+          traceBoundary(16, data.requestId, 3);
           pendingRestores.delete(data.requestId);
           pending.resolve({
             applied: Array.isArray(data.applied) ? (data.applied as string[]) : [],
