@@ -5,6 +5,7 @@ declare module "vite-plus/test/browser" {
     renderCrossRealmOracle: (
       name: CrossRealmCase,
       sampleRate: number,
+      gainSamples?: number[],
     ) => Promise<CrossRealmObservation>;
   }
 }

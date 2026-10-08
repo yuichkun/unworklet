@@ -20,30 +20,6 @@ const N = 128 * 8;
 /** Reinterpret a Float32Array as raw 32-bit patterns (bit-exact comparison). */
 const bits = (pcm: Float32Array): Uint32Array => new Uint32Array(new Float32Array(pcm).buffer);
 
-const renderNativeGainControl = async (): Promise<Float32Array[]> => {
-  const ctx = new OfflineAudioContext({
-    numberOfChannels: 2,
-    length: CROSSREALM_SAMPLES,
-    sampleRate: SR,
-  });
-  const input = crossRealmInputs("automated-stereo");
-  const buffer = ctx.createBuffer(2, CROSSREALM_SAMPLES, SR);
-  for (const [channel, samples] of input.entries())
-    buffer.copyToChannel(new Float32Array(samples), channel);
-  const source = new AudioBufferSourceNode(ctx, { buffer });
-  const gain = new GainNode(ctx);
-  for (const { sample, value } of crossRealmGainSteps) gain.gain.setValueAtTime(value, sample / SR);
-  source.connect(gain).connect(ctx.destination);
-  source.start(0);
-  try {
-    const rendered = await ctx.startRendering();
-    return [0, 1].map((channel) => new Float32Array(rendered.getChannelData(channel)));
-  } finally {
-    source.disconnect();
-    gain.disconnect();
-  }
-};
-
 const renderRealWorklet = async (): Promise<Float32Array> => {
   const ctx = new OfflineAudioContext({ numberOfChannels: 1, length: N, sampleRate: SR });
   const node = await createNode(ctx, sawWorklet);
@@ -85,9 +61,9 @@ test("cross-realm: the real AudioWorklet output is the finite, bounded sawtooth"
 for (const name of ["saw", "stereo", "automated-stereo", "stateful"] as const) {
   const sampleRate = SR;
   test(`cross-realm: ${name} PCM/events/snapshot match renderOffline at ${sampleRate} Hz`, async () => {
-    const oracle = await commands.renderCrossRealmOracle(name, sampleRate);
+    const channels = name === "stereo" || name === "automated-stereo" ? 2 : 1;
     const ctx = new OfflineAudioContext({
-      numberOfChannels: name === "stereo" || name === "automated-stereo" ? 2 : 1,
+      numberOfChannels: name === "automated-stereo" ? 3 : channels,
       length: CROSSREALM_SAMPLES + 128,
       sampleRate,
     });
@@ -101,9 +77,6 @@ for (const name of ["saw", "stereo", "automated-stereo", "stateful"] as const) {
       }[name],
       { initial: name === "stereo" ? { gain: 0.5 } : {} },
     );
-    if (name === "automated-stereo")
-      for (const { sample, value } of crossRealmGainSteps)
-        node.params.gain!.setValueAtTime(value, sample / sampleRate);
     const received: CrossRealmEvent[] = [];
     const unsubscribe =
       name === "stateful"
@@ -122,6 +95,7 @@ for (const name of ["saw", "stereo", "automated-stereo", "stateful"] as const) {
           })
         : () => {};
     let source: AudioBufferSourceNode | undefined;
+    const probeNodes: AudioNode[] = [];
     try {
       expect(node.diagnostics.transport).toBe(
         globalThis.crossOriginIsolated ? "sab" : "postMessage",
@@ -135,7 +109,25 @@ for (const name of ["saw", "stereo", "automated-stereo", "stateful"] as const) {
         source.connect(node.inputs.main!);
         source.start(0);
       }
-      node.outputs.main!.connect(ctx.destination);
+      if (name === "automated-stereo") {
+        const splitter = new ChannelSplitterNode(ctx, { numberOfOutputs: 2 });
+        const merger = new ChannelMergerNode(ctx, { numberOfInputs: 3 });
+        const unity = new ConstantSourceNode(ctx, { offset: 1 });
+        const probe = new GainNode(ctx);
+        for (const { sample, value } of crossRealmGainSteps) {
+          node.params.gain!.setValueAtTime(value, sample / sampleRate);
+          probe.gain.setValueAtTime(value, sample / sampleRate);
+        }
+        node.outputs.main!.connect(splitter);
+        splitter.connect(merger, 0, 0);
+        splitter.connect(merger, 1, 1);
+        unity.connect(probe).connect(merger, 0, 2);
+        merger.connect(ctx.destination);
+        unity.start(0);
+        probeNodes.push(splitter, merger, unity, probe);
+      } else {
+        node.outputs.main!.connect(ctx.destination);
+      }
       // Drain each quantum while suspended: no wall-clock scheduling or
       // postMessage pool exhaustion is part of this bounded differential test.
       const boundaries = Array.from({ length: 4 }, (_, i) =>
@@ -152,31 +144,14 @@ for (const name of ["saw", "stereo", "automated-stereo", "stateful"] as const) {
       unsubscribe();
       await ctx.resume();
       const rendered = await rendering;
-      const pcm = Array.from({ length: rendered.numberOfChannels }, (_, i) =>
+      const pcm = Array.from({ length: channels }, (_, i) =>
         rendered.getChannelData(i).slice(0, CROSSREALM_SAMPLES),
       );
-      if (name === "automated-stereo") {
-        const control = await renderNativeGainControl();
-        const controlBits = control.map(bits);
-        const mismatches = pcm.flatMap((channel, c) =>
-          Array.from(bits(channel)).flatMap((value, sample) =>
-            value === controlBits[c]![sample]
-              ? []
-              : [{ channel: c, sample, worklet: value, nativeGain: controlBits[c]![sample] }],
-          ),
-        );
-        console.info(
-          "automation-native-control",
-          JSON.stringify({
-            userAgent: navigator.userAgent,
-            stepFrame: (255 / SR) * SR,
-            mismatchCount: mismatches.length,
-            firstMismatches: mismatches.slice(0, 4),
-            nativeBoundary: control.map((channel) => Array.from(channel.slice(254, 257))),
-            workletBoundary: pcm.map((channel) => Array.from(channel.slice(254, 257))),
-          }),
-        );
-      }
+      const gainSamples =
+        name === "automated-stereo"
+          ? Array.from(rendered.getChannelData(2).slice(0, CROSSREALM_SAMPLES))
+          : undefined;
+      const oracle = await commands.renderCrossRealmOracle(name, sampleRate, gainSamples);
       expect(observeCrossRealm(pcm, received, state)).toEqual(oracle);
       if (name === "automated-stereo")
         for (const corrupted of corruptCrossRealmAutomation(pcm))
@@ -184,6 +159,7 @@ for (const name of ["saw", "stereo", "automated-stereo", "stateful"] as const) {
     } finally {
       unsubscribe();
       source?.disconnect();
+      for (const probe of probeNodes) probe.disconnect();
       node.dispose();
     }
   });

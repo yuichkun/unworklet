@@ -91,6 +91,28 @@ for (const sampleRate of [44_100, 48_000]) {
   });
 }
 
+test("cross-realm oracle uses the externally supplied parameter vector", async () => {
+  const vector = Array.from({ length: 512 }, (_, i) => (i < 17 ? 0.125 : i < 257 ? 0.75 : 1.5));
+  const result = await renderCrossRealmOracle("automated-stereo", 48_000, vector);
+  const expected = [
+    Float32Array.from(
+      { length: 512 },
+      (_, i) => (i / 1024) * (i < 17 ? 0.125 : i < 257 ? 0.75 : 1.5),
+    ),
+    Float32Array.from(
+      { length: 512 },
+      (_, i) => (-(i + 1) / 2048) * (i < 17 ? 0.125 : i < 257 ? 0.75 : 1.5),
+    ),
+  ];
+  expect(result.pcm).toEqual(
+    expected.map((channel) => Array.from(new Uint32Array(channel.buffer))),
+  );
+  expect(result.events).toEqual([]);
+  expect(result.snapshot.slots).toEqual([
+    { name: "gain", kind: "param", type: "f32", data: [0, 0, 192, 63] },
+  ]);
+});
+
 test("cross-realm comparison rejects a one-bit PCM error, missing/reordered/timed events and late buffer corruption", async () => {
   const expected = await renderCrossRealmOracle("stateful", 48_000);
   const raw = {

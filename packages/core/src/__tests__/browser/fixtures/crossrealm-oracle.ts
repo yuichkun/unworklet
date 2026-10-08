@@ -11,7 +11,11 @@ import {
   type CrossRealmEvent,
 } from "./crossrealm-observation.ts";
 
-export async function renderCrossRealmOracle(name: CrossRealmCase, sampleRate: number) {
+export async function renderCrossRealmOracle(
+  name: CrossRealmCase,
+  sampleRate: number,
+  gainSamples?: number[],
+) {
   const inputs = crossRealmInputs(name);
   const result = await renderOffline(
     { saw, stereo: stereoGain, "automated-stereo": stereoGain, stateful: crossrealmStateful }[name],
@@ -21,7 +25,7 @@ export async function renderCrossRealmOracle(name: CrossRealmCase, sampleRate: n
       inputs: { main: inputs },
       params:
         name === "automated-stereo"
-          ? { gain: crossRealmGainSamples() }
+          ? { gain: gainSamples ?? crossRealmGainSamples() }
           : name === "stereo"
             ? { gain: [0.5] }
             : {},

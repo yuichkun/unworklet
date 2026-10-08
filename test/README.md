@@ -51,13 +51,22 @@ The context suspends after each quantum so transport delivery is drained before
 continuing; the fourth suspension captures state at exactly the compared boundary.
 An extra unobserved quantum lets the context finish after that snapshot.
 
-The stereo automation row schedules gain values 0.5, 0.25, 1, 0 and 2 at samples
-0, 64, 128, 255 and 384. It compares every PCM bit and the final persistent gain
-against per-sample offline inputs, including within-quantum and quantum-boundary
-changes. Independent piecewise expectations pin the offline output. Negative
-controls alter raw native and offline PCM before projection, modeling a one-sample
-late first transition and holding that transition until the next quantum. This
-schedule is not a guarantee about every floating-point time-to-sample boundary.
+The stereo automation row schedules gain values 0.5, 0.25, 1, 0 and 2 at times
+0/48000, 64/48000, 128/48000, 255/48000 and 384/48000 seconds. A framework-free
+ConstantSourceNode (value 1) through a native GainNode receives the same schedule
+in the same context and render as the worklet. A third output channel captures
+that native parameter vector; only this independent channel supplies the offline
+renderer's per-sample gain. The two worklet output channels never supply an
+expected value. Every worklet PCM bit and persistent snapshot byte is compared.
+This controls for the host's seconds-to-sample quantization; it does not establish
+that quantization is correct or promise all floating-point time boundaries.
+
+Independent Node piecewise expectations cover both the authored sample vector
+and a separately supplied literal vector. Negative controls alter raw native and
+offline PCM before projection, modeling a one-sample late first transition and
+holding that transition until the next quantum. The sample-255 seconds-to-frame
+difference is characterized by the framework-free native control in
+[PR #166](https://github.com/yuichkun/unworklet/pull/166).
 
 The Node oracle tests independently pin stereo/stateful PCM and complete event and
 state values at 44.1 and 48 kHz. Negative controls mutate raw PCM, events and decoded state before the observation
