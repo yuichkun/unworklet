@@ -637,6 +637,15 @@ In `.uwk.ts` arithmetic/compare/power/`neg`/`not` are written with operators (§
 the named functions remain available and `sin`/`exp`/`clamp`/`pipe`/etc. are
 written directly.
 
+For unary numeric functions (`neg`, `abs`, and the float-math functions above),
+a JavaScript `number` produces `Node<"f32">`; a typed `Node<T>` preserves `T`.
+A `Node<T> | number` operand produces `Node<T> | Node<"f32">`. A result annotation
+or generic type argument cannot select a different runtime scalar type. Construct
+the operand explicitly when needed: `abs(i32(-7)).div(2)` uses integer division
+and yields `3`, while `abs(-7).div(2)` uses float division and yields `3.5`.
+Use `count.write(abs(i32(-7)))` for an `i32` state and `sin(f64(0.5))` for an `f64`
+result. — [cite: packages/core/src/dsl/primitives.ts :: `export function abs(x: number): Node<"f32">;`]
+
 Floating `mod` / `%` uses truncating remainder, with the dividend's sign,
 including `-0` for negative exact multiples. It is exact for the operands'
 `f32` or `f64` values, including subnormals; `f32` inputs are rounded before

@@ -11,6 +11,16 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Breaking
 
+- **Unary numeric functions fix number-only results to `Node<"f32">`.**
+  `neg`, `abs`, `sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`, `floor`,
+  `ceil`, and `frac` reject contextual assignments or explicit generic claims
+  that contradict the emitted scalar type. Use a typed operand, such as
+  `abs(i32(-7))` or `sin(f64(0.5))`, rather than a result annotation or generic
+  argument to select integer or double-precision math. `Node<T> | number`
+  inputs return `Node<T> | Node<"f32">`; normalize the operand explicitly when
+  a single result type is required. Runtime behavior is unchanged. This type
+  correction requires the next minor release under the pre-1.0 policy.
+
 - **The `.expose(options)` preservation bug fix restores core validation for
   non-literal options.** For example, variable options with
   `publish: { rateFps: 0 }`, buffer `publish`, or whole `null` / `undefined`
