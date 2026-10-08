@@ -64,6 +64,30 @@ processors, scheduled messages/MIDI, automation, snapshot restore/migration,
 other native sample rates (the plugin artifact rejects mismatches), real-time
 contention, deadlines or other browsers.
 
+## Generic event/message wire differential
+
+`packages/offline/src/event-wire-differential.test.ts` owns a bounded Node
+comparison of literal wire bytes, compiled-WASM dispatch/emission, and public
+`renderOffline` injection/draining. A separate drop-oldest FIFO predicts retained
+packets and overflow counts; expected slot/content bytes use literal offsets and
+DataView writes, without production codecs or ring helpers. Ingress observations
+are persistent state rows, separate from egress, so reciprocal encode/decode
+mistakes cannot cancel.
+
+The corpus covers inbound f32 scalar/array fields and outbound f32/i32/bool
+scalars with one f32, u8 or f64 array, including sealed field order, later emit-site
+reordering, aligned payload chunks, full payload contents and retention after
+reuse. Six quanta exercise empty, exactly full, overflow, drain and refill at
+capacity 16. Seeds cross signed/unsigned 32-bit boundaries while filling,
+and cross head and tail separately on drop-oldest pushes.
+Only meaningful payload bytes are asserted; unused chunk padding is excluded.
+The offline package's existing native coverage job owns this suite.
+
+This is not general serialization or concurrency proof: multiple variable fields,
+other inbound element types, oversized/clipped payloads, malformed wire input,
+concurrent publishers, real-browser transport, all capacities and MIDI/sysex
+remain outside this corpus.
+
 ## Consolidation policy
 
 The five package coverage jobs own their ordinary Node assertions once per Test workflow.
@@ -114,7 +138,8 @@ HEAD and pull-request merge-tree results separate and disclose runner variance.
 
 The portfolio does not yet establish every desired guarantee. The bounded matrix
 above addresses layer D in [#14](https://github.com/yuichkun/unworklet/issues/14);
-its independent ring/wire differential and debug self-check items remain open. Track
+the generic event/message corpus above addresses part of layer C. Remaining
+ring/wire cases and debug self-check work stay open. Track
 real-time CPU/deadline/xrun budgets in [#24](https://github.com/yuichkun/unworklet/issues/24),
 and deterministic MIDI boundaries and missing semantic assertions in
 [#31](https://github.com/yuichkun/unworklet/issues/31).
