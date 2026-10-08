@@ -37,7 +37,7 @@ through `vite.ci.config.ts`. Every package and DevTools UI must retain at least
 
 `packages/core/src/__tests__/browser/crossrealm.test.ts` compares real Chromium
 AudioWorklet execution with Node `renderOffline` for the same saw, stereo gain,
-and stateful input/event processors at 44.1 and 48 kHz. Both SAB and postMessage
+and stateful input/event processors at the plugin’s baked 48 kHz rate. Both SAB and postMessage
 projects execute the matrix; the fallback wrapper imports the common assertions.
 Vitest browser commands run the offline oracle in Node, without bundling its
 compiler or WAV dependencies into the browser.
@@ -52,7 +52,8 @@ continuing; the fourth suspension captures state at exactly the compared boundar
 An extra unobserved quantum lets the context finish after that snapshot.
 
 The Node oracle tests independently pin stereo/stateful PCM and complete event and
-buffer values. Negative controls require the same exact equality assertion to
+state values at 44.1 and 48 kHz. Negative controls mutate raw PCM, events and decoded state before the observation
+projection, then require the same exact equality assertion to
 reject a one-bit PCM error, a missing/reordered/mistimed/corrupted event, a changed
 state scalar and a changed byte beyond the snapshot preview. The existing saw
 range/reference and repeated-render checks remain separate witnesses.
@@ -60,7 +61,8 @@ range/reference and repeated-render checks remain separate witnesses.
 This is a bounded renderer/transport comparison using shared compiler code, not
 an independent compiler proof. It covers static params and audio inputs, not all
 processors, scheduled messages/MIDI, automation, snapshot restore/migration,
-real-time contention, deadlines or other browsers.
+other native sample rates (the plugin artifact rejects mismatches), real-time
+contention, deadlines or other browsers.
 
 ## Consolidation policy
 
