@@ -89,8 +89,23 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
   const start = document.createElement("button");
   start.textContent = "Start restore reproduction";
   document.body.append(start);
+  const observations: Array<Record<string, unknown>> = [];
+  const observe = (phase: string, slots?: unknown): void => {
+    const currentTime = ctx.currentTime;
+    observations.push({
+      phase,
+      currentTime,
+      frameProduct: currentTime * ctx.sampleRate,
+      contextState: ctx.state,
+      sampleRate: ctx.sampleRate,
+      freeze: node.params.freeze!.value,
+      automationRate: node.params.freeze!.automationRate,
+      slots,
+    });
+  };
   try {
     const saved = await node.snapshot();
+    observe("saved-before-rendering", inspectSnapshot(saved).slots);
     node.params.freeze!.value = 0;
     const resumed = new Promise<void>((resolve, reject) => {
       start.addEventListener("click", () => void ctx.resume().then(resolve, reject), {
@@ -100,7 +115,9 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
     await userEvent.click(start);
     await resumed;
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(inspectSnapshot(await node.snapshot()).slots.count).not.toEqual({
+    const advancing = inspectSnapshot(await node.snapshot());
+    observe("before-live-restore", advancing.slots);
+    expect(advancing.slots.count).not.toEqual({
       kind: "state",
       type: "f32",
       value: 0,
@@ -111,25 +128,44 @@ test("live restore keeps a frozen accumulator unchanged while the main thread is
       /* Keep the acknowledgement queued while audio renders. */
     }
     expect((await restoring).ok).toBe(true);
+    observe("live-restore-resolved");
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
+    const afterLive = inspectSnapshot(await node.snapshot());
+    observe("after-live-restore", afterLive.slots);
+    expect(afterLive.slots.count).toEqual({
       kind: "state",
       type: "f32",
       value: 0,
     });
     node.params.freeze!.value = 0;
     await new Promise((resolve) => setTimeout(resolve, 30));
+    observe("before-crossing-restore-call");
     const crossingSuspension = node.restore(saved);
+    observe("before-immediate-suspend-request");
     await ctx.suspend();
+    observe("suspend-resolved");
     expect((await crossingSuspension).ok).toBe(true);
+    observe("crossing-restore-resolved-before-resume");
     await ctx.resume();
+    observe("resume-resolved");
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
+    const afterResume = inspectSnapshot(await node.snapshot());
+    observe("after-resume", afterResume.slots);
+    expect(afterResume.slots.count).toEqual({
       kind: "state",
       type: "f32",
       value: 0,
     });
   } finally {
+    console.log(
+      "SNAPSHOT_BOUNDARY_OBSERVATIONS " +
+        JSON.stringify({
+          crossOriginIsolated,
+          userAgent: navigator.userAgent,
+          suspendRequest: "AudioContext.suspend() without requested time",
+          observations,
+        }),
+    );
     node.dispose();
     mute.disconnect();
     start.remove();
