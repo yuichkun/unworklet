@@ -1,11 +1,14 @@
 import "./dsl/primitives.ts";
 
+import { execFileSync } from "node:child_process";
+
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
 import { audioOutput, event, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
+import { extractWorkletMeta } from "./worklet.ts";
 
 interface MockSelf {
   port: { postMessage: (m: unknown) => void; addEventListener: () => void; start: () => void };
@@ -176,17 +179,68 @@ test.each([
   expect(diagnostics(fixture.self)).toEqual([]);
 });
 
-test.each([false, undefined])(
-  "the %s self-check gate leaves corrupt rings silent",
-  async (gate) => {
-    vi.stubGlobal("__UNWORKLET_SELFCHECK__", gate);
-    const fixture = await setup();
-    for (const { headers } of families) fixture.live[headers][1]!.set([0, 0, -1]);
-    processQuantum(fixture, 0);
-    processQuantum(fixture, 1);
-    expect(diagnostics(fixture.self)).toEqual([]);
-  },
-);
+test("the false self-check gate leaves corrupt rings silent", async () => {
+  vi.stubGlobal("__UNWORKLET_SELFCHECK__", false);
+  const fixture = await setup();
+  for (const { headers } of families) fixture.live[headers][1]!.set([0, 0, -1]);
+  processQuantum(fixture, 0);
+  processQuantum(fixture, 1);
+  expect(diagnostics(fixture.self)).toEqual([]);
+});
+
+test("an absent self-check global leaves corrupt rings silent in native Node ESM", async () => {
+  const proc = makeProc();
+  const { wasm } = await compile(proc);
+  const meta = extractWorkletMeta(
+    proc.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+  );
+  // Native ESM preserves ReferenceError for an undeclared identifier; the test
+  // runner's module evaluator can resolve a deleted stub to undefined instead.
+  const result = execFileSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      "--input-type=module",
+      "-e",
+      `import { readFileSync } from "node:fs";
+import { makeWorkletNamespaceFromMeta } from ${JSON.stringify(new URL("./worklet.ts", import.meta.url).href)};
+const { wasm, meta } = JSON.parse(readFileSync(0, "utf8"));
+const worklet = makeWorkletNamespaceFromMeta(meta);
+const messages = [];
+const self = { port: { postMessage: (message) => messages.push(message), addEventListener() {}, start() {} } };
+worklet.initialize(self, { processorOptions: {
+  wasm: new Uint8Array(wasm), transport: "postMessage",
+  eventRings: worklet.eventRings, messageRings: worklet.messageRings, midiRings: worklet.midiRings,
+} });
+const symbol = Object.getOwnPropertySymbols(self).find((s) => s.description === "unworklet.workletState");
+const live = self[symbol];
+for (const headers of [live.eventRingsWasmHeaderViews, live.messageRingsWasmHeaderViews, live.midiRingsWasmHeaderViews]) {
+  headers[1].set([0, 0, -1]);
+}
+const output = [];
+const active = [];
+for (let q = 0; q < 2; q++) {
+  const block = new Float32Array(128);
+  active.push(worklet.process(self, [], [[block]], {}));
+  output.push(...block);
+}
+console.log(JSON.stringify({
+  hasGate: Object.hasOwn(globalThis, "__UNWORKLET_SELFCHECK__"),
+  ready: messages.some((message) => message.kind === "ready"),
+  diagnostics: messages.filter((message) => message.kind === "selfcheck-violation"),
+  active, output,
+}));`,
+    ],
+    { input: JSON.stringify({ wasm: Array.from(wasm), meta }), encoding: "utf8", timeout: 4000 },
+  );
+  expect(JSON.parse(result)).toEqual({
+    hasGate: false,
+    ready: true,
+    diagnostics: [],
+    active: [true, true],
+    output: Array.from({ length: 256 }, (_, i) => i + 1),
+  });
+});
 
 test("identical violations in separate rings are each reported exactly once", async () => {
   vi.stubGlobal("__UNWORKLET_SELFCHECK__", true);
