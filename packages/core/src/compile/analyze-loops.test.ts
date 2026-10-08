@@ -27,7 +27,9 @@ for (const scope of ["process", "message", "MIDI"] as const) {
     `${scope} rejects forSample.byN stride %s at compilation`,
     async (stride) => {
       const processor = defineProcessor(() => ({
-        process: inScope(scope, () => forSample.byN(stride, () => {})),
+        process: inScope(scope, () =>
+          forSample.byN(stride, (_, everyNSamples) => everyNSamples(3, () => {})),
+        ),
       }));
       await expect(compile(processor)).rejects.toThrow(/\[illegal-stride\]/);
     },
@@ -71,6 +73,9 @@ for (const scope of ["process", "message", "MIDI"] as const) {
     [32, 48],
     [64, 1],
     [128, 256],
+    [2, 2 ** 32 + 1],
+    [8, 2 ** 32],
+    [128, 2 ** 64],
   ])(`${scope} executes valid stride %s and divisor %s in WASM`, async (stride, divisor) => {
     const processor = defineProcessor(() => {
       const out = audioOutput({ channels: 1, name: "out" });

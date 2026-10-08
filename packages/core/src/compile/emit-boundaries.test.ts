@@ -188,7 +188,7 @@ test("an empty sub-rate callback still advances its cadence without trapping", a
   const counter = Object.values(memory.regions.everyNSamplesCounters.slots)[0]!;
   instance.process();
   instance.process();
-  expect(new DataView(instance.memory.buffer).getUint32(counter, true)).toBe(256);
+  expect(new DataView(instance.memory.buffer).getUint32(counter, true)).toBe(4);
 });
 
 test("an empty MIDI handler consumes matching messages without emitting output", async () => {

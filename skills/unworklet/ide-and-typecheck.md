@@ -23,12 +23,11 @@ Two layers, one setup:
 ```
 
 Inherits both the `?worklet` ambient types and the `.uwk.ts` editor checker.
-[cite: packages/unplugin/README.md L28-31; README.md L52-55; types `node.params.<name>` with 0
-diagnostics — packages/unplugin/src/worklet-dts-integration.test.ts L102-115]
+[cite: packages/unplugin/README.md :: `## Setup`] [cite: README.md :: `{ "extends": "./.unworklet/tsconfig.json" }`] [cite: packages/unplugin/src/worklet-dts-integration.test.ts :: `test("extends: the plugin's generated tsconfig types node.params with a one-line extends"`]
 
 VS Code: run **"TypeScript: Select TypeScript Version → Use Workspace Version"** — the `.uwk.ts`
 checker plugin loads only under workspace TS.
-[cite: README.md L64-67]
+[cite: README.md :: `TypeScript: Select TypeScript Version → Use Workspace Version`]
 
 ### What you get
 
@@ -41,23 +40,24 @@ node.params.drive.value = 8; // node.params.<name> completes + types (AudioParam
 
 The typed node surface is `params` / `state` / `events` / `midi` / `inputs` / `outputs`
 (per-processor). Full surface + `createNode`: see dsl.md.
-[cite: README.md L113-129]
+[cite: README.md :: `node.params.drive.value = 8;`]
 
 ### How it resolves (two layers of types)
 
 - **`@unworklet/unplugin/client`** — ambient `declare module "*?worklet"` → default
   `CompiledProcessor<unknown>`. Resolves the import; the per-processor witness is erased to
   `unknown` at this boundary.
-  [cite: packages/unplugin/client.d.ts L11-21; export `./client` → client.d.ts —
-  packages/unplugin/package.json L38-40]
+  [cite: packages/unplugin/client.d.ts :: `declare module "*?worklet" {`]
+  The workspace and published subpath mappings are
+  [cite: packages/unplugin/package.json :: `"types": "./src/devbridge.ts", "development": "./src/devbridge.ts", "import": "./dist/devbridge.mjs" }, "./client": { "types": "./client.d.ts" }`]
+  and [cite: packages/unplugin/package.json :: `"types": "./dist/devbridge.d.mts", "import": "./dist/devbridge.mjs" }, "./client": { "types": "./client.d.ts" }`].
 - **`.unworklet/worklets.d.ts`** — one `declare module "*/<basename>?worklet"` per processor,
   carrying its concrete `params`/`state`/`events`/`midi`/`inputs`/`outputs`. This is what makes
   `node.params.drive` resolve to the real param. Written by the Vite plugin at dev startup and as it compiles, and
   by `unworklet-tsc` for `.uwk.ts` processors before it runs tsc.
-  [cite: packages/lang/src/worklet-dts.ts L18-163; packages/unplugin/src/index.ts L816;
-  packages/lang/src/unworklet-tsc.ts L87-116]
+  [cite: packages/lang/src/worklet-dts.ts :: `export function workletsDts(`] [cite: packages/unplugin/src/index.ts :: `const writeWorkletsWitness =`] [cite: packages/lang/src/unworklet-tsc.ts :: `async function populateWorkletsWitness(`]
 - **`@unworklet/lang/typescript-plugin`** — the editor TS plugin that type-checks `.uwk.ts` sugar.
-  [cite: packages/lang/package.json L39-42]
+  [cite: packages/lang/src/typescript-plugin.ts :: `export default createLanguageServicePlugin(`]
 
 ### What the plugin writes — the `.unworklet/` dir (generated; gitignore it)
 
@@ -71,9 +71,7 @@ the build reads tsconfig (an async write loses the race → "Tsconfig not found"
   added/removed imports refresh it; invalid or deleted processors lose stale declarations.
   Builds generate types from their loaded processors. Written only on content change
   (no dev-watch loop).
-  [cite: `seedUnworkletDir` lives in `packages/lang/src/seed-unworklet-dir.ts:53-65`
-  (called from `packages/unplugin/src/index.ts:903`); `writeWorkletsWitness` is at
-  `packages/unplugin/src/index.ts:786-817`. Gitignore `.unworklet/`.]
+  [cite: packages/lang/src/seed-unworklet-dir.ts :: `export const seedUnworkletDir =`] [cite: packages/unplugin/src/index.ts :: `seedUnworkletDir(projectRoot);`] [cite: packages/unplugin/src/index.ts :: `const writeWorkletsWitness =`] Gitignore `.unworklet/`.
 
 Exact generated `.unworklet/tsconfig.json`:
 
@@ -92,15 +90,13 @@ Exact generated `.unworklet/tsconfig.json`:
 
 (`allowImportingTsExtensions`+`noEmit` let a `.uwk.ts` specifier type-resolve — e.g. importing a
 sibling subgraph; the bundler does the emit.)
-[cite: `GENERATED_TSCONFIG` lives in `packages/lang/src/seed-unworklet-dir.ts:19-35`
-(re-exported from `packages/lang/src/index.ts:32`).]
+[cite: packages/lang/src/seed-unworklet-dir.ts :: `export const GENERATED_TSCONFIG =`] [cite: packages/lang/src/index.ts :: `export { seedUnworkletDir, GENERATED_TSCONFIG }`]
 
 ### Gotchas
 
 - **Do NOT add your own `include`** on the extending tsconfig. `extends` does not merge `include`;
   the generated one must own it. Your `compilerOptions` (`module`/`lib`/…) DO merge on top.
-  [cite: `packages/lang/src/seed-unworklet-dir.ts:4-17` (JSDoc) + `L30` (the `include` field);
-  README.md L57-62.]
+  [cite: packages/lang/src/seed-unworklet-dir.ts :: `include: ["worklets.d.ts", "../**/*.ts", "../**/*.tsx"]`]
 - The `.uwk.ts` checker loads only under **workspace TS** (do the VS Code step above).
 - `**/*` globs skip dot-folders — that's why `worklets.d.ts` is always listed explicitly.
 
@@ -122,11 +118,11 @@ Write the three settings directly — still no `vite-env.d.ts`:
 List `.unworklet/worklets.d.ts` **explicitly** (a `**/*` glob skips the dot-folder). If this is
 your first `types` entry, also list packages you rely on (e.g. `"node"`) — `types` disables
 automatic `@types` loading.
-[cite: README.md L69-91; proven — packages/unplugin/src/worklet-dts-integration.test.ts L117-133]
+[cite: packages/unplugin/src/worklet-dts-integration.test.ts :: `test("manual escape hatch: types + plugins + include the type file, no extends, no vite-env"`]
 
 Alt (inside a `.d.ts`): `/// <reference types="@unworklet/unplugin/client" />` pulls the same
 ambient.
-[cite: packages/unplugin/client.d.ts L5]
+[cite: packages/unplugin/client.d.ts :: `/// <reference types="@unworklet/unplugin/client" />`]
 
 ---
 
@@ -141,7 +137,7 @@ editor), so a build agrees with the editor.
 
 - Binary: **`unworklet-tsc`** → `./dist/unworklet-tsc.mjs`, shipped by **`@unworklet/lang`**
   (devDependency).
-  [cite: packages/lang/package.json L21-23]
+  [cite: packages/lang/package.json :: `"unworklet-tsc": "./dist/unworklet-tsc.mjs"`]
 
 ### Command
 
@@ -153,8 +149,7 @@ Drop it where `tsc` would go in the build script:
 ```
 
 Ad-hoc: `unworklet-tsc --noEmit`.
-[cite: packages/lang/README.md L134-141, L148-150; test runs the shipped bin
-`node dist/unworklet-tsc.mjs --noEmit` — packages/lang/src/unworklet-tsc.test.ts L93, L152]
+[cite: packages/lang/README.md :: `"build": "unworklet-tsc --noEmit && vite build"`] [cite: packages/lang/src/unworklet-tsc.test.ts :: `function check(source: string)`]
 
 ### What it checks
 
@@ -163,43 +158,41 @@ Ad-hoc: `unworklet-tsc --noEmit`.
 - **`.ts` files (including `.processor.ts`)** are checked exactly as `tsc` would.
 - **`.uwk.ts` files** get their sugar type-checked instead of being flagged as raw TS — plain
   `tsc` fails on the sugar (e.g. `a * b` on two `Node`s).
-  [cite: packages/lang/src/unworklet-tsc.ts L1-29]
+  [cite: packages/lang/src/unworklet-tsc.ts :: `return { languagePlugins: [createUwkLanguagePlugin(ts)] };`]
 - **Self-seeds `.unworklet/`** — before it hands anything to tsc, `unworklet-tsc` calls
   `seedUnworkletDir` on the directory of the tsconfig being checked — the `--project` /
   `-p` target, falling back to the one found from the cwd — which writes `.unworklet/tsconfig.json` (and an empty
   `worklets.d.ts` if none exists yet). Safe as the first command on a fresh clone: no prior
   `vite dev` / `vite build` needed. The seed is idempotent — a later Vite run overwrites the
-  same tsconfig content and fills in `worklets.d.ts`. [cite: packages/lang/src/unworklet-tsc.ts L41-49]
+  same tsconfig content and fills in `worklets.d.ts`. [cite: packages/lang/src/unworklet-tsc.ts :: `seedUnworkletDir(projectDir);`]
 - Internally forces **`skipLibCheck: true`** so the injected authoring globals
   (`Node` / `event` / `process`) don't collide with `lib.dom` / `@types/node` as `Duplicate
 identifier`. Your `.uwk.ts` / `.ts` stay fully checked; only `.d.ts` lib/`@types` conflicts are
   skipped.
-  [cite: packages/lang/src/unworklet-tsc.ts L44]
+  [cite: packages/lang/src/unworklet-tsc.ts :: `options.options.skipLibCheck = true;`]
 
 ### tsconfig requirement
 
 Checks against your existing `tsconfig.json` — it must `include` your `.uwk.ts` files. Works with
 or without the editor's `plugins` entry; the CLI injects the language plugin itself (the editor
 `plugins` entry is only for the editor).
-[cite: packages/lang/README.md L143-146; test tsconfig carries no `plugins` —
-packages/lang/src/unworklet-tsc.test.ts L79, L133]
+[cite: packages/lang/src/unworklet-tsc.ts :: `return { languagePlugins: [createUwkLanguagePlugin(ts)] };`]
 
 ### Verified behavior (run against the shipped `dist` bin)
 
-- Valid `.uwk.ts` sugar → empty output, exit `0`. [L97-109]
+- Valid `.uwk.ts` sugar → empty output, exit `0`. [cite: packages/lang/src/unworklet-tsc.test.ts :: `test("unworklet-tsc type-checks valid .uwk.ts sugar and exits 0"`]
 - Real DOM + `@types/node` app with `skipLibCheck: false` → still passes (injected globals must
-  not fail the build). [L111-156]
+  not fail the build). [cite: packages/lang/src/unworklet-tsc.test.ts :: `test("unworklet-tsc passes on a real DOM + @types/node app with skipLibCheck off (the injected ambient globals must not fail the build)"`]
 - Real type error (a `bool` `Node` written to an `f32` output) → exit non-zero; the error names
   `Node<"bool">` / `Node<"f32">`, mapped onto the author's `check.uwk.ts` (not a virtual file).
-  [L158-172]
-  [cite: packages/lang/src/unworklet-tsc.test.ts]
+  [cite: packages/lang/src/unworklet-tsc.test.ts :: `test("unworklet-tsc reports a .uwk.ts type error, mapped to the source, and exits non-zero"`]
 
 ### Scope note — `?worklet`
 
 `unworklet-tsc` registers the extra extension `[".uwk.ts"]` only. `?worklet` is a bundler import
 query handled by `@unworklet/unplugin`, not this CLI. A `.processor.ts` imported with `?worklet`
 is plain `.ts` and is checked as `tsc` would.
-[cite: packages/lang/src/unworklet-tsc.ts L29; packages/lang/README.md L257]
+[cite: packages/lang/src/unworklet-tsc.ts :: `runTsc(tscPath, [".uwk.ts"], (ts, options) => {`]
 
 ---
 

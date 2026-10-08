@@ -1,54 +1,179 @@
-/**
- * The shipped AI guide (`skills/unworklet/`) anchors its claims with
- * `[cite: <path> L<a>-<b>]` markers. Those anchors are the guide's link to the
- * implementation — the thing that makes a claim checkable instead of folklore —
- * and they rot silently: moving a file leaves the guide pointing at nothing,
- * and a reader (human or AI) has no way to tell a stale anchor from a live one.
- *
- * So the anchors are checked here rather than trusted. A cited path must exist,
- * and a cited line range must fit inside the file it names. Content drift is not
- * something a test can catch, but a dangling path is, and that is the failure
- * mode that has actually happened.
- */
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
+import { marked, type Tokens } from "marked";
 import { expect, test } from "vite-plus/test";
+
+import { validateGuideCitations } from "./guide-cites.ts";
 
 const REPO = path.resolve(import.meta.dirname, "..");
 const GUIDE_DIR = path.join(REPO, "skills/unworklet");
 
-/** `packages/lang/src/worklet-dts.ts L18-163` → the path and the last line cited. */
-const CITE = /\[cite:([^\]]*)\]/g;
-const REF =
-  /((?:packages|examples|scripts)\/[A-Za-z0-9/._-]+\.[A-Za-z]+)(?:\s+L(\d+)(?:-(\d+))?)?/g;
-
-type Ref = { file: string; path: string; lastLine: number | undefined };
-
-function citedRefs(): Ref[] {
-  const out: Ref[] = [];
-  for (const name of readdirSync(GUIDE_DIR).filter((f) => f.endsWith(".md"))) {
-    const text = readFileSync(path.join(GUIDE_DIR, name), "utf8");
-    for (const [, body] of text.matchAll(CITE)) {
-      for (const [, p, from, to] of (body ?? "").matchAll(REF)) {
-        const last = to ?? from;
-        out.push({ file: name, path: p!, lastLine: last === undefined ? undefined : Number(last) });
-      }
+function guideReferenceFiles(markdown: string): string[] {
+  const locations = markdown
+    .replace(/(\[cite:\s*[\w./-]+\s*::\s*)`[^`]+`(\s*\])/g, "$1`excerpt`$2")
+    .replace(/<(pre|code|script|style|template)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "");
+  const prose: string[] = [];
+  void marked.walkTokens(marked.lexer(locations), (token) => {
+    if (
+      (token.type === "text" && !("tokens" in token && token.tokens)) ||
+      (token.type === "codespan" && !token.text.includes("[cite:"))
+    ) {
+      prose.push(token.text);
     }
-  }
-  return out;
+    if (token.type === "link") prose.push(token.href);
+    if (token.type === "html")
+      prose.push(
+        token.raw
+          .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
+          .replace(/<(pre|code|script|style|template)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, ""),
+      );
+  });
+  return prose.flatMap((text) =>
+    [...text.matchAll(/\b(?:packages|examples|scripts)\/[\w./-]+|(?<![\w/])README\.md\b/g)].map(
+      ([file]) => file.replace(/(?<=[\w-])\.+$/, ""),
+    ),
+  );
 }
 
-test("every path the guide cites exists", () => {
-  const refs = citedRefs();
-  // A zero-match regex would make this test vacuously green.
-  expect(refs.length).toBeGreaterThan(20);
+test.each([
+  '[cite: scripts/check.ts :: `const target = "packages/core/src/index.ts";`]',
+  '<div>[cite: scripts/check.ts :: `const target = "packages/core/src/index.ts";`]</div>',
+])("the evidence backstop distinguishes cited files from paths in excerpts: %s", (markdown) => {
+  expect(guideReferenceFiles(markdown)).toEqual(["scripts/check.ts"]);
+});
 
-  const dangling = refs
-    .filter((r) => !existsSync(path.join(REPO, r.path)))
-    .map((r) => `${r.file} → ${r.path}`);
-  expect([...new Set(dangling)]).toEqual([]);
+test.each([
+  "```text\npackages/lang/src/unworklet-tsc.ts:12\n```",
+  "> ```text\n> packages/lang/src/unworklet-tsc.ts:12\n> ```",
+  "- Diagnostic\n\n  ```text\n  packages/lang/src/unworklet-tsc.ts:12\n  ```",
+  "    packages/lang/src/unworklet-tsc.ts:12",
+  "Use ``[cite: packages/example.ts :: `placeholder`]`` as the syntax.",
+  "Text <!-- [cite: packages/example.ts :: `placeholder`] --> continues.",
+  "<pre><code>[cite: packages/example.ts :: `placeholder`]</code></pre>",
+  "<template>[cite: packages/example.ts :: `placeholder`]</template>",
+  "Syntax: <code>[cite: packages/example.ts :: `placeholder`]</code>.",
+  "<!-- [cite: packages/example.ts :: `placeholder`]",
+])("the evidence backstop excludes fenced and indented diagnostics: %s", (markdown) => {
+  expect(guideReferenceFiles(markdown)).toEqual([]);
+});
+
+test.each([
+  "See `packages/lang/src/unworklet-tsc.ts`.",
+  "[source](packages/lang/src/unworklet-tsc.ts)",
+  "| Source |\n| --- |\n| [compiler][source] |\n\n[source]: packages/lang/src/unworklet-tsc.ts",
+])("the evidence backstop retains prose and linked repository paths: %s", (markdown) => {
+  expect(guideReferenceFiles(markdown)).toContain("packages/lang/src/unworklet-tsc.ts");
+});
+
+test("the authoring-form reference identifies both successful client import cases", () => {
+  const guide = readFileSync(path.join(GUIDE_DIR, "setup.md"), "utf8");
+  const section = guide.split("## 4. File conventions")[1]!.split("## 5.")[0]!;
+  expect(section).toContain('expect(diagnose("with-ref.ts")).toEqual([]);');
+  expect(section).toContain('expect(diagnose("with-ref-uwk.ts")).toEqual([]);');
+});
+
+test("runner-import references identify the actual imports", () => {
+  const guide = readFileSync(path.join(GUIDE_DIR, "testing.md"), "utf8");
+  for (const source of [
+    "examples/demo/src/examples.render.test.ts",
+    "packages/test/src/index.test.ts",
+  ]) {
+    expect(guide).toContain(
+      `[cite: ${source} :: \`import { expect, test } from "vite-plus/test";\`]`,
+    );
+  }
+});
+
+test("the lowpass example points to the demonstrated lowpass test", () => {
+  const guide = readFileSync(path.join(GUIDE_DIR, "testing.md"), "utf8");
+  expect(guide).toContain(
+    '[cite: examples/demo/src/examples.render.test.ts :: `test("lowpass: a step input ramps smoothly toward it ($prev feedback works)"`]',
+  );
+});
+
+test("browser API references identify browser entry points", () => {
+  const guide = readFileSync(path.join(GUIDE_DIR, "dsl.md"), "utf8");
+  expect(guide).toContain(
+    "[cite: packages/lang/src/browser.ts :: `export function lowerToProcessor(`]",
+  );
+  expect(guide).toContain(
+    "[cite: packages/lang/src/browser.ts :: `export async function compileSource(`]",
+  );
+  expect(guide).toContain("[cite: packages/lang/src/index.ts :: `export { lower, LowerError }`]");
+});
+
+test("guide citations stay visible instead of becoming Markdown reference definitions", () => {
+  for (const name of readdirSync(GUIDE_DIR).filter((file) => file.endsWith(".md"))) {
+    const tokens = marked.lexer(readFileSync(path.join(GUIDE_DIR, name), "utf8"));
+    expect(
+      Object.keys(tokens.links).filter((label) => label.startsWith("cite:")),
+      name,
+    ).toEqual([]);
+  }
+});
+
+test("slot exposure and events render as separate headings and fenced examples", () => {
+  const markdown = readFileSync(path.join(GUIDE_DIR, "dsl.md"), "utf8");
+  const html = marked.parse(markdown, { async: false });
+  expect(html).toContain("<h3>Slot exposure — <code>ExposeOptions</code></h3>");
+  expect(html).toContain("<h3>Events — <code>event&lt;T&gt;</code> (typed message ports)</h3>");
+  expect(html).toContain('<pre><code class="language-ts">type ExposeOptions = {');
+  expect(html).toContain("<li><code>publish</code> is allowed only on");
+  const examples = marked
+    .lexer(markdown)
+    .filter((token): token is Tokens.Code => token.type === "code");
+  expect(examples.filter((token) => token.text.startsWith("type ExposeOptions ="))).toEqual([
+    expect.objectContaining({ lang: "ts", text: expect.not.stringContaining("- `publish`") }),
+  ]);
+  expect(examples.filter((token) => token.text.startsWith("event<T>({ from:"))).toEqual([
+    expect.objectContaining({ lang: "ts", text: expect.not.stringContaining("Inbound") }),
+  ]);
+});
+
+test.each(["exports", "publishConfig.exports"])(
+  "the client import citation detects removal of its %s mapping",
+  (scope) => {
+    const markdown = readFileSync(path.join(GUIDE_DIR, "ide-and-typecheck.md"), "utf8");
+    const manifestPath = "packages/unplugin/package.json";
+    const manifest = JSON.parse(readFileSync(path.join(REPO, manifestPath), "utf8"));
+    const exportsMap = scope === "exports" ? manifest.exports : manifest.publishConfig.exports;
+    delete exportsMap["./client"];
+    const errors = validateGuideCitations(markdown, (file) => {
+      if (file === manifestPath) return JSON.stringify(manifest, null, 2);
+      const target = path.join(REPO, file);
+      if (!existsSync(target)) return undefined;
+      return statSync(target).isDirectory() ? "" : readFileSync(target, "utf8");
+    });
+    expect(errors.join("\n")).toContain(`${manifestPath}: anchor not found`);
+  },
+);
+
+test("every explicit guide citation and full repository-file reference resolves to current evidence", () => {
+  const guides = readdirSync(GUIDE_DIR).filter((name) => name.endsWith(".md"));
+  const errors: string[] = [];
+  let references = 0;
+  for (const name of guides) {
+    const markdown = readFileSync(path.join(GUIDE_DIR, name), "utf8");
+    const checked = new Set<string>();
+    errors.push(
+      ...validateGuideCitations(markdown, (file) => {
+        checked.add(file);
+        const target = path.join(REPO, file);
+        if (!existsSync(target)) return undefined;
+        return statSync(target).isDirectory() ? "" : readFileSync(target, "utf8");
+      }).map((error) => `${name} → ${error}`),
+    );
+    // All repository evidence in the shipped guides must reach the reader;
+    // Markdown tokenization must not silently drop a migrated reference.
+    for (const file of guideReferenceFiles(markdown)) {
+      expect(checked.has(file), `${name} → unchecked ${file}`).toBe(true);
+    }
+    references += checked.size;
+  }
+  expect(errors).toEqual([]);
+  expect(references).toBeGreaterThan(50);
 });
 
 test("every sibling guide file the guide sends a reader to exists", () => {
@@ -68,22 +193,6 @@ test("every sibling guide file the guide sends a reader to exists", () => {
   }
   expect(mentions).toBeGreaterThan(10);
   expect([...new Set(dangling)]).toEqual([]);
-});
-
-test("every line range the guide cites fits inside the file it names", () => {
-  const lineCount = new Map<string, number>();
-  const past = citedRefs()
-    .filter((r) => r.lastLine !== undefined && existsSync(path.join(REPO, r.path)))
-    .filter((r) => {
-      let n = lineCount.get(r.path);
-      if (n === undefined) {
-        n = readFileSync(path.join(REPO, r.path), "utf8").split("\n").length;
-        lineCount.set(r.path, n);
-      }
-      return r.lastLine! > n;
-    })
-    .map((r) => `${r.file} → ${r.path} cites L${r.lastLine}, file has ${lineCount.get(r.path)}`);
-  expect([...new Set(past)]).toEqual([]);
 });
 
 /**

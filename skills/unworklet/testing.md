@@ -20,7 +20,7 @@ Cite `packages/test/package.json` (exports `.` + `./extend`), `packages/offline/
 - `@unworklet/test` → all plain matchers + `sine` / `midi` / etc. helpers.
 - `@unworklet/test/extend` → side-effect import; registers the 19 chain matchers via `expect.extend`.
 - `@unworklet/test` peer-deps `vitest@^3 || ^4` and `@unworklet/core` (it imports `expect` from `vitest`).
-- Processor source: `@unworklet/core` `defineProcessor` (`.processor.ts`), or a `.uwk.ts` lowered to a `CompiledProcessor` via `lowerToProcessor` from `@unworklet/lang/browser` (`packages/lang/src/browser.ts:38`).
+- Processor source: `@unworklet/core` `defineProcessor` (`.processor.ts`), or a `.uwk.ts` lowered to a `CompiledProcessor` via `lowerToProcessor` from `@unworklet/lang/browser` ([cite: packages/lang/src/browser.ts :: `export function lowerToProcessor(`]).
 
 `lowerToProcessor` in Node and the browser runtime compiler preserve named aliases
 and namespace imports from `@unworklet/core`, such as `import { f32 as value }`
@@ -29,15 +29,15 @@ Node's `loadUwkProcessor`.
 
 ## Import `expect` / `test`
 
-Cite `packages/test/README.md`, `examples/demo/src/examples.render.test.ts:31`, `packages/test/src/index.test.ts:13`.
+Cite `packages/test/README.md`, [cite: examples/demo/src/examples.render.test.ts :: `import { expect, test } from "vite-plus/test";`], [cite: packages/test/src/index.test.ts :: `import { expect, test } from "vite-plus/test";`].
 
 - Plain matchers need NO `expect.extend` and NO special `expect` — they throw `Error`
   and the runner reports it. Import `test` from your runner:
   - stock vitest consumer: `import { test } from "vitest";`
   - this Vite+ repo: `import { expect, test } from "vite-plus/test";`
 - Chain form: add once `import "@unworklet/test/extend";` (ideally a setupFile).
-  Two type augmentations ship: `declare module "vitest"` (`packages/test/src/extend.ts:130`)
-  AND `declare module "@vitest/expect"` (`extend.ts:143`). Stock vitest re-exports
+  Two type augmentations ship: `declare module "vitest"` ([cite: packages/test/src/extend.ts :: `declare module "vitest" {`])
+  AND `declare module "@vitest/expect"` ([cite: packages/test/src/extend.ts :: `declare module "@vitest/expect" {`]). Stock vitest re-exports
   `Assertion` from `@vitest/expect`, so a `vitest`-only augmentation would type-check
   as a fresh unused interface; the `@vitest/expect` one is what actually makes
   `expect(...).toBeCloseToArray(...)` etc. resolve. Both are shipped, so consumers on
@@ -61,7 +61,7 @@ export default defineConfig({ test: { setupFiles: ["./vitest.setup.ts"] } });
 
 ## `renderOffline` — the Node oracle
 
-Cite `packages/offline/src/index.ts:124` (signature), `:64-84` (config), `:110-119` (result).
+[cite: packages/offline/src/index.ts :: `export async function renderOffline<`] (signature), [cite: packages/offline/src/index.ts :: `export type RenderOfflineConfig =`] (config), [cite: packages/offline/src/index.ts :: `export type RenderOfflineResult =`] (result).
 
 ```ts
 import { renderOffline } from "@unworklet/offline";
@@ -74,7 +74,7 @@ function renderOffline<C>(
 `RenderOfflineConfig`:
 
 - `sampleRate: number`
-- `duration: number` — seconds; rounded UP to a 128-sample block (`SAMPLES_PER_BLOCK=128`, `packages/core/src/dsl/constants.ts:11`).
+- `duration: number` — seconds; rounded UP to a 128-sample block (`SAMPLES_PER_BLOCK=128`, [cite: packages/core/src/dsl/constants.ts :: `export const SAMPLES_PER_BLOCK = 128 as const;`]).
 - `inputs?: Record<string, Float32Array[]>` — key = `audioInput({name})` port; value = per-channel arrays.
 - `params?: Record<string, number[]>` — key = `param.named(...)`. `[]` / omitted = declared default; length 1 = constant; length > 1 = per-sample automation.
 - `messages?: { name: string; payload: unknown; atQuantum?: number }[]` — main→worklet (block index, default 0).
@@ -119,41 +119,41 @@ unless noted.
 
 Audio compare:
 
-- `expectAudioMatches(actual, expected: RenderOfflineResult | Float32Array[], opts?: { tolerance?: number })` — default tolerance `0` (bit-exact). `Float32Array[]` form requires single-port actual; multi-port: pass full `RenderOfflineResult` (compares port set + sampleRate). (`:136`)
-- `expectAudioMatchesGolden(actual, wavPath: string, opts?: { tolerance?: number })` — compares vs a WAV file; integer PCM8/16/24/32 is normalized to audio amplitudes (PCM8 is unsigned, centered at 128); float WAV values are unchanged; compressed formats are rejected; sampleRate must match; single-port only. (`:319`)
-- `await expectAudioMatchesSnapshot(actual: RenderOfflineResult | Float32Array | Float32Array[], opts?: SnapshotOptions): Promise<void>` — vitest-style auto WAV snapshot; first run writes, later runs compare within `opts.tolerance` (default `0` = bit-exact); `vitest -u` overwrites; `--ci` fails if missing. (`:589`)
-- `await expectAudioMatchesSnapshotWithState(actual, opts: SnapshotOptions, state): Promise<void>` — state-explicit worker, concurrent-safe (the chain form uses this). (`:463`)
+- `expectAudioMatches(actual, expected: RenderOfflineResult | Float32Array[], opts?: { tolerance?: number })` — default tolerance `0` (bit-exact). `Float32Array[]` form requires single-port actual; multi-port: pass full `RenderOfflineResult` (compares port set + sampleRate). ([cite: packages/test/src/index.ts :: `export function expectAudioMatches(`])
+- `expectAudioMatchesGolden(actual, wavPath: string, opts?: { tolerance?: number })` — compares vs a WAV file; integer PCM8/16/24/32 is normalized to audio amplitudes (PCM8 is unsigned, centered at 128); float WAV values are unchanged; compressed formats are rejected; sampleRate must match; single-port only. ([cite: packages/test/src/index.ts :: `export function expectAudioMatchesGolden(`])
+- `await expectAudioMatchesSnapshot(actual: RenderOfflineResult | Float32Array | Float32Array[], opts?: SnapshotOptions): Promise<void>` — vitest-style auto WAV snapshot; first run writes, later runs compare within `opts.tolerance` (default `0` = bit-exact); `vitest -u` overwrites; `--ci` fails if missing. ([cite: packages/test/src/index.ts :: `export async function expectAudioMatchesSnapshot(`])
+- `await expectAudioMatchesSnapshotWithState(actual, opts: SnapshotOptions, state): Promise<void>` — state-explicit worker, concurrent-safe (the chain form uses this). ([cite: packages/test/src/index.ts :: `export async function expectAudioMatchesSnapshotWithState(`])
 
 Level / stability:
 
-- `expectNoNaN(result)` — no NaN / ±Infinity. (`:184`)
-- `expectStable(result)` — finite-check alias (no NaN/Inf), level-agnostic. (`:609`)
-- `expectPeakUnder(result, dbfs: number)` — peak < dBFS. (`:195`)
-- `expectRmsUnder(result, dbfs: number)` — RMS < dBFS. (`:223`)
-- `expectMaster(result, opts?: { peakDbfs?: number; rmsDbfs?: number })` — defaults peak `-0.1`, rms `-14`; always also NaN-checks. (`:628`)
-- `expectSilence(result, opts?: { tolerance?: number })` — every sample 0 ± tol (default 0). (`:642`)
-- `expectDcOffsetUnder(result, threshold: number)` — |mean| per channel < threshold. (`:954`)
+- `expectNoNaN(result)` — no NaN / ±Infinity. ([cite: packages/test/src/index.ts :: `export function expectNoNaN(`])
+- `expectStable(result)` — finite-check alias (no NaN/Inf), level-agnostic. ([cite: packages/test/src/index.ts :: `export function expectStable(`])
+- `expectPeakUnder(result, dbfs: number)` — peak < dBFS. ([cite: packages/test/src/index.ts :: `export function expectPeakUnder(`])
+- `expectRmsUnder(result, dbfs: number)` — RMS < dBFS. ([cite: packages/test/src/index.ts :: `export function expectRmsUnder(`])
+- `expectMaster(result, opts?: { peakDbfs?: number; rmsDbfs?: number })` — defaults peak `-0.1`, rms `-14`; always also NaN-checks. ([cite: packages/test/src/index.ts :: `export function expectMaster(`])
+- `expectSilence(result, opts?: { tolerance?: number })` — every sample 0 ± tol (default 0). ([cite: packages/test/src/index.ts :: `export function expectSilence(`])
+- `expectDcOffsetUnder(result, threshold: number)` — |mean| per channel < threshold. ([cite: packages/test/src/index.ts :: `export function expectDcOffsetUnder(`])
 
 Timing / spectrum (single-port; multichannel needs `channel`):
 
-- `expectPeakAtSample(result, expectedAtSample: number, opts?: { tolerance?: number; port?: string })` — index of max|x|; multi-PORT needs `port`. (`:680`)
-- `expectLatency(result, expectedSamples: number, opts?: { tolerance?: number; channel?: number })` — impulse delay; single-port; multichannel needs `channel`. (`:891`)
-- `expectGainAtFreq(result, freqHz: number, expectedDb: number, tolerance: number, opts?: { channel?: number })` — internal FFT; DC uses the absolute mean amplitude without the positive-frequency doubling factor; `tolerance` is the POSITIONAL 4th arg; single-port; multichannel needs `channel`. (`:812`)
+- `expectPeakAtSample(result, expectedAtSample: number, opts?: { tolerance?: number; port?: string })` — index of max|x|; multi-PORT needs `port`. ([cite: packages/test/src/index.ts :: `export function expectPeakAtSample(`])
+- `expectLatency(result, expectedSamples: number, opts?: { tolerance?: number; channel?: number })` — impulse delay; single-port; multichannel needs `channel`. ([cite: packages/test/src/index.ts :: `export function expectLatency(`])
+- `expectGainAtFreq(result, freqHz: number, expectedDb: number, tolerance: number, opts?: { channel?: number })` — internal FFT; DC uses the absolute mean amplitude without the positive-frequency doubling factor; `tolerance` is the POSITIONAL 4th arg; single-port; multichannel needs `channel`. ([cite: packages/test/src/index.ts :: `export function expectGainAtFreq(`])
 
 Events / MIDI / state:
 
-- `expectEventsEqual(result, expectedEvents: ExpectedEvent[])` — exact ordered name+payload+atSample. `ExpectedEvent = { name: string; payload: unknown; atSample: number }`. (`:252`, `:37`)
-- `expectEventsContaining(result, partial: PartialExpectedEvent[])` — each partial exists (unordered, extras OK). `PartialExpectedEvent = { name: string; payload?: unknown; atSample?: number }`. (`:1008`, `:995`)
-- `expectEventCount(result, name: string, expectedCount: number)`. (`:980`)
-- `expectStateMatches(result, expectedSnapshot: Uint8Array)` — byte-exact snapshot blob. (`:290`)
-- `expectMidiOut(result, portName: string, expectedMidiEvents: ExpectedMidiEvent[], opts?: { tolerance?: number })` — ordered MIDI on a `midiOutput` / `event.midi({to})` port. `ExpectedMidiEvent = MidiEvent & { atSample?: number }` (omit `atSample` = ignore timing). (`:1044`, `:1032`)
-- `expectMidiBalance(result, portName: string, opts?: { hangingNotes?: number })` — noteOn/noteOff balance; a velocity-zero noteOn terminates a note just like noteOff; an unmatched termination always fails. `hangingNotes` is an upper bound (default `0`) on unclosed noteOns; there is no "unlimited" sentinel — passing `-1` / `Infinity` does not disable the check and will still fail. If you only want to observe the count without asserting a bound, skip this matcher and read `result.events.filter((e) => e.name === portName && e.payload.type === "noteOn").length` directly. (`:1097`)
+- `expectEventsEqual(result, expectedEvents: ExpectedEvent[])` — exact ordered name+payload+atSample. `ExpectedEvent = { name: string; payload: unknown; atSample: number }`. ([cite: packages/test/src/index.ts :: `export function expectEventsEqual(`], [cite: packages/test/src/index.ts :: `export type ExpectedEvent =`])
+- `expectEventsContaining(result, partial: PartialExpectedEvent[])` — each partial exists (unordered, extras OK). `PartialExpectedEvent = { name: string; payload?: unknown; atSample?: number }`. ([cite: packages/test/src/index.ts :: `export function expectEventsContaining(`], [cite: packages/test/src/index.ts :: `export type PartialExpectedEvent =`])
+- `expectEventCount(result, name: string, expectedCount: number)`. ([cite: packages/test/src/index.ts :: `export function expectEventCount(`])
+- `expectStateMatches(result, expectedSnapshot: Uint8Array)` — byte-exact snapshot blob. ([cite: packages/test/src/index.ts :: `export function expectStateMatches(`])
+- `expectMidiOut(result, portName: string, expectedMidiEvents: ExpectedMidiEvent[], opts?: { tolerance?: number })` — ordered MIDI on a `midiOutput` / `event.midi({to})` port. `ExpectedMidiEvent = MidiEvent & { atSample?: number }` (omit `atSample` = ignore timing). ([cite: packages/test/src/index.ts :: `export function expectMidiOut(`], [cite: packages/test/src/index.ts :: `export type ExpectedMidiEvent =`])
+- `expectMidiBalance(result, portName: string, opts?: { hangingNotes?: number })` — noteOn/noteOff balance; a velocity-zero noteOn terminates a note just like noteOff; an unmatched termination always fails. `hangingNotes` is an upper bound (default `0`) on unclosed noteOns; there is no "unlimited" sentinel — passing `-1` / `Infinity` does not disable the check and will still fail. If you only want to observe the count without asserting a bound, skip this matcher and read `result.events.filter((e) => e.name === portName && e.payload.type === "noteOn").length` directly. ([cite: packages/test/src/index.ts :: `export function expectMidiBalance(`])
 
-`SnapshotOptions = { snapshotPath?: string; snapshotName?: string; sampleRate?: number; tolerance?: number; port?: string }` (`:336`). Precedence: `snapshotPath` > `snapshotName` > auto-infer from test name. Chain-form automatic names count assertions within each test and reset for retries, repeats, and watch reruns. Concurrent tests should use the test context’s `expect`.
+`SnapshotOptions = { snapshotPath?: string; snapshotName?: string; sampleRate?: number; tolerance?: number; port?: string }` ([cite: packages/test/src/index.ts :: `export type SnapshotOptions =`]). Precedence: `snapshotPath` > `snapshotName` > auto-infer from test name. Chain-form automatic names count assertions within each test and reset for retries, repeats, and watch reruns. Concurrent tests should use the test context’s `expect`.
 
 ## Signal generators (return `Float32Array`)
 
-Cite `packages/test/src/index.ts:1158-1253`.
+[cite: packages/test/src/index.ts :: `export function sine(`] [cite: packages/test/src/index.ts :: `export function silence(`] [cite: packages/test/src/index.ts :: `export function impulse(`] [cite: packages/test/src/index.ts :: `export function sineSweep(`] [cite: packages/test/src/index.ts :: `export function whiteNoise(`] [cite: packages/test/src/index.ts :: `export function dc(`] [cite: packages/test/src/index.ts :: `export function ramp(`].
 
 - `sine({ freqHz, durationSamples, sampleRate, amplitude?=1, phase?=0 })`
 - `silence(durationSamples)`
@@ -165,7 +165,7 @@ Cite `packages/test/src/index.ts:1158-1253`.
 
 ## MIDI builders — `midi` namespace
 
-Cite `packages/test/src/index.ts:1273`. Each returns a `MidiEvent`; `channel` defaults `0`.
+[cite: packages/test/src/index.ts :: `export const midi = {`]. Each returns a `MidiEvent`; `channel` defaults `0`.
 
 - `midi.noteOn({ note, velocity, channel?=0 })`
 - `midi.noteOff({ note, velocity?=0, channel?=0 })`
@@ -180,7 +180,7 @@ Cite `packages/test/src/index.ts:1273`. Each returns a `MidiEvent`; `channel` de
 
 ## Sample / time helpers
 
-Cite `packages/test/src/index.ts:1341-1372`.
+[cite: packages/test/src/index.ts :: `export function samplesToMs(`] [cite: packages/test/src/index.ts :: `export function msToSamples(`] [cite: packages/test/src/index.ts :: `export function samplesToSec(`] [cite: packages/test/src/index.ts :: `export function secToSamples(`] [cite: packages/test/src/index.ts :: `export function bpmToSamples(`] [cite: packages/test/src/index.ts :: `export function bpmToMs(`].
 
 - `samplesToMs(samples, sampleRate)` / `msToSamples(ms, sampleRate)`
 - `samplesToSec(samples, sampleRate)` / `secToSamples(sec, sampleRate)`
@@ -189,7 +189,7 @@ Cite `packages/test/src/index.ts:1341-1372`.
 
 ## Chain form (`@unworklet/test/extend`) — 19 matchers
 
-Cite `packages/test/src/extend.ts:201-221` (registrations), `:92-128` (typed interface).
+[cite: packages/test/src/extend.ts :: `expect.extend({`] (registrations), [cite: packages/test/src/extend.ts :: `export interface UnworkletAudioMatchers<T> {`] (typed interface).
 Names are NOT 1:1 with plain fn names. A method exists only when `expect(value)`'s value
 is a `RenderOfflineResult` (otherwise its type is `never` = build error); `toMatchAudioSnapshot`
 also accepts `Float32Array | Float32Array[]`.
@@ -229,7 +229,7 @@ The processor is authored in `.uwk.ts` (the recommended form; full authoring in
 `renderOffline` call can consume:
 
 - **Single-file source string → `lowerToProcessor`** (`@unworklet/lang/browser`
-  or `@unworklet/lang`, `packages/lang/src/browser.ts:38`). Fast, no disk
+  or `@unworklet/lang`, [cite: packages/lang/src/browser.ts :: `export function lowerToProcessor(`]). Fast, no disk
   materialisation. **Only single-file**: throws if the `.uwk.ts` imports from a
   sibling (subgraph library module split into its own file — the pattern
   `dsl.md §4` recommends). Use for the common case where the whole processor
@@ -251,7 +251,7 @@ The processor is authored in `.uwk.ts` (the recommended form; full authoring in
   error naming the import. Give the helper a `.mjs` extension (or keep it
   erasable — a `const` object rather than an `enum`) to avoid both.
 
-Single-file pattern from `examples/demo/src/examples.render.test.ts:14-85`:
+Single-file pattern from [cite: examples/demo/src/examples.render.test.ts :: `test("lowpass: a step input ramps smoothly toward it ($prev feedback works)"`]:
 
 ```ts
 import { renderOffline } from "@unworklet/offline";
@@ -325,7 +325,7 @@ A shipped consumer instead `import`s the `.uwk.ts` default export (compiled by
 
 Hand-write the processor with `defineProcessor` from `@unworklet/core` and pass it
 directly to `renderOffline`. Use this only when you need a surface `.uwk.ts` does not
-expose. End-to-end from `packages/test/src/midi-integration.test.ts:8-101`:
+expose. End-to-end from [cite: packages/test/src/midi-integration.test.ts :: `test("expectMidiOut matches the re-emitted notes from a real render"`]:
 
 ```ts
 import { defineProcessor, event, state } from "@unworklet/core";
@@ -364,9 +364,9 @@ test("expectMidiOut matches the re-emitted notes from a real render", async () =
 ## Rules of thumb (verified)
 
 - USE the matchers; never hand-roll audio assertions (no manual sample loops for RMS / peak / NaN / latency / FFT). Drop to inline `expect(...).toBeCloseTo(...)` only for a one-off positive check the matcher set has no equivalent for (e.g. "reaches a level").
-- `renderOffline` is ASYNC — always `await`. (`packages/offline/src/index.ts:124`)
-- Emitted `result.events[].atSample` is block-local (0..127); config inbound `events[].atSample` is absolute. (`packages/offline/src/index.ts:355,476`)
-- `expectGainAtFreq` `tolerance` is the positional 4th arg, not in `opts`. (`packages/test/src/index.ts:812`)
+- `renderOffline` is ASYNC — always `await`. ([cite: packages/offline/src/index.ts :: `export async function renderOffline<`])
+- Emitted `result.events[].atSample` is block-local (0..127); config inbound `events[].atSample` is absolute. ([cite: packages/offline/src/index.ts :: `export type OfflineEvent =`] [cite: packages/offline/src/index.ts :: `emittedEvents.push({ name: port.name, payload, atSample: slotAtSample });`])
+- `expectGainAtFreq` `tolerance` is the positional 4th arg, not in `opts`. ([cite: packages/test/src/index.ts :: `export function expectGainAtFreq(`])
 - Multichannel ports: `expectGainAtFreq` / `expectLatency` require `{ channel }`; multi-PORT results require `{ port }` (`expectPeakAtSample`) or the full-result form — else they throw.
 - Plain matchers need no setup; the chain form needs the one-time `import "@unworklet/test/extend"`.
 - Renders are deterministic: default `expectAudioMatches` tolerance is `0` (bit-exact), snapshots compare bit-exact across runs, and `whiteNoise` is seeded — so re-running the same config reproduces the same outputs + `state`.

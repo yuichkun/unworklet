@@ -10,7 +10,7 @@ Two authoring forms, **same compiled result**:
 - **`.uwk.ts` — the primary, recommended form.** No imports, no wrapper; infix
   operators and `x[i]` index sugar. The plugin _lowers_ it to a plain
   `@unworklet/core` module that makes the exact same DSL calls a hand-written
-  core processor makes, so it compiles byte-identically. — `lower()` in `packages/lang/src/lower.ts`
+  core processor makes, so it compiles byte-identically. — [cite: packages/lang/src/lower.ts :: `export function lower(`]
 - **`.processor.ts` — the explicit, lower-level alternative (§6).** Plain `.ts`
   with `defineProcessor` + method chains + explicit imports. Use it only for a
   surface `.uwk.ts` does not expose (e.g. SIMD).
@@ -48,20 +48,20 @@ Rules (all in `packages/lang/src/lower.ts`):
   into `export default defineProcessor((ctx) => { …decls; return { process } })`
   (or `export const <name> = …` when an export name is given). Zero `process` +
   no export → throws `uwk-empty`; more than one → `uwk-multiple-process`. —
-  `lower()` / `callbackBody()` in `lower.ts`
+  [cite: packages/lang/src/lower.ts :: `export function lower(`] [cite: packages/lang/src/lower.ts :: `function callbackBody(`]
 - **DSL names are ambient — write no imports.** Lowering injects the
-  `@unworklet/core` import listing only the names actually used. — `collectUsedCoreExports()` in `lower.ts`
+  `@unworklet/core` import listing only the names actually used. — [cite: packages/lang/src/lower.ts :: `function collectUsedCoreExports(`]
 - **Ambient stereo I/O is injected when omitted:** with no `audioInput`
   referenced, `const input = audioInput({ channels: 2, name: "input" })` is
-  added (same for `out`). An explicit declaration suppresses it. — `makeAudioDecl()` in `lower.ts`
+  added (same for `out`). An explicit declaration suppresses it. — [cite: packages/lang/src/lower.ts :: `function makeAudioDecl(`]
 - **`ctx` is ambient** — it is the `defineProcessor((ctx) => …)` parameter, so
-  `ctx.sampleRate` reaches the host rate. — `makeDefineProcessor()` in `lower.ts`
+  `ctx.sampleRate` reaches the host rate. — [cite: packages/lang/src/lower.ts :: `function makeDefineProcessor(`]
 - **Your own `import`s survive** at module scope (shared consts, sibling
   subgraph files). Write relative imports WITH the file extension
   (`./tables.ts`, not `./tables`): the build path evaluates processor modules
   under Node ESM resolution, which demands explicit extensions — an
   extensionless specifier fails the build (the error names the exact suffix to
-  add). — `lower()` in `lower.ts`
+  add). — [cite: packages/lang/src/lower.ts :: `export function lower(`]
 - **A processor file cannot export additional declarations.** A `.uwk.ts`
   containing `process()` rejects authored module-level exports with
   `uwk-export-unsupported`, including values, types, default exports, and
@@ -82,7 +82,7 @@ Rules (all in `packages/lang/src/lower.ts`):
 
 ### Ambient global surface (names usable unimported in `.uwk.ts`)
 
-Source: `packages/lang/src/ambient.ts:17` (= shipped `dist/ambient.d.ts`).
+Source: [cite: packages/lang/src/ambient.ts :: `export const AMBIENT_DTS =`] (= shipped `dist/ambient.d.ts`).
 
 - Decl helpers: `state` `param` `event` `defineSubgraph` `instantiate`
   `audioInput` `audioOutput` `noiseSource`
@@ -100,7 +100,7 @@ log pow sqrt floor ceil frac abs min max clamp pipe`
 ## 2. `.uwk.ts` sugar forms
 
 The sugar is type-directed: an operator/index lowers **iff** an operand is — or
-lowers to — a `Node<T>` (`isDspExpr`, `packages/lang/src/classify.ts:147`). Pure
+lowers to — a `Node<T>` (`isDspExpr`, [cite: packages/lang/src/classify.ts :: `export function isDspExpr(`]). Pure
 `number op number` (e.g. `Math.LN2 / 12`, `ctx.sampleRate * 0.5`) stays
 build-time JS. Operands recurse bottom-up, so JS precedence is preserved.
 
@@ -129,7 +129,7 @@ The editor plugin and `unworklet-tsc` use the same helper bindings and preserve
 diagnostics on authored calls and operands.
 Type-only imports keep their type roles when a generated helper uses the same name.
 
-Closed operator set: `classify.ts:120` (`isSugarBinaryOperator`). Method chains
+Closed operator set: [cite: packages/lang/src/classify.ts :: `export function isSugarBinaryOperator(`] (`isSugarBinaryOperator`). Method chains
 interoperate with operators in the same body (core `Node` methods classify as
 DSP): `raw.mul(I32_SCALE).tanh()`, `shaped.sub(dcPrev * DC_POLE)`.
 
@@ -175,7 +175,7 @@ Rewritten by the **object's** type:
 | `out.left[i] = v` `out.ch(c)[i] = v`              | `out.left.at(i).write(v)` | output view        |
 | `buf[i] = v`                                      | `buf.write(i, v)`         | buffer             |
 
-A write is an assignment whose LHS is an element access. — `index.ts:51,60,61`
+A write is an assignment whose LHS is an element access. — [cite: packages/lang/src/passes/index.ts :: `export function tryIndex(`]
 
 ### Bare-state read (`packages/lang/src/passes/bareState.ts`)
 
@@ -188,7 +188,7 @@ env.write(env * 0.99); // → env.write(mul(env.read(), 0.99))
 
 Fires when the contextual type accepts `Node<…>`, as an `emit`/`emitIf` payload
 field, or as a JS-boolean ternary branch. A `State` passed where a `State` is
-expected (subgraph/helper arg) keeps its reference. — `bareState.ts:75,81,89`
+expected (subgraph/helper arg) keeps its reference. — [cite: packages/lang/src/passes/bareState.ts :: `export function readsAsBareState(`]
 
 ### `if` → branch-free `select` / `emitIf` (`packages/lang/src/passes/ifSugar.ts`)
 
@@ -210,7 +210,7 @@ bare-state sugar as unconditional writes, including `buf[i + 1] = value` and
 `buf.write(i + 1, value)`. A symmetric buffer `if`/`else` must use the same buffer
 and index expression in both branches.
 
-— `ifSugar.ts:149,155,159,164`
+— [cite: packages/lang/src/passes/ifSugar.ts :: `export function tryIfSugar(`]
 
 **Multi-statement bodies with the same `Node<'bool'>` guard**: an `if (c) { s1.write(a); s2.write(b); port.emit(payload) }` isn't one of the 3 shapes. Write each side as its own guarded statement — the sugar lowers each individually and the pass optimizer coalesces them, so the runtime cost is identical:
 
@@ -253,13 +253,13 @@ declared name; an explicit name always wins.
 Name-REQUIRED helpers (`param` / `audioInput` / `audioOutput` / `event` /
 `event.midi`) always derive. Name-OPTIONAL `state` / `state.buffer` derive ONLY
 via an explicit marker (`.expose({})` without a name, or a no-arg `.named()`); a
-plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
+plain `state.f32(0)` stays anonymous. — [cite: packages/lang/src/passes/autoName.ts :: `function autoNamedInit(`]
 
 ### Does NOT lower (confirmed absences — do not emit as DSP)
 
 - `number op number` stays build-time JS (intended).
 - Bitwise `& | ^ << >>` and compound assignment `+= -= *= /= %=` are **not**
-  sugar. — `classify.ts:120`, `index.ts:43`
+  sugar. — [cite: packages/lang/src/classify.ts :: `export function isSugarBinaryOperator(`], [cite: packages/lang/src/passes/index.ts :: `node.operatorToken.kind === ts.SyntaxKind.EqualsToken`]
 - Logical `&&` / `||` on two `Node<'bool'>` operands **do** lower (to `and` /
   `or`, both operands evaluate — see §2 operator table), but the JavaScript
   short-circuit semantics are NOT preserved.
@@ -291,8 +291,8 @@ plain `state.f32(0)` stays anonymous. — `autoName.ts:104,108,114,124`
 
 These are the real `@unworklet/core` exports. In `.uwk.ts` they are ambient; in
 `.processor.ts` you `import` them. The values and chains are identical.
-Source: `packages/core/src/dsl/declarations.ts`, `…/loop.ts`, `…/primitives.ts`,
-`…/constructors.ts`, `…/pipe.ts`, `packages/core/src/processor.ts`.
+Source: `packages/core/src/dsl/declarations.ts`, `packages/core/src/dsl/loop.ts`, `packages/core/src/dsl/primitives.ts`,
+`packages/core/src/dsl/constructors.ts`, `packages/core/src/dsl/pipe.ts`, `packages/core/src/processor.ts`.
 
 ### Audio I/O — `audioInput` / `audioOutput`
 
@@ -303,7 +303,7 @@ audioOutput<C>({ channels: C, name: string }): AudioOutputHandle<C>
 
 - `.ch(c)` → a channel view for any channel index. `.left` / `.right` are
   getters present **only when `channels === 2`**; on a non-stereo port they
-  throw, pointing you at `.ch(...)`. — `declarations.ts:766,795`
+  throw, pointing you at `.ch(...)`. — [cite: packages/core/src/dsl/declarations.ts :: `function defineStereoOnlyGuards(`]
 - Input view: `view.at(i) → Node<"f32">`. Output view: `view.at(i).write(v)`.
 - In `.uwk.ts`: `input.left[i]` / `out.ch(c)[i] = v` (index sugar, §2).
 
@@ -318,7 +318,7 @@ param.f32({ default: number; min: number; max: number;
   `param.named("x").f32({…})` ≡ `param.f32({…}).named("x")`.
 - Read a sample: `param.at(i) → Node<"f32">` (`.uwk.ts`: `param[i]`).
 - The host `AudioParam` is reachable on the main thread as `node.params.<name>` (§5).
-- — `declarations.ts:645,655,708`
+- — [cite: packages/core/src/dsl/declarations.ts :: `export type ParamOptions =`] [cite: packages/core/src/dsl/declarations.ts :: `function makeParam(`] [cite: packages/core/src/dsl/declarations.ts :: `export const param: ParamChain =`]
 
 ### Scalar state — `state.<type>`
 
@@ -338,7 +338,7 @@ state.bool(initial: boolean): State<"bool">  // `state.bool(false)`, not `state.
   `.named(name)` / `.expose(options)`. `state.named("x").f32(0)` ≡
   `state.f32(0).named("x")` (after-wins merge).
 - `.read()` eager-captures the value at that lexical point — a later `.write`
-  cannot change an already-bound read. — `declarations.ts:166,291`
+  cannot change an already-bound read. — [cite: packages/core/src/dsl/declarations.ts :: `function makeStateHandle<`]
 - In `.uwk.ts`: a bare `state` in a value position auto-reads (§2); the write
   stays explicit `state.write(v)`.
 
@@ -353,7 +353,7 @@ state.buffer.f32({ size: number }): Buffer<"f32">
 
 - Handle: `.read(i) → Node<T>`, `.write(i, v)`,
   `.readInterpolated(pos: Node<"f32"> | number) → Node<T>` (2-tap), order-free
-  `.named(name)` / `.expose(options)`. — `declarations.ts:357,450,620`
+  `.named(name)` / `.expose(options)`. — [cite: packages/core/src/dsl/declarations.ts :: `function makeBufferHandle<`]
 - Literal indexes are range-checked at graph-capture time. A runtime
   `Node<"i32">` index SATURATES to the buffer bounds — `[0, size-1]` for scalar
   `read`/`write`, `[0, size-4]` for the 4-lane `loadVec`/`storeVec` — instead of
@@ -386,14 +386,14 @@ state.buffer.f32({ size: number }): Buffer<"f32">
   initial content.
 - In `.uwk.ts`: `buf[i]` (read) / `buf[i] = v` (write).
 - Capacity sizes for messaging rings are the `CAPACITY_16` … `CAPACITY_16384`
-  constants (values live at `packages/core/src/dsl/constants.ts:11-23`, re-exported
-  via `packages/core/src/index.ts:9-22`; the `Capacity` type union is at
-  `packages/core/src/types.ts:44-55`). SIMD `.loadVec` / `.storeVec` exist on the
+  constants (values live at [cite: packages/core/src/dsl/constants.ts :: `export const CAPACITY_16 =`], re-exported
+  via [cite: packages/core/src/index.ts :: `} from "./dsl/constants.ts";`]; the `Capacity` type union is at
+  [cite: packages/core/src/types.ts :: `export type Capacity =`]). SIMD `.loadVec` / `.storeVec` exist on the
   buffer handle but are a `.processor.ts` + `@unworklet/core/simd` concern (§6).
 
 ### Slot exposure — `ExposeOptions`
 
-`packages/core/src/types.ts:211-224`:
+[cite: packages/core/src/types.ts :: `export type ExposeOptions =`]
 
 ```ts
 type ExposeOptions = {
@@ -409,8 +409,20 @@ type ExposeOptions = {
   the type surface `BufferExposeOptions` omits it too) — the publish pipeline is
   scalar-only, so fan values out into scalar state slots to observe a buffer
   live, or read it back via `node.snapshot()`. `snapshot: "persistent"` also
-  requires a user-defined name. — `declarations.ts:229,240`
+  requires a user-defined name. — [cite: packages/core/src/dsl/declarations.ts :: `function validateStateDecl(`]
 - A published slot is read on the main thread as `node.state.<name>` (§5).
+- In `.uwk.ts`, a trailing core state, buffer, or param `.expose(options)`
+  accepts a variable or helper-call
+  result as well as an object literal. Non-literal options are evaluated once;
+  core reads `name`, `snapshot`, and `publish` lazily from the original object,
+  including inherited getters. Custom `expose` methods and receivers whose
+  method can be non-core keep their original arguments. An undefined `name` uses the declaration's binding
+  name; an explicit name wins. For example, passing a variable containing
+  `{ snapshot: "transient", publish: { rateFps: 30 } }` to a scalar state
+  declaration named `level` publishes `level` at 30 FPS. Core validation
+  applies equally to variable options: `{ publish: { rateFps: 0 } }` is invalid,
+  and buffers cannot publish. Whole `null` or `undefined` options fail as they do
+  in direct core calls. — `packages/lang/src/passes/autoName.ts`
 
 ### Events — `event<T>` (typed message ports)
 
@@ -422,14 +434,14 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
 ```
 
 - Inbound (`from: "main"`): worklet handles with `.onReceive(handler)`. —
-  `declarations.ts:1159,1439`
+  [cite: packages/core/src/dsl/declarations.ts :: `function eventFromMain<`]
 - Outbound (`to: "main"`): worklet sends with `.emitIf(cond, payload)` only —
   there is no bare `.emit(payload)` on the worklet-side handle (calling it
   throws `TypeError: emit is not a function`). Use `port.emitIf(bool(true), p)`
   for the unconditional case, or write `if (cond) port.emit(p)` inside the
   process body and the if-sugar (§2) rewrites it to `emitIf`. —
-  `declarations.ts:951,955`
-- Main-thread side is `node.events.<name>` (§5). — `declarations.ts:828,1466`
+  [cite: packages/core/src/dsl/declarations.ts :: `function eventToMain<`]
+- Main-thread side is `node.events.<name>` (§5). — [cite: packages/core/src/types.ts :: `export type EventSurface<`]
 - Outbound `atSample` is optional. Omission uses the innermost active `forSample`
   index, including inside `everyNSamples`, or zero outside a sample loop.
   A block-level `onReceive` or MIDI `onEvent` handler uses zero, even after a
@@ -471,7 +483,7 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
 ```
 
 - Inbound: worklet handles per type with
-  `.onEvent("noteOn", ({ note, velocity, … }) => …)`. — `declarations.ts:1290,1455`
+  `.onEvent("noteOn", ({ note, velocity, … }) => …)`. — [cite: packages/core/src/dsl/declarations.ts :: `function midiFromMain(`]
 - Per-event-type handler field shapes (all fields are `Node<"i32">`; combine
   with `f32(...)` for float math). The source of truth is `MidiEvent` in
   `packages/core/src/types.ts`:
@@ -503,7 +515,7 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
 - Outbound: worklet sends with `.emitIf(cond, event)` only — same rule as
   typed `event<T>` above (no bare `.emit` on the worklet-side handle). The
   MIDI event must include `atSample: number` (the sample index within the
-  current quantum). — `declarations.ts:1307,1331`
+  current quantum). — [cite: packages/core/src/dsl/declarations.ts :: `function midiToMain(`]
 - Events/MIDI carry **no** infix sugar; the helper/handler shapes are identical
   in both forms. Handler BODIES still get operator / bare-state lowering in `.uwk.ts`.
 - Main-thread side is `node.midi.<name>` with the full `MidiEvent` union (§5).
@@ -541,7 +553,13 @@ forSample.byN(stride, (i, everyNSamples) => { … });            // once per `st
 
 - `everyNSamples` is delivered as the **second callback parameter** (not a free
   import): `everyNSamples(n: number, body: () => void)` runs `body` once per `n`
-  samples (sub-rate work). — `loop.ts:23,76`
+  samples (sub-rate work), starting on its first invocation. With `.byN(stride)`,
+  it fires where the stride and `n` sample grids coincide: every
+  `n / gcd(n, stride)` invocations. Nested call sites advance only when reached.
+  Each call site retains its cadence across blocks without counter overflow,
+  including periods larger than 32 bits. Scheduler phase is internal and is not
+  included in snapshots; restoring named values leaves a running scheduler's
+  phase intact. — [cite: packages/core/src/dsl/loop.ts :: `export type EveryNSamples =`] [cite: packages/core/src/dsl/loop.ts :: `export const forSample:`]
 - `stride` must be a power of two that divides the render quantum 128: one of
   `1, 2, 4, 8, 16, 32, 64, 128`. `everyNSamples`'s `n` must be a compile-time
   positive integer. These compile-time checks apply to loops in `process`,
@@ -567,7 +585,7 @@ select(cond: Node<"bool"> | boolean, then, else_): Node<T>   // T from the branc
 
 Numeric branches give a numeric select; a literal boolean branch only matches the
 bool overload (a boolean mixed with a numeric branch is a type error). In
-`.uwk.ts` write `cond ? then : else_`. — `primitives.ts:483`
+`.uwk.ts` write `cond ? then : else_`. — [cite: packages/core/src/dsl/primitives.ts :: `export function select<T extends ScalarType>(`]
 
 ### Scalar constructors
 
@@ -663,7 +681,7 @@ min max` and the arithmetic operators run natively in `f64`.
 
 ### `defineSubgraph` / `instantiate` (reusable DSP units)
 
-`packages/core/src/processor.ts:104,152`:
+[cite: packages/core/src/processor.ts :: `export function defineSubgraph<`] [cite: packages/core/src/processor.ts :: `export function instantiate<`]:
 
 ```ts
 defineSubgraph((...args) => methods): SubgraphDecl
@@ -673,15 +691,15 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
 - Instantiate in **declaration scope only** (top of a `defineProcessor` /
   `defineSubgraph` body, before the returned `process` / method record);
   instantiating inside `forSample` / `everyNSamples` / a handler throws
-  (`scope-violation`). Each instance gets independent internal state. — `processor.ts:152,190`
+  (`scope-violation`). Each instance gets independent internal state. — [cite: packages/core/src/processor.ts :: `if (ctx.currentLoopBody !== null) {`]
 - A `Node<"f32">` arg also accepts a bare `number` (and a `Node<"bool">` arg a
   `boolean`); the type widening lives in the runtime `LiftArg<A>` union at
-  `packages/core/src/processor.ts:125` — no sugar pass rewrites `instantiate`
+  [cite: packages/core/src/processor.ts :: `type LiftArg<A> =`] — no sugar pass rewrites `instantiate`
   args, the literal just satisfies the widened signature and any downstream
   primitive (`mul` / `add` / …) lifts it in place. A plain-`number` config arg
   is not lifted.
 - An instance with a named / persistent / published internal slot **must** be
-  given an explicit `{ name }` (snapshot-path stability). — `processor.ts:214`
+  given an explicit `{ name }` (snapshot-path stability). — [cite: packages/core/src/processor.ts :: `if (instanceName === undefined) {`]
 
 ### White-noise source — `noiseSource`
 
@@ -716,8 +734,10 @@ process(() => {
 `ctx` is the `defineProcessor((ctx) => …)` parameter (ambient in `.uwk.ts`):
 
 ```ts
-type ProcessorContext = { readonly sampleRate: number }; // types.ts:475
+type ProcessorContext = { readonly sampleRate: number };
 ```
+
+[cite: packages/core/src/types.ts :: `export type ProcessorContext =`]
 
 `ctx.sampleRate` is a build-time-known number, so rate-dependent coefficients
 (`440 / ctx.sampleRate`, etc.) const-fold into the WASM. The processor recompiles
@@ -766,14 +786,14 @@ bundle a second copy).
 ## 5. Loading + the main-thread node
 
 `@unworklet/core` exports `createNode`, `inspect`, `replaceProcessor`. —
-`packages/core/src/index.ts:124,127`
+[cite: packages/core/src/index.ts :: `export { createNode, inspect }`] [cite: packages/core/src/index.ts :: `export { replaceProcessor }`]
 
 ### `?worklet` import (identical for both authoring forms)
 
 The plugin lowers (if `.uwk.ts`) + compiles, and the **default** export is a
 `CompiledProcessor<C>` augmented with bundler URLs + identity + baked rate. Typing
 needs a one-line triple-slash reference (like `vite/client`); only the default
-import is typed. — `packages/unplugin/src/index.ts:1551-1613`, `client.d.ts:11`
+import is typed. — [cite: packages/unplugin/src/index.ts :: `export default __unworkletAugmented;`], [cite: packages/unplugin/client.d.ts :: `declare module "*?worklet" {`]
 
 ```ts
 /// <reference types="@unworklet/unplugin/client" />
@@ -793,7 +813,7 @@ function createNode<C>(
 ): Promise<UnworkletNode<C>>; // async — await it
 ```
 
-`packages/core/src/client.ts:319`. It loads the worklet module (cached per
+[cite: packages/core/src/client.ts :: `export async function createNode<C>(`]. It loads the worklet module (cached per
 context+url), compiles the WASM, picks the transport (`"sab"` when
 `SharedArrayBuffer` + `crossOriginIsolated`, else `"postMessage"`), constructs the
 `AudioWorkletNode`, and resolves on a `ready` port message (rejects on init error
@@ -827,7 +847,7 @@ const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
 The WASM bakes rate-dependent coefficients at build time, so `createNode`
 **throws** when `context.sampleRate !== bakedSampleRate`. A `?worklet` import bakes
 `DEFAULT_SAMPLE_RATE = 48000` unless compiled otherwise — create the context at
-the baked rate. — `client.ts:350`, `packages/core/src/compile/index.ts:54`
+the baked rate. — [cite: packages/core/src/client.ts :: `contextSampleRate !== bakedSampleRate`], [cite: packages/core/src/compile/index.ts :: `const DEFAULT_SAMPLE_RATE = 48000;`]
 
 ```ts
 new AudioContext({ sampleRate: 48000 });
@@ -863,7 +883,7 @@ execution stops and `process()` returns `false` to release the processor's lifet
 
 `MidiEvent` is a discriminated union (`noteOn` / `noteOff` / `cc` / `pitchBend` /
 `programChange` / `channelPressure` / `aftertouch` / `systemRealtime` / `sysex`). —
-`types.ts:377`
+[cite: packages/core/src/types.ts :: `export type MidiEvent =`]
 
 ```ts
 merger.connect(node.inputs["main"]!);
@@ -891,14 +911,18 @@ active; restoring saved scalar values does not rewind an automation timeline.
 Overlapping restores and intervening snapshot or DevTools captures retain their
 request order. Suspended captures still use the parameter settings from invocation.
 A failure after native parameter assignment can leave those assignments in effect;
-restore does not provide transactional rollback.
+restore does not provide transactional rollback. Native AudioParam scheduling still
+controls the exact sample at which a value takes effect. The ordering barrier does
+not guarantee zero stale samples at every suspension/resumption boundary; the
+observed native timing limitation is tracked in
+[issue #155](https://github.com/yuichkun/unworklet/issues/155).
 
 ### `inspect(blob)`
 
 Pure, non-realtime blob decode — needs no `AudioContext` or live node.
 `InspectionResult = { version; schemaHash; profile; processorId; slots }`.
 `processorId` is the identity a v2 blob carries, `null` for an id-less or v1
-blob. — `client.ts:1996`, `types.ts:1121`
+blob. — [cite: packages/core/src/client.ts :: `export function inspect(`], [cite: packages/core/src/types.ts :: `export type InspectionResult =`]
 
 Buffer inspection reports logical element counts and a preview of up to 64
 elements. Boolean buffers use `0` and `1` at their declared indexes. Migration
@@ -951,7 +975,7 @@ export const stereoGain = defineProcessor(() => {
 defineProcessor<C>((ctx: ProcessorContext) => ProcessorBody, options?: ProcessorOptions): CompiledProcessor<C>
 ```
 
-— `processor.ts:68`. `options.migrations` declares snapshot migrations.
+— [cite: packages/core/src/processor.ts :: `export function defineProcessor<`]. `options.migrations` declares snapshot migrations.
 
 |            | `.uwk.ts` (primary)                                                               | `.processor.ts` (explicit)                                 |
 | ---------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------- |
@@ -977,10 +1001,13 @@ with core `Node` method chains _inside_ a `.uwk.ts` is fine and common (§2).
 - **Type-check** `.uwk.ts` sugar with the `@unworklet/lang/typescript-plugin`
   TS-server plugin (editor) or the `unworklet-tsc --noEmit` CLI (CI). — see `ide-and-typecheck.md`.
 - **Browser live-coding:** `compileSource(src)` (full lower→compile→worklet) /
-  `lowerToProcessor(src)` from `@unworklet/lang/browser`. `compileSource` bakes
+  `lowerToProcessor(src)` from `@unworklet/lang/browser`.
+  [cite: packages/lang/src/browser.ts :: `export function lowerToProcessor(`]
+  [cite: packages/lang/src/browser.ts :: `export async function compileSource(`]
+  `compileSource` bakes
   48000 Hz: use `new AudioContext({ sampleRate: 48000 })`. `createNode` rejects
   other context rates before module loading; browser compilation has no rate option.
   **Programmatic:**
-  `lower(uwkSource, { exportName })` → virtual `.ts` string. — `packages/lang/src/index.ts:7,19`
+  `lower(uwkSource, { exportName })` → virtual `.ts` string. — [cite: packages/lang/src/index.ts :: `export { lower, LowerError }`]
 - **Test:** render with `@unworklet/offline` (`renderOffline`) + assert with
   `@unworklet/test` matchers. — see `testing.md`.
