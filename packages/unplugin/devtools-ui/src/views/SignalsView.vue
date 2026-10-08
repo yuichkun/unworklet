@@ -69,6 +69,11 @@ const fmtLatency = (ms: number): string => (ms > 0 ? `${ms.toFixed(2)} ms` : "�
     <div class="view-body">
       <!-- ─── Audio ─── -->
       <section v-if="activeTab === 'audio'" class="audio-tab">
+        <p class="measurement-note">
+          Waveform, spectrum, RMS and peak measure each output port's mono downmix. Stereo channels
+          with opposite polarity can cancel; a signal in only one stereo channel is attenuated.
+          These measurements cannot establish silence or rule out clipping in individual channels.
+        </p>
         <div v-if="ports.length === 0" class="empty-hint">
           No live output ports. Start the app's audio (resume the AudioContext) to scope each
           unworklet node's output here.
@@ -245,6 +250,13 @@ const fmtLatency = (ms: number): string => (ms > 0 ? `${ms.toFixed(2)} ms` : "�
 }
 
 /* ── Audio ── */
+
+.measurement-note {
+  margin: 0 0 14px;
+  color: var(--u-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
 
 .audio-grid {
   display: grid;

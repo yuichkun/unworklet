@@ -896,8 +896,13 @@ does not emit it. Read overflow counts from the relevant port's
 When input and output events share a name, their merged `node.events.<name>`
 surface retains only the outbound (worklet-to-main) ring's diagnostics. Its
 `overflowCount()` does not expose drops on the inbound (main-to-worklet) ring.
-Use distinct event names to inspect both directions' overflow counters. —
+For same-name input and output MIDI ports, the later declaration's diagnostics
+replace the earlier declaration's diagnostics on `node.midi.<name>`.
+These name collisions affect both the SAB and `postMessage` transports.
+Use distinct names for the two directions of events or MIDI ports to inspect
+both overflow counters. —
 [cite: packages/core/src/client.ts :: `existingEntry.emit = emit;`]
+[cite: packages/core/src/client.ts :: `midiSurface[ring.name] = {`]
 
 Processors with no declared audio ports use one silent native output to satisfy
 Web Audio's constructor requirements. Their public `inputs` and `outputs` remain

@@ -66,12 +66,12 @@ Run the dev server → open the Vite DevTools overlay → pick the **unworklet**
 
 ## The 4 panels (Vue 3 SPA, hash router)
 
-| route          | sidebar label             | shows                                                                  |
-| -------------- | ------------------------- | ---------------------------------------------------------------------- |
-| `/audio-graph` | **Audio graph**           | the running `AudioContext` topology                                    |
-| `/live-state`  | **Live state**            | every `state` / buffer slot, live from WASM memory                     |
-| `/signals`     | **Signals & performance** | per-output waveform / spectrum / RMS / peak + `AudioContext` latencies |
-| `/midi`        | **MIDI**                  | event log + a virtual keyboard to inject notes                         |
+| route          | sidebar label             | shows                                                                               |
+| -------------- | ------------------------- | ----------------------------------------------------------------------------------- |
+| `/audio-graph` | **Audio graph**           | the running `AudioContext` topology                                                 |
+| `/live-state`  | **Live state**            | every `state` / buffer slot, live from WASM memory                                  |
+| `/signals`     | **Signals & performance** | per-output mono-downmix waveform / spectrum / RMS / peak + `AudioContext` latencies |
+| `/midi`        | **MIDI**                  | event log + a virtual keyboard to inject notes                                      |
 
 `/` redirects to `/audio-graph`. [cite: packages/unplugin/devtools-ui/src/router.ts :: `redirect: "/audio-graph"`]
 
@@ -98,6 +98,16 @@ releases for holding pedals engaged by that view. `MidiPortSurface.send()` has n
 acknowledgment; this cleanup uses the same bounded transport as other MIDI sends.
 The 0.4 host does not automatically reopen a closed DevTools socket. Reload the
 application page to reconnect; its replacement session must be selected explicitly.
+
+Signals' waveform, spectrum, RMS and peak are **mono downmix** measurements of
+an output port, not per-channel levels. Stereo channels with opposite polarity
+can cancel to zero even when both channels contain audio. A signal in only one
+stereo channel is attenuated by the downmix. A zero reading does not establish
+silence in every channel, and the displayed peak cannot rule out clipping in
+individual channels. Mono output is measured directly; same-polarity stereo
+channels combine in the downmix.
+[cite: packages/unplugin/src/index.ts :: `const ensureAnalysers = (awn, outputs) => {`]
+[cite: packages/unplugin/devtools-ui/src/views/SignalsView.vue :: `Waveform, spectrum, RMS and peak measure each output port's mono downmix.`]
 
 Live state renders signed buffers around a zero baseline. For `i64` buffers,
 List preserves exact decimal integers; Bar chart and Waveform are labeled
