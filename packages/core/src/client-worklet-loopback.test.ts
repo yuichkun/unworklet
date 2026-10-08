@@ -21,7 +21,7 @@
 
 import "./dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 
-import { expect, test, vi } from "vite-plus/test";
+import { expect, onTestFinished, test, vi } from "vite-plus/test";
 
 import { createNode } from "./client.ts";
 import { compile } from "./compile/index.ts";
@@ -44,6 +44,8 @@ type LoopbackOptions = {
   crossOriginIsolated: boolean;
   beforeRestoreDone?: () => void;
   queues?: RestoreQueues;
+  notifyConstructor?: (notify: () => void) => void;
+  notifyListener?: (notify: () => void) => void;
 };
 
 type PortListener = (e: { data: unknown }) => void;
@@ -62,6 +64,7 @@ type LoopbackHarness = {
   renderedParams: Map<string, number>;
   /** True once the mock node exists and the client's port listener is attached. */
   readyToInitialize: () => boolean;
+  waitToInitialize: (pending: Promise<unknown>) => Promise<void>;
   /** Fire every rAF callback queued at entry (one main-thread drain pass). */
   pumpRaf: () => void;
   repeatLastRaf: () => void;
@@ -74,6 +77,8 @@ type LoopbackHarness = {
  * and bridges the two ports so `ready` / fallback data messages actually flow.
  */
 const installLoopback = (wasmBytes: Uint8Array, opts: LoopbackOptions): LoopbackHarness => {
+  const constructed = deferred<void>();
+  const listening = deferred<void>();
   const coiTarget = globalThis as unknown as { crossOriginIsolated?: boolean };
   const prevCoi = coiTarget.crossOriginIsolated;
   if (opts.crossOriginIsolated) {
@@ -130,7 +135,11 @@ const installLoopback = (wasmBytes: Uint8Array, opts: LoopbackOptions): Loopback
       },
       onmessage: null as PortListener | null,
       addEventListener: (kind: string, fn: PortListener) => {
-        if (kind === "message") clientPortListeners.push(fn);
+        if (kind === "message") {
+          clientPortListeners.push(fn);
+          if (opts.notifyListener) opts.notifyListener(listening.resolve);
+          else listening.resolve();
+        }
       },
       removeEventListener: (_kind: string, fn: PortListener) => {
         const idx = clientPortListeners.indexOf(fn);
@@ -163,6 +172,8 @@ const installLoopback = (wasmBytes: Uint8Array, opts: LoopbackOptions): Loopback
     constructor(ctx: unknown, _name: string, nodeOptions: { processorOptions?: unknown }) {
       this.context = ctx;
       captured = (nodeOptions.processorOptions ?? {}) as Record<string, unknown>;
+      if (opts.notifyConstructor) opts.notifyConstructor(constructed.resolve);
+      else constructed.resolve();
     }
     addEventListener(_kind: string, _fn: unknown): void {}
     removeEventListener(_kind: string, _fn: unknown): void {}
@@ -221,6 +232,15 @@ const installLoopback = (wasmBytes: Uint8Array, opts: LoopbackOptions): Loopback
       return captured;
     },
     readyToInitialize,
+    waitToInitialize: (pending) =>
+      observed(
+        Promise.race([
+          Promise.all([constructed.promise, listening.promise]).then(() => {}),
+          pending.then(() => {
+            throw new Error("Unexpected createNode success");
+          }),
+        ]),
+      ),
     pumpRaf: () => {
       const batch = rafQueue.splice(0, rafQueue.length);
       for (const cb of batch) {
@@ -1152,6 +1172,239 @@ for (const transport of ["sab", "postMessage"] as const) {
   });
 }
 
+function observed<T>(promise: Promise<T>): Promise<T> {
+  void promise.catch(() => {});
+  return promise;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = observed(
+    new Promise<T>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    }),
+  );
+  return { promise, resolve, reject };
+}
+
+async function heldInitialization(
+  crossOriginIsolated: boolean,
+  signal: AbortSignal,
+  missing?: "constructor" | "listener",
+  beforeCompile?: Error,
+) {
+  const processor = defineProcessor(() => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    return { process: () => forSample((i) => out.ch(0).at(i).write(0.5)) };
+  });
+  const { wasm } = await compile(processor);
+  const module = await WebAssembly.compile(wasm as BufferSource);
+  signal.throwIfAborted();
+  const held = deferred<WebAssembly.Module>();
+  const compileStarted = deferred<void>();
+  const queues: RestoreQueues = { enabled: true, controls: [], replies: [], tasks: [] };
+  const harness = installLoopback(wasm, {
+    crossOriginIsolated,
+    queues,
+    notifyConstructor: missing === "constructor" ? () => {} : undefined,
+    notifyListener: missing === "listener" ? () => {} : undefined,
+  });
+  const spy = vi.spyOn(WebAssembly, "compile").mockImplementation(() => {
+    compileStarted.resolve();
+    return held.promise;
+  });
+  if (beforeCompile) harness.context.audioWorklet.addModule = () => Promise.reject(beforeCompile);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const pending = createNode(harness.context as never, withWorkletUrls(processor));
+  let settled = false;
+  const rejection = pending.then(
+    (node) => {
+      settled = true;
+      node.dispose();
+      throw new Error("Unexpected createNode success");
+    },
+    (error: unknown) => {
+      settled = true;
+      return error;
+    },
+  );
+  void observed(rejection);
+  const readiness = harness.waitToInitialize(pending);
+  const started = observed(
+    Promise.race([
+      compileStarted.promise,
+      pending.then(() => {
+        throw new Error("Unexpected createNode success");
+      }),
+    ]),
+  );
+  const cancelled = new Error("Cancelled held initialization");
+  let cleaning: Promise<void> | undefined;
+  const cleanup = () =>
+    (cleaning ??= (async () => {
+      held.reject(cancelled);
+      // Flush registration before advancing the handshake deadline; readiness may
+      // never be notified, even when compile was already released.
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(settled).toBe(true);
+      await Promise.allSettled([pending, readiness, started]);
+      expect(vi.getTimerCount()).toBe(0);
+      signal.removeEventListener("abort", abort);
+      spy.mockRestore();
+      harness.cleanup();
+      vi.useRealTimers();
+    })());
+  const abort = () => {
+    void observed(cleanup());
+  };
+  signal.addEventListener("abort", abort, { once: true });
+  onTestFinished(cleanup);
+  return {
+    harness,
+    processor,
+    queues,
+    readiness,
+    started,
+    rejection,
+    cleanup,
+    cancelled,
+    release: () => held.resolve(module),
+    reject: held.reject,
+    settled: () => settled,
+  };
+}
+
+for (const crossOriginIsolated of [true, false]) {
+  test(`held compile exceeds 200 turns (SAB=${crossOriginIsolated})`, async ({ signal }) => {
+    const f = await heldInitialization(crossOriginIsolated, signal);
+    try {
+      await f.started;
+      let ready = false;
+      void f.readiness.then(
+        () => {
+          ready = true;
+        },
+        () => {},
+      );
+      for (let turn = 0; turn < 200; turn++)
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(ready).toBe(false);
+      expect(f.harness.readyToInitialize()).toBe(false);
+      expect(() => f.harness.capturedProcessorOptions()).toThrow("not constructed");
+      expect(vi.getTimerCount()).toBe(0);
+      f.release();
+      await f.readiness;
+      expect(ready).toBe(true);
+      expect(f.harness.readyToInitialize()).toBe(true);
+      expect(vi.getTimerCount()).toBe(1);
+      f.processor.worklet.initialize(f.harness.workletSelf as never, {
+        processorOptions: { ...f.harness.capturedProcessorOptions(), module: {} },
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await f.rejection).toMatchObject({ message: expect.stringContaining("timed out") });
+      for (const task of f.queues.tasks.splice(0)) task();
+      for (const reply of f.queues.replies.splice(0)) reply();
+      for (let quantum = 0; quantum < 3; quantum++) {
+        const output = new Float32Array(SAMPLES_PER_BLOCK).fill(7);
+        expect(
+          f.processor.worklet.process(f.harness.workletSelf as never, [], [[output]], {}),
+        ).toBe(false);
+        expect(output.every((value) => value === 0)).toBe(true);
+      }
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  for (const stage of [
+    "held",
+    "released",
+    "ready",
+    "compile-reject",
+    "before-compile",
+    "abort",
+    "constructor",
+    "listener",
+  ] as const) {
+    test(`initialization cleanup at ${stage} (SAB=${crossOriginIsolated})`, async ({ signal }) => {
+      const originalFetch = globalThis.fetch;
+      const originalCompile = WebAssembly.compile;
+      const controller = new AbortController();
+      const failure = new Error(stage);
+      const f = await heldInitialization(
+        crossOriginIsolated,
+        AbortSignal.any([signal, controller.signal]),
+        stage === "constructor" || stage === "listener" ? stage : undefined,
+        stage === "before-compile" ? failure : undefined,
+      );
+      try {
+        if (stage === "before-compile") {
+          await expect(f.started).rejects.toBe(failure);
+          await expect(f.readiness).rejects.toBe(failure);
+        } else {
+          await f.started;
+          if (stage === "compile-reject") {
+            f.reject(failure);
+            await expect(f.readiness).rejects.toBe(failure);
+          } else if (stage === "constructor" || stage === "listener") {
+            f.release();
+            let ready = false;
+            void f.readiness.then(
+              () => {
+                ready = true;
+              },
+              () => {},
+            );
+            await vi.advanceTimersByTimeAsync(0);
+            expect(vi.getTimerCount()).toBe(1);
+            expect(ready).toBe(false);
+          } else if (stage === "abort") {
+            controller.abort();
+          } else {
+            if (stage !== "held") f.release();
+            if (stage === "ready") await f.readiness;
+            await expect(
+              (async () => {
+                try {
+                  expect("injected assertion failure").toBe(stage);
+                } finally {
+                  await f.cleanup();
+                }
+              })(),
+            ).rejects.toThrow("expected");
+          }
+        }
+      } finally {
+        await f.cleanup();
+      }
+      expect(f.settled()).toBe(true);
+      expect(vi.isFakeTimers()).toBe(false);
+      expect(globalThis.fetch).toBe(originalFetch);
+      expect(WebAssembly.compile).toBe(originalCompile);
+      if (stage === "compile-reject" || stage === "before-compile")
+        expect(await f.rejection).toBe(failure);
+      if (stage === "held" || stage === "abort")
+        await expect(f.readiness).rejects.toBe(f.cancelled);
+    });
+  }
+
+  test(`readiness rejects unexpected success (SAB=${crossOriginIsolated})`, async () => {
+    const harness = installLoopback(new Uint8Array(), { crossOriginIsolated });
+    try {
+      await expect(harness.waitToInitialize(Promise.resolve())).rejects.toThrow(
+        "Unexpected createNode success",
+      );
+      const error = new Error("early rejection");
+      await expect(harness.waitToInitialize(Promise.reject(error))).rejects.toBe(error);
+    } finally {
+      harness.cleanup();
+    }
+  });
+}
+
 for (const crossOriginIsolated of [true, false]) {
   for (const phase of ["initialized", "late-initialize", "failed"] as const) {
     test(`ready timeout stops ${phase} DSP (${crossOriginIsolated ? "SAB" : "postMessage"})`, async () => {
@@ -1166,9 +1419,7 @@ for (const crossOriginIsolated of [true, false]) {
       try {
         const pending = createNode(harness.context as never, withWorkletUrls(processor));
         const rejection = pending.catch((error: unknown) => error);
-        for (let spin = 0; spin < 200 && !harness.readyToInitialize(); spin++) {
-          await new Promise<void>((resolve) => setImmediate(resolve));
-        }
+        await harness.waitToInitialize(pending);
         expect(harness.readyToInitialize()).toBe(true);
         const initialize = () =>
           processor.worklet.initialize(harness.workletSelf as never, {
@@ -1225,9 +1476,7 @@ for (const crossOriginIsolated of [true, false]) {
       try {
         const pending = createNode(harness.context as never, withWorkletUrls(processor));
         const rejection = pending.catch((error: unknown) => error);
-        for (let spin = 0; spin < 200 && !harness.readyToInitialize(); spin++) {
-          await new Promise<void>((resolve) => setImmediate(resolve));
-        }
+        await harness.waitToInitialize(pending);
         expect(harness.readyToInitialize()).toBe(true);
         const initialize = () =>
           processor.worklet.initialize(harness.workletSelf as never, {
