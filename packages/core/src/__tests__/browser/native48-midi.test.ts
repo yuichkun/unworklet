@@ -12,7 +12,7 @@ import {
   replies,
 } from "./fixtures/native48-midi-observation.ts";
 
-import { driveNative48Midi, freshProgress } from "./fixtures/native48-midi-driver.ts";
+import { driveNative48Midi, freshProgress } from "../native48-midi/native48-midi-driver.ts";
 
 type Fault = {
   kind:

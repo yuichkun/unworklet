@@ -1,9 +1,5 @@
 import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
-import {
-  driveNative48Midi,
-  freshProgress,
-  NATIVE48_CLEANUP_MS,
-} from "./__tests__/browser/fixtures/native48-midi-driver.ts";
+import { driveNative48Midi, freshProgress, NATIVE48_CLEANUP_MS } from "./native48-midi-driver.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
