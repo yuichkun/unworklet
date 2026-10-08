@@ -1864,3 +1864,27 @@ for (const phase of ["before processing", "after processing", "after failure"] a
     }
   });
 }
+
+for (const failure of ["missing module", "invalid module"] as const) {
+  test(`shutdown releases lifetime after ${failure} initialization failure`, () => {
+    const self = makeMockSelf();
+    monoGain.worklet.initialize(self, {
+      processorOptions: failure === "missing module" ? {} : { module: {} as WebAssembly.Module },
+    });
+    expect(self.messages).toHaveLength(1);
+    expect(self.messages[0]).toMatchObject({ kind: "init-error" });
+    const output = new Float32Array(128).fill(7);
+    expect(monoGain.worklet.process(self, [], [[output]], {})).toBe(true);
+    expect(output.every((value) => value === 0)).toBe(true);
+    firePortMessage(self, null);
+    firePortMessage(self, { kind: "unrelated" });
+    firePortMessage(self, { kind: "shutdown" });
+    for (let quantum = 0; quantum < 3; quantum++) {
+      output.fill(7);
+      expect(monoGain.worklet.process(self, [], [[output]], {})).toBe(false);
+      expect(output.every((value) => value === 0)).toBe(true);
+    }
+    expect(self.messages).toHaveLength(1);
+    expect(self.port.__startCalled).toBe(true);
+  });
+}

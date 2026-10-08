@@ -5160,3 +5160,34 @@ test("dispose rejects captures deferred behind a restore and ignores its late re
     h.cleanup();
   }
 });
+
+for (const shutdownThrows of [false, true]) {
+  for (const failure of ["init-error", "processorerror"] as const) {
+    test(`failed ready handshake retries clean up (${failure}, send throws: ${shutdownThrows})`, async () => {
+      const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+      try {
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const pending = createNode(h.context as never, makeMockProcessor());
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          const operations: unknown[] = [];
+          h.lastNode!.port.postMessage = (message) => {
+            operations.push(message);
+            if (shutdownThrows) throw new Error("secondary shutdown failure");
+          };
+          h.lastNode!.disconnect = () => operations.push("disconnect");
+          h.lastNode!.port.close = () => operations.push("close");
+          if (failure === "init-error") h.fireInitError("original initialization failure");
+          else h.fireProcessorError("original initialization failure");
+          await expect(pending).rejects.toThrow("original initialization failure");
+          expect(operations).toEqual([{ kind: "shutdown" }, "disconnect", "close"]);
+          for (const node of h.nodes) {
+            expect(node.port.__listeners).toHaveLength(0);
+            expect(node.__processorErrorListeners).toHaveLength(0);
+          }
+        }
+      } finally {
+        h.cleanup();
+      }
+    });
+  }
+}
