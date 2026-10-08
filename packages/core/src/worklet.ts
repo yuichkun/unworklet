@@ -1226,10 +1226,12 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         // The blob's profile scopes which declarations are "expected" — `missing`
         // is computed against it, not the union of every profile (`01-dsl.md` §8.2).
         profile: string | undefined,
+        apply: boolean,
       ): { applied: string[]; skipped: string[]; missing: string[] } => {
         const applied: string[] = [];
         const skipped: string[] = [];
         const buf = memory.buffer;
+        const writes: Array<{ target: Uint8Array; data: Uint8Array }> = [];
         const provided = new Set(slots.map((s) => s.name));
         for (const slot of slots) {
           if (slot.kind === "state") {
@@ -1252,7 +1254,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               skipped.push(slot.name);
               continue;
             }
-            new Uint8Array(buf, off, expected).set(slot.data);
+            writes.push({ target: new Uint8Array(buf, off, expected), data: slot.data });
             applied.push(slot.name);
           } else if (slot.kind === "buffer") {
             const off = lay.regions.buffers.slots[slot.name];
@@ -1275,7 +1277,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
               skipped.push(slot.name);
               continue;
             }
-            new Uint8Array(buf, off, expected).set(slot.data);
+            writes.push({ target: new Uint8Array(buf, off, expected), data: slot.data });
             applied.push(slot.name);
           } else {
             // param slot = the AudioParam's value (actually set on the main side). The
@@ -1312,6 +1314,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
           ) {
             missing.push(p.name);
           }
+        }
+        if (apply) {
+          for (const write of writes) write.target.set(write.data);
         }
         return { applied, skipped, missing };
       };
@@ -1426,15 +1431,18 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             });
             return;
           }
-          if (data.kind === "restore") {
+          if (data.kind === "restore-barrier") {
+            self.port.postMessage({ kind: "restore-barrier-done", requestId: data.requestId });
+            return;
+          }
+          if (data.kind === "restore" || data.kind === "restore-prepare") {
             const slots = Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : [];
             const profile = typeof data.profile === "string" ? data.profile : undefined;
-            // Same contract as capture: the handler must always post `restore-done`
-            // so the awaiting client settles. On an unexpected throw mid-apply,
-            // report nothing applied (= the live node keeps its current state).
+            // Preparation validates without writing; commit validates the complete
+            // request before applying. Both phases must answer so callers settle.
             let report: { applied: string[]; skipped: string[]; missing: string[] };
             try {
-              report = applyRestoreSlots(slots, profile);
+              report = applyRestoreSlots(slots, profile, data.kind === "restore");
             } catch {
               report = {
                 applied: [],
@@ -1444,7 +1452,11 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
                 missing: [],
               };
             }
-            self.port.postMessage({ kind: "restore-done", requestId: data.requestId, ...report });
+            self.port.postMessage({
+              kind: data.kind === "restore" ? "restore-done" : "restore-prepared",
+              requestId: data.requestId,
+              ...report,
+            });
             return;
           }
           if (data.kind === "message") {
