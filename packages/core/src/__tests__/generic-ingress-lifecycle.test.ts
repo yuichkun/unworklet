@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vite-plus/test";
-import { createIngressLifecycle } from "./browser/fixtures/generic-ingress-lifecycle.ts";
+import { createIngressLifecycle } from "./generic-ingress-lifecycle.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

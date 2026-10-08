@@ -2,7 +2,7 @@ import { commands } from "vite-plus/test/browser";
 import { expect } from "vite-plus/test";
 import { createNode } from "../../../index.ts";
 import genericIngress from "./generic-ingress.processor.ts?worklet";
-import { createIngressLifecycle } from "./generic-ingress-lifecycle.ts";
+import { createIngressLifecycle } from "../../generic-ingress-lifecycle.ts";
 import {
   ingressBatches,
   ingressLedger,
