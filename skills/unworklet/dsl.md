@@ -692,12 +692,34 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
   `defineSubgraph` body, before the returned `process` / method record);
   instantiating inside `forSample` / `everyNSamples` / a handler throws
   (`scope-violation`). Each instance gets independent internal state. — [cite: packages/core/src/processor.ts :: `if (ctx.currentLoopBody !== null) {`]
-- A `Node<"f32">` arg also accepts a bare `number` (and a `Node<"bool">` arg a
-  `boolean`); the type widening lives in the runtime `LiftArg<A>` union at
-  [cite: packages/core/src/processor.ts :: `type LiftArg<A> =`] — no sugar pass rewrites `instantiate`
-  args, the literal just satisfies the widened signature and any downstream
-  primitive (`mul` / `add` / …) lifts it in place. A plain-`number` config arg
-  is not lifted.
+- In `.uwk.ts`, a statically known `number` argument is constructed with `f32`,
+  `f64`, or `i32` when the subgraph's original argument slot declares exactly that
+  `Node` scalar. A statically known `boolean` is constructed with `bool` for a
+  `Node<"bool">` slot. This applies to expressions as well as literals; each
+  expression is evaluated once. Method bodies and Node pass-through returns
+  receive the same Nodes as an explicit constructor call. Runtime lowering and
+  editor/CLI virtual code share these constructor decisions. — [cite: packages/lang/src/passes/instantiate.ts :: `export function instantiateArgumentConstructors(`]
+- The recognized calls are the ambient `instantiate`, named imports (including
+  imported aliases), and properties of namespace imports resolving to core's
+  actual `instantiate` export. Custom functions/objects and unproven local aliases
+  are left unchanged. Cross-file subgraphs retain their declared argument types.
+- Existing Nodes, plain primitive/config arguments, and declared primitive
+  alternatives such as `Node<"f32"> | number` stay unchanged. Optional slots can
+  construct a supplied primitive; omitted or `undefined` arguments stay unchanged.
+  Ordinary trailing rest slots are supported, and trailing `{ name }` options
+  keep core's existing interpretation.
+- This construction is deliberately partial. Use explicit constructors for
+  `i64`, SIMD, ambiguous scalar targets, generic/unknown targets, nullable or
+  Node-or-primitive argument expressions, and argument positions at or after a
+  spread. A tuple with a nonterminal rest or unresolved variadic portion is left
+  unchanged. The lowering does not select a scalar from a runtime value or
+  recursively construct properties inside config objects.
+- Raw-core calls still pass arguments through unchanged. The public
+  `LiftArg<A>` signature accepts primitives more broadly than the cases above;
+  accepted types alone do not guarantee construction. Pass explicit Nodes, for
+  example `instantiate(sg, f32(0.5))`, in raw core and any unsupported lowering
+  case. Otherwise method-form calls or Node pass-through use can fail at capture.
+  — [cite: packages/core/src/processor.ts :: `type LiftArg<A> =`] [cite: packages/core/src/processor.ts :: `methods = body(...(args as Args));`]
 - An instance with a named / persistent / published internal slot **must** be
   given an explicit `{ name }` (snapshot-path stability). — [cite: packages/core/src/processor.ts :: `if (instanceName === undefined) {`]
 

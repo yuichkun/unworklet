@@ -22,6 +22,14 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Fixed
 
+- `.uwk.ts` constructs primitive `instantiate` arguments for unambiguous declared
+  `f32`, `f64`, `i32`, and `bool` Node slots, including method-form and pass-through
+  subgraphs. Runtime and editor/CLI lowering agree; primitive/config alternatives,
+  existing Nodes, omitted/undefined arguments, and trailing options remain
+  unchanged. This is a partial repair related to #34: raw-core signatures/runtime,
+  i64/SIMD, ambiguous/generic targets and unresolved spread positions still require
+  explicit construction.
+
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,
   snapshot policies, and scalar publishing. Nameless options retain the binding
   name; option expressions run once and core reads their getters lazily.
