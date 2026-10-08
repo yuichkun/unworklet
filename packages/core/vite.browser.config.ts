@@ -17,6 +17,8 @@ import { defineConfig } from "vite-plus";
 
 import { renderCrossRealmOracle } from "./src/__tests__/browser/fixtures/crossrealm-oracle.ts";
 
+import { renderNative48MidiOracle } from "./src/__tests__/browser/fixtures/native48-midi-oracle.ts";
+
 export default defineConfig({
   plugins: [unworklet()],
   server: {
@@ -31,6 +33,7 @@ export default defineConfig({
     browser: {
       enabled: true,
       commands: {
+        renderNative48MidiOracle: () => renderNative48MidiOracle(),
         renderCrossRealmOracle: (_context, name, sampleRate) =>
           renderCrossRealmOracle(name, sampleRate),
       },
