@@ -301,7 +301,7 @@ const makeMidiTickProcessor = () =>
 
 type LoopbackSession = {
   node: Awaited<ReturnType<typeof createNode>>;
-  runQuantum: () => void;
+  runQuantum: () => boolean;
   harness: LoopbackHarness;
 };
 
@@ -329,7 +329,7 @@ const bootLoopback = async (
     node,
     harness,
     runQuantum: () => {
-      processor.worklet.process(
+      return processor.worklet.process(
         harness.workletSelf as never,
         [],
         outputs,
@@ -839,6 +839,93 @@ for (const crossOriginIsolated of [false, true]) {
       expect(received).toHaveLength(25);
     } finally {
       session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+for (const disposeFrom of ["event", "midi"] as const) {
+  test(`postMessage disposal: ${disposeFrom} subscriber stops callbacks in the current and queued frames`, async () => {
+    const processor = defineProcessor(() => {
+      const n = state.f32(0);
+      const tick = event<{ n: number }>({ to: "main", name: "tick", capacity: CAPACITY_16 });
+      const midi = event.midi({ to: "main", name: "mo", capacity: CAPACITY_16 });
+      return {
+        process: () => {
+          tick.emitIf(true, { n: n.read() });
+          tick.emitIf(true, { n: n.read().add(1) });
+          midi.emitIf(true, { type: "noteOn", note: 60, velocity: 100, channel: 0, atSample: 0 });
+          midi.emitIf(true, { type: "noteOn", note: 61, velocity: 100, channel: 0, atSample: 1 });
+          n.write(n.read().add(2));
+        },
+      };
+    });
+    const queues: RestoreQueues = { enabled: false, controls: [], replies: [], tasks: [] };
+    const session = await bootLoopback(processor, {
+      crossOriginIsolated: false,
+      transferEgress: true,
+      queues,
+    });
+    const received: string[] = [];
+    const afterDispose = vi.fn();
+    const post = vi.spyOn(session.node.node.port, "postMessage");
+    const close = vi.spyOn(session.node.node.port, "close");
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const ticks = session.node.events.tick! as unknown as {
+      on(handler: (value: { n: number }) => void): void;
+    };
+    ticks.on((value) => {
+      received.push(`event:${value.n}`);
+      if (disposeFrom === "event") session.node.dispose();
+    });
+    if (disposeFrom === "event") ticks.on(afterDispose);
+    session.node.midi.mo!.onEvent("noteOn", (value) => {
+      received.push(`midi:${value.note}`);
+      session.node.dispose();
+    });
+    session.node.midi.mo!.onEvent("noteOn", afterDispose);
+    queues.enabled = true;
+    try {
+      for (let q = 0; q < 3; q++) expect(session.runQuantum()).toBe(true);
+      expect(queues.replies).toHaveLength(3);
+      expect(received).toEqual([]);
+      expect(session.harness.transferredEgressBuffers).toHaveLength(6);
+      expect(
+        session.harness.transferredEgressBuffers.every((buffer) => buffer.byteLength === 0),
+      ).toBe(true);
+
+      queues.replies.shift()!();
+      expect(received).toEqual(
+        disposeFrom === "event" ? ["event:0"] : ["event:0", "event:1", "midi:60"],
+      );
+      expect(afterDispose).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledTimes(1);
+      // The running listener finishes decoding and attempts to recycle after close.
+      // A closed native port need not deliver that recycle; shutdown was posted first.
+      expect(post.mock.calls.map(([message]) => (message as { kind: string }).kind)).toEqual([
+        "shutdown",
+        "egress-recycle",
+      ]);
+
+      for (const deliver of queues.replies.splice(0)) deliver();
+      expect(received).toHaveLength(disposeFrom === "event" ? 1 : 3);
+      expect(afterDispose).not.toHaveBeenCalled();
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(error).not.toHaveBeenCalled();
+      session.node.dispose();
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(close).toHaveBeenCalledTimes(1);
+
+      // Deliver only the shutdown queued before close, not the post-close recycle.
+      queues.tasks.shift()!();
+      expect(session.runQuantum()).toBe(false);
+      expect(queues.replies).toHaveLength(0);
+    } finally {
+      queues.enabled = false;
+      session.node.dispose();
+      post.mockRestore();
+      close.mockRestore();
+      error.mockRestore();
       session.harness.cleanup();
     }
   });
