@@ -514,8 +514,11 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
   larger transfers into multiple messages.
 - Outbound: worklet sends with `.emitIf(cond, event)` only — same rule as
   typed `event<T>` above (no bare `.emit` on the worklet-side handle). The
-  MIDI event must include `atSample: number` (the sample index within the
-  current quantum). — [cite: packages/core/src/dsl/declarations.ts :: `function midiToMain(`]
+  MIDI event must include `atSample: Node<"i32"> | number` (the sample index
+  within the current quantum). Pass an input MIDI event's `atSample` or the
+  `forSample` callback's `i` directly to preserve a graph-valued offset; a
+  numeric literal is also accepted. — [cite: packages/core/src/types.ts :: `export type MidiEventEmit =`]
+  [cite: packages/core/src/dsl/declarations.ts :: `function midiToMain(`]
 - Events/MIDI carry **no** infix sugar; the helper/handler shapes are identical
   in both forms. Handler BODIES still get operator / bare-state lowering in `.uwk.ts`.
 - Main-thread side is `node.midi.<name>` with the full `MidiEvent` union (§5).
@@ -871,10 +874,24 @@ that default import, including its declared parameters and message payloads.
 | `node.events.<name>`      | `EventSurface<T>` — `.on(handler)` (out) / `.emit(payload)` (in) / `.diagnostics.overflowCount()`; direction-narrowed                                                                                                                                                                                                                                           |
 | `node.midi.<name>`        | `{ send(event, atTime?); connectFromWebMIDI(input); onEvent(type, handler); diagnostics }`                                                                                                                                                                                                                                                                      |
 | `node.diagnostics`        | `{ readonly transport: "sab" \| "postMessage" }`                                                                                                                                                                                                                                                                                                                |
-| `node.onError(handler)`   | subscribe to `NodeErrorEvent` (`wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch` / `worklet-initialize-not-called`); returns unsubscribe                                                                                                                                                                                             |
+| `node.onError(handler)`   | subscribe to runtime errors (`wasm-trap` / `sab-unavailable` / `block-length-mismatch` / `worklet-initialize-not-called`); returns unsubscribe; see notification details below                                                                                                                                                                                  |
 | `node.snapshot(options?)` | `Promise<Uint8Array>` — block-atomic state capture; `options?: { profile?: string }`                                                                                                                                                                                                                                                                            |
 | `node.restore(blob)`      | `Promise<RestoreResult>` — runs migrations, applies slots + param values; never throws (returns `{ ok }`)                                                                                                                                                                                                                                                       |
 | `node.dispose()`          | idempotent teardown; stops polling, removes listeners, disconnects proxies; does not touch your graph edges                                                                                                                                                                                                                                                     |
+
+`node.onError` notifies the first subscriber exactly once with `sab-unavailable`
+when the node uses the `postMessage` fallback; later subscribers do not receive
+that notification. — [cite: packages/core/src/client.ts :: `let pendingSabUnavailable = !sabAvailable;`]
+[cite: packages/core/src/client.ts :: `handler({ code: "sab-unavailable" });`]
+
+`queue-overflow` is reserved in the public `NodeErrorEvent` union, but the runtime
+does not emit it. Read overflow counts from the relevant port's
+`node.events.<name>.diagnostics.overflowCount()` or
+`node.midi.<name>.diagnostics.overflowCount()` instead. —
+[cite: packages/core/src/types.ts :: `{ code: "queue-overflow"; source: "event" | "message" | "midi"; name: string; dropped: number }`]
+[cite: packages/core/src/client.ts :: `return eventOverflowMirror[ringIndex]!;`]
+[cite: packages/core/src/client.ts :: `return messageOverflowMirror[ringIndex]!;`]
+[cite: packages/core/src/client.ts :: `return midiOverflowMirror[ringIndex]!;`]
 
 Processors with no declared audio ports use one silent native output to satisfy
 Web Audio's constructor requirements. Their public `inputs` and `outputs` remain
