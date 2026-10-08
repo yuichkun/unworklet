@@ -118,6 +118,10 @@ export function createIngressLifecycle({
           }
         } catch (error) {
           record(error);
+          if (suspensions[index]!.status === "rejected") {
+            cursor++;
+            continue;
+          }
           break;
         }
       }

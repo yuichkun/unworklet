@@ -174,3 +174,32 @@ test("all pending teardown waits share one deadline", async () => {
     vi.useRealTimers();
   }
 });
+
+test("cleanup skips a rejected suspension and releases later registered boundaries", async () => {
+  const boundaries = Array.from({ length: 4 }, () => deferred<void>());
+  const rendering = deferred<void>();
+  boundaries[0]!.resolve();
+  boundaries[1]!.reject(new Error("unregistered suspension"));
+  let resumed = 0;
+  const context = {
+    resume: async () => {
+      resumed++;
+      if (resumed === 1) boundaries[2]!.resolve();
+      else if (resumed === 2) boundaries[3]!.resolve();
+      else rendering.resolve();
+    },
+  };
+  const lifecycle = createIngressLifecycle({
+    context,
+    boundaries: boundaries.map((item) => item.promise),
+    rendering: rendering.promise,
+    timeoutMs: 20,
+  });
+  const first = new Error("body failure");
+  lifecycle.fail(first);
+  await expect(lifecycle.cleanup([])).rejects.toBe(first);
+  expect(resumed).toBe(3);
+  expect(first.message).toContain("unregistered suspension");
+  expect(first.message).toContain("suspensions=[fulfilled,rejected,fulfilled,fulfilled]");
+  expect(first.message).toContain("render=fulfilled");
+});
