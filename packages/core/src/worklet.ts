@@ -140,6 +140,7 @@ const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 const MIDI_SLOT_BYTES = 8;
 
 const STATE_KEY = Symbol("unworklet.workletState");
+const STOPPED_KEY = Symbol("unworklet.stopped");
 /**
  * `initialize(self, opts)` was entered at least once. Used by `process` to
  * distinguish two failure modes when no state is attached to `self`:
@@ -344,12 +345,12 @@ type WorkletState = {
    * and the node keeps outputting silence, per docs/05-client.md §4).
    */
   failed: boolean;
-  stopped: boolean;
 };
 
 type SelfWithState = {
   port: { postMessage: (m: unknown, transfer?: Transferable[]) => void };
   [STATE_KEY]?: WorkletState;
+  [STOPPED_KEY]?: boolean;
   [INIT_CALLED_KEY]?: boolean;
   [INIT_NOT_CALLED_POSTED_KEY]?: boolean;
 };
@@ -745,6 +746,11 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     // (= flag set but no state) from init-never-called (= flag unset),
     // and surface the latter via `worklet-initialize-not-called`.
     self[INIT_CALLED_KEY] = true;
+    const port = self.port as {
+      addEventListener?: (kind: string, handler: (event: MessageEvent) => void) => void;
+      start?: () => void;
+    };
+    let handleMessage: ((event: MessageEvent) => void) | undefined;
     try {
       // Prefer the pre-compiled `WebAssembly.Module` (= main-thread async
       // compile), fall back to sync `new WebAssembly.Module(bytes)` if a
@@ -1111,7 +1117,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         midiInQueues,
         lastSentMidiInOverflows,
         failed: false,
-        stopped: false,
       };
 
       // Minimum pool-buffer size for this node's worst-case egress frame
@@ -1321,12 +1326,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         return { applied, skipped, missing };
       };
 
-      const port = self.port as {
-        addEventListener?: (kind: string, handler: (event: MessageEvent) => void) => void;
-        start?: () => void;
-      };
       if (typeof port.addEventListener === "function") {
-        port.addEventListener("message", (event: MessageEvent) => {
+        handleMessage = (event: MessageEvent) => {
           const data = event.data as
             | {
                 kind?: unknown;
@@ -1343,10 +1344,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             | null
             | undefined;
           if (typeof data !== "object" || data === null) return;
-          if (data.kind === "shutdown") {
-            (self as SelfWithState)[STATE_KEY]!.stopped = true;
-            return;
-          }
           if (data.kind === "egress-buffer" || data.kind === "egress-recycle") {
             // A pool buffer arriving from main — the initial seed, or a frame
             // coming back after consumption (`egressFrame.ts`). Views are bound
@@ -1498,13 +1495,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             }
             queue.push(item);
           }
-        });
-        // MessagePort spec = the addEventListener route does not implicitly start =
-        // an explicit start() enables receiving (the onmessage = ... path auto-starts,
-        // but the addEventListener path needs it separately).
-        if (typeof port.start === "function") {
-          port.start();
-        }
+        };
       }
 
       self.port.postMessage({ kind: "ready" });
@@ -1519,6 +1510,19 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         kind: "init-error",
         message: errorMessage(err),
       });
+    } finally {
+      // Shutdown must remain reachable even when WASM initialization throws.
+      if (typeof port.addEventListener === "function") {
+        port.addEventListener("message", (event: MessageEvent) => {
+          const data = event.data as { kind?: unknown } | null | undefined;
+          if (data && data.kind === "shutdown") {
+            self[STOPPED_KEY] = true;
+            return;
+          }
+          handleMessage?.(event);
+        });
+        if (typeof port.start === "function") port.start();
+      }
     }
   };
 
@@ -1528,6 +1532,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     const outputs = args[2] as Float32Array[][];
     const parameters = args[3] as Record<string, Float32Array>;
 
+    if (self[STOPPED_KEY]) {
+      fillOutputsSilent(outputs);
+      return false;
+    }
     const state = (self as SelfWithState)[STATE_KEY];
     if (!state) {
       // No state attached = two distinct paths. Post the path-β-specific
@@ -1544,10 +1552,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
       fillOutputsSilent(outputs);
       return true;
-    }
-    if (state.stopped) {
-      fillOutputsSilent(outputs);
-      return false;
     }
     if (state.failed) {
       // A previous quantum trapped inside `state.process()`. Per

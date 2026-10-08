@@ -1209,3 +1209,54 @@ for (const crossOriginIsolated of [true, false]) {
     });
   }
 }
+
+for (const crossOriginIsolated of [true, false]) {
+  for (const phase of ["init-error", "timeout", "late-init-error"] as const) {
+    test(`failed WASM initialization stops after ${phase} (${crossOriginIsolated ? "SAB" : "postMessage"})`, async () => {
+      const processor = defineProcessor(() => {
+        const out = audioOutput({ channels: 1, name: "main" });
+        return { process: () => forSample((i) => out.ch(0).at(i).write(0.5)) };
+      });
+      const { wasm } = await compile(processor);
+      const queues: RestoreQueues = { enabled: true, controls: [], replies: [], tasks: [] };
+      const harness = installLoopback(wasm, { crossOriginIsolated, queues });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const pending = createNode(harness.context as never, withWorkletUrls(processor));
+        const rejection = pending.catch((error: unknown) => error);
+        for (let spin = 0; spin < 200 && !harness.readyToInitialize(); spin++) {
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        expect(harness.readyToInitialize()).toBe(true);
+        const initialize = () =>
+          processor.worklet.initialize(harness.workletSelf as never, {
+            processorOptions: { ...harness.capturedProcessorOptions(), module: {} },
+          });
+        if (phase !== "late-init-error") initialize();
+        if (phase === "init-error") {
+          for (const reply of queues.replies.splice(0)) reply();
+        } else {
+          await vi.advanceTimersByTimeAsync(10_000);
+        }
+        const error = await rejection;
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain(
+          phase === "init-error" ? "WebAssembly" : "timed out",
+        );
+        if (phase === "late-init-error") initialize();
+        for (const task of queues.tasks.splice(0)) task();
+        for (const reply of queues.replies.splice(0)) reply();
+        for (let quantum = 0; quantum < 3; quantum++) {
+          const output = new Float32Array(SAMPLES_PER_BLOCK).fill(7);
+          expect(processor.worklet.process(harness.workletSelf as never, [], [[output]], {})).toBe(
+            false,
+          );
+          expect(output.every((value) => value === 0)).toBe(true);
+        }
+      } finally {
+        vi.useRealTimers();
+        harness.cleanup();
+      }
+    });
+  }
+}

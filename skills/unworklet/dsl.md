@@ -829,6 +829,9 @@ context+url), compiles the WASM, picks the transport (`"sab"` when
 / `processorerror` / 10 s timeout). A rejected ready handshake attempts worklet
 shutdown before disconnecting the node and closing its port; the original
 handshake error remains the rejection reason even if shutdown cannot be sent.
+The worklet accepts shutdown even when WASM initialization fails. Once shutdown
+is received, subsequent render calls emit silence and return `false`, including
+when initialization runs after the ready timeout.
 
 `"postMessage"` is a compatibility transport with bounded egress buffer reuse.
 Receiving messages and recycling transferred buffers can allocate on the audio
