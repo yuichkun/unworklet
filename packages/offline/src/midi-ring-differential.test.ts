@@ -239,8 +239,17 @@ function seedRing(instance: CompileInstance, base: number, seed: number) {
 }
 
 for (const capacity of [16, 32] as const) {
-  // The final seeds straddle each counter boundary while the ring is full.
-  for (const seed of [0, 0x7ffffff8, -8, (0x7ffffff8 - 26 - capacity) | 0, -8 - 26 - capacity]) {
+  // Before the overflow batch, 26 + capacity slots have been written.
+  const beforeOverflow = 26 + capacity;
+  const seeds = [0, 0x7ffffff8, -8];
+  for (const boundary of [0x80000000, 0x100000000]) {
+    seeds.push(
+      (boundary - beforeOverflow - 8) | 0, // Full occupancy straddles the boundary.
+      (boundary - beforeOverflow - capacity - 2) | 0, // Head crosses during drop-oldest.
+      (boundary - beforeOverflow - 2) | 0, // Tail crosses during drop-oldest.
+    );
+  }
+  for (const seed of seeds) {
     test(`MIDI input: literal wire / offline injection / FIFO (${capacity}, ${seed})`, async () => {
       const schedule = batches(capacity);
       const processor = inputProbe(capacity);

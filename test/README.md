@@ -39,7 +39,7 @@ The offline owner runs `midi-ring-differential.test.ts`: literal fixed-slot MIDI
 wire/semantic pairs compare compiled WASM input decoding and output encoding,
 public offline injection/draining, and an independent array FIFO. The bounded
 Node matrix covers eight non-sysex types, capacities 16/32, overflow/refill and
-signed/unsigned counter wrap, including overflow across those boundaries.
+signed/unsigned counter wrap, including head/tail crossings during drop-oldest.
 It does not establish generic payload, sysex, concurrent transport or native
 AudioWorklet equivalence.
 
