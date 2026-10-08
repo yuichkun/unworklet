@@ -309,6 +309,9 @@ importers:
       devframe:
         specifier: ^0.8.0
         version: 0.8.1(cac@7.0.0)(srvx@0.12.5)
+      magic-string:
+        specifier: ^0.30.21
+        version: 0.30.21
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

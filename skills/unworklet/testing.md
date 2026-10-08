@@ -370,3 +370,31 @@ test("expectMidiOut matches the re-emitted notes from a real render", async () =
 - Multichannel ports: `expectGainAtFreq` / `expectLatency` require `{ channel }`; multi-PORT results require `{ port }` (`expectPeakAtSample`) or the full-result form — else they throw.
 - Plain matchers need no setup; the chain form needs the one-time `import "@unworklet/test/extend"`.
 - Renders are deterministic: default `expectAudioMatches` tolerance is `0` (bit-exact), snapshots compare bit-exact across runs, and `whiteNoise` is seeded — so re-running the same config reproduces the same outputs + `state`.
+
+## Vite worklet debug self-checks
+
+With `@unworklet/unplugin`, Vite serve mode enables the existing per-quantum ring-header
+checks inside the AudioWorklet runtime itself. They check positive capacity, bounded
+unsigned head-minus-tail fill, and nonnegative overflow for event, message and MIDI
+rings. A violation is posted to the main thread and logged as an audio-thread
+self-check violation. This diagnoses those header invariants; it does not prove
+all DSP values finite, every memory access safe, or real-time deadlines met.
+
+The dev replacement is confined to the core runtime's free self-check identifier;
+it does not set an AudioWorklet realm global. Dependency prebundling receives the
+same flag through the optimizer’s compiler define, so it does not rely on the
+page realm either. Other defines and string-embedded Blob source are unchanged.
+The Vite production build sets the
+gate false. The browser regression verifies an actual emitted worklet bundle with
+the checker removed and no diagnostic for the same injected malformed header,
+including when a realm global is true. These guarantees concern the Vite plugin
+pipeline. A standalone packed core runtime or `@unworklet/lang/browser` Blob is
+not covered by that production-removal guarantee. The packed-consumer matrix covers
+dev on Vite 6.4.3, 7.3.5 and 8.0.16, and production on 7.3.5 and 8.0.16. The
+Vite 6.4.3 packed production build's Binaryen scanning limitation is tracked in
+[issue #165](https://github.com/yuichkun/unworklet/issues/165).
+
+Sources: `packages/unplugin/src/selfcheck-define.ts`,
+`packages/unplugin/src/selfcheck.browser.test.ts`,
+[cite: packages/core/src/selfcheck.ts :: `export function checkRingHeader(`],
+[cite: packages/core/src/worklet.ts :: `audit(state.eventRingsWasmHeaderViews, state.eventRings, "event");`].
