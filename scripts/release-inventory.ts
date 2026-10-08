@@ -106,7 +106,7 @@ export function validateInventory(
     const prefix = `${root}/blob/${actual.candidate}/CHANGELOG.md#L`;
     const location =
       typeof decision.changelog === "string" && decision.changelog.startsWith(prefix)
-        ? /^(\d+)(?:-L(\d+))?$/.exec(decision.changelog.slice(prefix.length))
+        ? /^([1-9]\d*)(?:-L([1-9]\d*))?$/.exec(decision.changelog.slice(prefix.length))
         : null;
     if (!location || decision.reason)
       throw new Error(`Provide a pinned CHANGELOG link or omission reason: ${key}`);

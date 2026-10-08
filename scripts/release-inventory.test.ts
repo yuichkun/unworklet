@@ -70,6 +70,8 @@ test.each([
   `https://github.com/yuichkun/unworklet/blob/main/CHANGELOG.md#L3`,
   `https://evil.example/blob/${sha}/CHANGELOG.md#L3`,
   `https://github.com/yuichkun/unworklet/blob/${sha}/CHANGELOG.md#L99`,
+  `https://github.com/yuichkun/unworklet/blob/${sha}/CHANGELOG.md#L03`,
+  `https://github.com/yuichkun/unworklet/blob/${sha}/CHANGELOG.md#L3-L03`,
   `https://github.com/yuichkun/unworklet/blob/${sha}/CHANGELOG.md#L5`,
 ])("rejects invalid or previous-release changelog link %s", (changelogLink) => {
   const edited = inventory();
