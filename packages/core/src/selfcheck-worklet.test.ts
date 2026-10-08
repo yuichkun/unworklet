@@ -1,19 +1,9 @@
-/**
- * Layer F — the debug self-check is wired into the worklet's process loop.
- *
- * With the `__UNWORKLET_SELFCHECK__` gate on, every quantum audits each ring
- * header and posts a `selfcheck-violation` the instant one is corrupt. Proven
- * both ways: a corrupt header (poked into the live state) is reported, and a
- * normal run is silent. Node tests run with the gate undefined, so the block is
- * skipped everywhere else (zero production cost; prod tree-shakes it entirely).
- */
-
 import "./dsl/primitives.ts";
 
-import { expect, test } from "vite-plus/test";
+import { afterEach, expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
-import { audioOutput, event } from "./dsl/declarations.ts";
+import { audioOutput, event, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 
@@ -33,65 +23,183 @@ const makeMockSelf = (): MockSelf => {
   };
 };
 
-// An event-out processor that seals the ring (emitIf(false)) but emits nothing,
-// so its header stays put for the test to inspect / corrupt.
+// Idle rings leave injected headers untouched; an accumulating signal proves
+// that diagnostics do not interrupt DSP or reset its state.
 const makeProc = () =>
   defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "out" });
-    const ev = event<{ x: number }>({ to: "main", name: "ev", capacity: 16 });
+    const count = state.f32(0);
+    const capacities = [16, 32] as const;
+    const events = capacities.map((capacity, i) =>
+      event<{ x: number }>({ to: "main", name: `event${i}`, capacity }),
+    );
+    for (const [i, capacity] of capacities.entries()) {
+      event<{ x: number }>({ from: "main", name: `message${i}`, capacity });
+    }
+    event.midi({ from: "main", name: "midi0", capacity: 16 });
+    const midi = event.midi({ to: "main", name: "midi1", capacity: 32 });
     return {
       process: () => {
-        ev.emitIf(false, { atSample: 0, x: 0 });
+        for (const ev of events) ev.emitIf(false, { atSample: 0, x: 0 });
+        midi.emitIf(false, { type: "noteOn", channel: 0, note: 60, velocity: 100, atSample: 0 });
         forSample((i) => {
-          out.ch(0).at(i).write(0);
+          count.write(count.read().add(1));
+          out.ch(0).at(i).write(count.read());
         });
       },
     };
   });
 
-const liveState = (self: MockSelf): { eventRingsWasmHeaderViews: Int32Array[] } => {
+interface LiveState {
+  eventRingsWasmHeaderViews: Int32Array[];
+  messageRingsWasmHeaderViews: Int32Array[];
+  midiRingsWasmHeaderViews: Int32Array[];
+  eventRings: Array<{ capacity: number }>;
+  messageRings: Array<{ capacity: number }>;
+  midiRings: Array<{ capacity: number }>;
+}
+const liveState = (self: MockSelf): LiveState => {
   const sym = Object.getOwnPropertySymbols(self).find(
     (s) => s.description === "unworklet.workletState",
   )!;
-  return (self as unknown as Record<symbol, { eventRingsWasmHeaderViews: Int32Array[] }>)[sym]!;
+  return (self as unknown as Record<symbol, LiveState>)[sym]!;
 };
 
-const quantum = () => [[], [[new Float32Array(128)]], {}] as const;
+const families = [
+  { kind: "event", headers: "eventRingsWasmHeaderViews", rings: "eventRings" },
+  { kind: "message", headers: "messageRingsWasmHeaderViews", rings: "messageRings" },
+  { kind: "midi", headers: "midiRingsWasmHeaderViews", rings: "midiRings" },
+] as const;
 
-test("the debug self-check reports a corrupt ring header", async () => {
-  (globalThis as Record<string, unknown>)["__UNWORKLET_SELFCHECK__"] = true;
-  try {
-    const proc = makeProc();
-    const { wasm } = await compile(proc);
-    const self = makeMockSelf();
-    proc.worklet.initialize(self, {
-      processorOptions: { wasm, eventRings: proc.worklet.eventRings },
-    });
-    // Corrupt the event ring header: head 20 over a capacity-16 ring (overfill).
-    const header = liveState(self).eventRingsWasmHeaderViews[0]!;
-    header[0] = 20;
-    header[1] = 0;
-    const [i, o, p] = quantum();
-    proc.worklet.process(self, i, o, p);
-    expect(self.messages.some((m) => m.kind === "selfcheck-violation")).toBe(true);
-  } finally {
-    delete (globalThis as Record<string, unknown>)["__UNWORKLET_SELFCHECK__"];
-  }
+const setup = async () => {
+  const proc = makeProc();
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, {
+    processorOptions: {
+      wasm,
+      transport: "postMessage",
+      eventRings: proc.worklet.eventRings,
+      messageRings: proc.worklet.messageRings,
+      midiRings: proc.worklet.midiRings,
+    },
+  });
+  expect(self.messages).toContainEqual({ kind: "ready" });
+  return { proc, self, live: liveState(self) };
+};
+
+const diagnostics = (self: MockSelf) =>
+  self.messages.filter((message) => message.kind === "selfcheck-violation");
+
+const processQuantum = (fixture: Awaited<ReturnType<typeof setup>>, quantum: number) => {
+  const before = families.map(({ headers }) => fixture.live[headers].map((h) => Array.from(h)));
+  const output = new Float32Array(128);
+  expect(fixture.proc.worklet.process(fixture.self, [], [[output]], {})).toBe(true);
+  expect(Array.from(output)).toEqual(Array.from({ length: 128 }, (_, i) => quantum * 128 + i + 1));
+  expect(families.map(({ headers }) => fixture.live[headers].map((h) => Array.from(h)))).toEqual(
+    before,
+  );
+};
+
+afterEach(() => vi.unstubAllGlobals());
+
+const faults = [
+  {
+    name: "overfill",
+    header: [33, 0, 0],
+    capacity: 32,
+    detail: "ring header corrupt: head=33 tail=0 → fill 33 exceeds capacity 32",
+  },
+  {
+    name: "tail rewind",
+    header: [0, 1, 0],
+    capacity: 32,
+    detail: "ring header corrupt: head=0 tail=1 → fill 4294967295 exceeds capacity 32",
+  },
+  {
+    name: "negative overflow",
+    header: [0, 0, -1],
+    capacity: 32,
+    detail: "ring overflow counter is negative: -1",
+  },
+  {
+    name: "zero capacity",
+    header: [0, 0, 0],
+    capacity: 0,
+    detail: "ring capacity must be positive, got 0",
+  },
+  {
+    name: "negative capacity",
+    header: [0, 0, 0],
+    capacity: -1,
+    detail: "ring capacity must be positive, got -1",
+  },
+];
+
+for (const family of families) {
+  test.each(faults)(
+    `${family.kind}[1] reports $name once per quantum with exact attribution`,
+    async (fault) => {
+      vi.stubGlobal("__UNWORKLET_SELFCHECK__", true);
+      const fixture = await setup();
+      fixture.live[family.headers][1]!.set(fault.header);
+      // Capacity corruption is injected after initialization, not accepted as a declaration.
+      fixture.live[family.rings][1]!.capacity = fault.capacity;
+      const expected = {
+        kind: "selfcheck-violation",
+        ring: `${family.kind}[1]`,
+        detail: fault.detail,
+      };
+      processQuantum(fixture, 0);
+      expect(diagnostics(fixture.self)).toEqual([expected]);
+      processQuantum(fixture, 1);
+      expect(diagnostics(fixture.self)).toEqual([expected, expected]);
+      fixture.live[family.headers][1]!.fill(0);
+      fixture.live[family.rings][1]!.capacity = 32;
+      processQuantum(fixture, 2);
+      expect(diagnostics(fixture.self)).toEqual([expected, expected]);
+    },
+  );
+}
+
+test.each([
+  { name: "empty", header: [0, 0, 0] },
+  { name: "full with positive overflow", header: [39, 7, 4] },
+  { name: "signed counter wrap", header: [-2147483632, 2147483632, 0] },
+  { name: "unsigned counter wrap", header: [16, -16, 0] },
+])("all ring families accept $name without changing PCM or state", async ({ header }) => {
+  vi.stubGlobal("__UNWORKLET_SELFCHECK__", true);
+  const fixture = await setup();
+  for (const { headers } of families) fixture.live[headers][1]!.set(header);
+  processQuantum(fixture, 0);
+  processQuantum(fixture, 1);
+  expect(diagnostics(fixture.self)).toEqual([]);
 });
 
-test("the debug self-check is silent on a valid run", async () => {
-  (globalThis as Record<string, unknown>)["__UNWORKLET_SELFCHECK__"] = true;
-  try {
-    const proc = makeProc();
-    const { wasm } = await compile(proc);
-    const self = makeMockSelf();
-    proc.worklet.initialize(self, {
-      processorOptions: { wasm, eventRings: proc.worklet.eventRings },
-    });
-    const [i, o, p] = quantum();
-    proc.worklet.process(self, i, o, p);
-    expect(self.messages.some((m) => m.kind === "selfcheck-violation")).toBe(false);
-  } finally {
-    delete (globalThis as Record<string, unknown>)["__UNWORKLET_SELFCHECK__"];
+test.each([false, undefined])(
+  "the %s self-check gate leaves corrupt rings silent",
+  async (gate) => {
+    vi.stubGlobal("__UNWORKLET_SELFCHECK__", gate);
+    const fixture = await setup();
+    for (const { headers } of families) fixture.live[headers][1]!.set([0, 0, -1]);
+    processQuantum(fixture, 0);
+    processQuantum(fixture, 1);
+    expect(diagnostics(fixture.self)).toEqual([]);
+  },
+);
+
+test("identical violations in separate rings are each reported exactly once", async () => {
+  vi.stubGlobal("__UNWORKLET_SELFCHECK__", true);
+  const fixture = await setup();
+  for (const { headers } of families) {
+    for (const header of fixture.live[headers]) header.set([0, 0, -1]);
   }
+  processQuantum(fixture, 0);
+  expect(diagnostics(fixture.self)).toEqual(
+    ["event[0]", "event[1]", "message[0]", "message[1]", "midi[0]", "midi[1]"].map((ring) => ({
+      kind: "selfcheck-violation",
+      ring,
+      detail: "ring overflow counter is negative: -1",
+    })),
+  );
 });
