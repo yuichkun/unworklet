@@ -1363,6 +1363,11 @@ export async function createNode<C>(
     // AudioContext. Best-effort: swallow secondary errors so the original
     // failure is what surfaces to the caller.
     try {
+      node.port.postMessage({ kind: "shutdown" });
+    } catch {
+      // Preserve the handshake failure if the port cannot send.
+    }
+    try {
       node.disconnect();
     } catch {
       // Already disconnected; ignore.

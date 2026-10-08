@@ -826,7 +826,9 @@ function createNode<C>(
 context+url), compiles the WASM, picks the transport (`"sab"` when
 `SharedArrayBuffer` + `crossOriginIsolated`, else `"postMessage"`), constructs the
 `AudioWorkletNode`, and resolves on a `ready` port message (rejects on init error
-/ `processorerror` / 10 s timeout).
+/ `processorerror` / 10 s timeout). A rejected ready handshake attempts worklet
+shutdown before disconnecting the node and closing its port; the original
+handshake error remains the rejection reason even if shutdown cannot be sent.
 
 `"postMessage"` is a compatibility transport with bounded egress buffer reuse.
 Receiving messages and recycling transferred buffers can allocate on the audio
