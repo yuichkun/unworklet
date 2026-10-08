@@ -5,7 +5,6 @@ import { chromium } from "playwright";
 // Characterization only: successful execution does not assert zero stale samples.
 const browser = await chromium.launch({ headless: true });
 try {
-  const session = await browser.newBrowserCDPSession();
   console.log(
     "NATIVE_BOUNDARY_ENV " +
       JSON.stringify({
@@ -13,7 +12,8 @@ try {
         platform: os.platform(),
         release: os.release(),
         architecture: os.arch(),
-        flags: (await session.send("Browser.getBrowserCommandLine")).arguments,
+        launchOptions: { headless: true },
+        flagsSource: "pw:browser launch log",
       }),
   );
   assert.equal(browser.version(), "148.0.7778.96", "Diagnostic requires pinned CI Chromium");
