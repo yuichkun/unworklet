@@ -181,6 +181,21 @@ test("signals tabs show empty states, live ports, latency, memory units and budg
   signal.data = { nodes, context };
   const root = mount(SignalsView);
   expect(root.textContent).toContain("No live output ports");
+  const explanation = () => {
+    const text = root.querySelector(".measurement-note")!.textContent!;
+    for (const term of [
+      "Waveform",
+      "spectrum",
+      "RMS",
+      "peak",
+      "mono downmix",
+      "opposite polarity",
+      "silence",
+      "clipping",
+    ])
+      expect(text).toContain(term);
+  };
+  explanation();
   expect(root.textContent).toContain("— Hz");
   const tab = async (text: string) => {
     [...root.querySelectorAll<HTMLButtonElement>(".sub-tab")]
@@ -218,4 +233,14 @@ test("signals tabs show empty states, live ports, latency, memory units and budg
   await tab("Audio");
   expect(root.querySelector(".port-head-name")!.textContent).toBe("delay.out");
   expect(root.querySelector(".port-output")!.textContent).toBe("n1.out");
+  explanation();
+  nodes.value = [];
+  await nextTick();
+  explanation();
+  nodes.value = [
+    { id: "reconnected", displayName: "mono", ports: ["audio"], memoryBytes: 0, memory: [] },
+  ];
+  await nextTick();
+  explanation();
+  expect(root.querySelector(".port-output")!.textContent).toBe("reconnected.audio");
 });
