@@ -63,6 +63,25 @@ const instance = instantiate(graph, ${argument});`,
     },
   );
 
+  test.each([
+    ["f64", "1e8", "(value + 1) - value", 1],
+    ["i32", "1.75", "value + 1", 2],
+    ["f64", "1e8", "(f32(value) + 1) - f32(value)", 0],
+    ["f32", "1.75", "value + 1", 2.75],
+  ] as const)(
+    `${mode}: declared %s arithmetic for %s through %s renders %s`,
+    async (scalar, argument, expression, expected) => {
+      const processor = lower(
+        mono(
+          `const graph = defineSubgraph((value: Node<"${scalar}">) => ({ tick: () => ${expression} }));
+const instance = instantiate(graph, ${argument});`,
+          "f32(instance.tick())",
+        ),
+      );
+      await expectSamples(processor, expected);
+    },
+  );
+
   test(`${mode}: parenthesized namespace receivers construct method-form arguments`, async () => {
     const processor = lower(
       mono(
@@ -107,6 +126,30 @@ ${calls.map((call, i) => `const instance${i} = ${call};`).join("\n")}`,
       ),
     );
     await expectSamples(processor, 24);
+  });
+
+  test(`${mode}: broad assertions preserve proven calls and custom arguments`, async () => {
+    const processor = lower(
+      mono(
+        `import * as core from "@unworklet/core";
+import { instantiate as make } from "@unworklet/core";
+const fakeCall = ((_graph: unknown, value: number) => {
+  if (typeof value !== "number") throw new Error("custom call received a Node");
+  return { tick: () => f32(value) };
+}) as typeof make;
+const fake: typeof core = { ...core, instantiate: fakeCall };
+const graph = defineSubgraph((value: Node<"f32">) => ({ tick: () => value.add(1) }));
+const a = (make as any)(graph, 1);
+const b = (make as unknown as (...args: any[]) => any)(graph, 2);
+const c = (instantiate as any)(graph, 3);
+const d = (core as any).instantiate(graph, 4);
+const e = (core as unknown as { instantiate: (...args: any[]) => any }).instantiate(graph, 5);
+const f = (fakeCall as any)(graph, 6);
+const g = (fake as unknown as { instantiate: (...args: any[]) => any }).instantiate(graph, 7);`,
+        "a.tick().add(b.tick()).add(c.tick()).add(d.tick()).add(e.tick()).add(f.tick()).add(g.tick())",
+      ),
+    );
+    await expectSamples(processor, 33);
   });
 
   test(`${mode}: argument expressions evaluate once and existing Node identity is retained`, async () => {
@@ -269,11 +312,13 @@ const c = (fake as unknown as typeof core).instantiate(graph, 3);
 const d = typed.instantiate(graph, 4);
 const e = (typed as unknown as typeof core).instantiate(graph, 5);
 const f = (core as { instantiate: typeof core.instantiate }).instantiate(graph, 6);
-const g = (fake as unknown as { instantiate: typeof core.instantiate }).instantiate(graph, 7);`,
-        "a.tick().add(b.tick()).add(c.tick()).add(d.tick()).add(e.tick()).add(f.tick()).add(g.tick())",
+const g = (fake as unknown as { instantiate: typeof core.instantiate }).instantiate(graph, 7);
+const h = (core as unknown as { instantiate: (...args: any[]) => any }).instantiate(graph, 8);
+const broadCustom = (fake as unknown as { instantiate: (...args: any[]) => any }).instantiate(graph, 9);`,
+        "a.tick().add(b.tick()).add(c.tick()).add(d.tick()).add(e.tick()).add(f.tick()).add(g.tick()).add(h.tick()).add(broadCustom.tick())",
       ),
     );
-    await expectSamples(await loadUwkProcessor(file), 31);
+    await expectSamples(await loadUwkProcessor(file), 49);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -138,6 +138,46 @@ process(() => {
   expect(code).toBe(0);
 });
 
+test("unworklet-tsc accepts a precision migration that retains Node<f64> and converts inside the body", () => {
+  const { code, output } = check(`const f32Arithmetic = defineSubgraph((coef: Node<"f64">) => ({
+  tick: () => f32(coef) + 1 - f32(coef),
+}));
+const instance = instantiate(f32Arithmetic, 1e8);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => { out.ch(0)[i] = instance.tick(); }); });`);
+  expect(output).toBe("");
+  expect(code).toBe(0);
+});
+
+test("unworklet-tsc accepts a fractional migration with the formal changed to Node<f32>", () => {
+  const { code, output } = check(`const fractional = defineSubgraph((coef: Node<"f32">) => ({
+  tick: () => coef + 1,
+}));
+const instance = instantiate(fractional, 1.75);
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => { out.ch(0)[i] = instance.tick(); }); });`);
+  expect(output).toBe("");
+  expect(code).toBe(0);
+});
+
+test.each(["f64", "i32"])(
+  "unworklet-tsc rejects an f32 caller migration with an unchanged Node<%s> formal",
+  (scalar) => {
+    const { code, output } = check(`const graph = defineSubgraph((value: Node<"${scalar}">) => ({
+  tick: () => f32(value),
+}));
+const instance = instantiate(graph, f32(1.75));
+const out = audioOutput({ channels: 1, name: "main" });
+process(() => { forSample(i => { out.ch(0)[i] = instance.tick(); }); });`);
+    expect(code, output).not.toBe(0);
+    expect(output.match(/error TS/g)).toHaveLength(1);
+    expect(output).toMatch(/check\.uwk\.ts\(4,\d+\): error TS2345/);
+    expect(output).toContain('Node<"f32">');
+    expect(output).toContain(`Node<"${scalar}">`);
+    expect(output).toMatch(/not assignable/);
+  },
+);
+
 test("unworklet-tsc passes on a real DOM + @types/node app with skipLibCheck off (the injected ambient globals must not fail the build)", () => {
   // The blind-install repro: a normal audio app loads lib.dom (global `Node`,
   // `event`) and @types/node (global `process`). The ambient declares those same

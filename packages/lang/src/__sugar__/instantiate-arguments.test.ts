@@ -375,6 +375,8 @@ const d = typed.instantiate(sg, 4);
 const e = (typed as unknown as typeof core).instantiate(sg, 5);
 const f = (core as { instantiate: typeof core.instantiate }).instantiate(sg, 6);
 const g = (fake as unknown as { instantiate: typeof core.instantiate }).instantiate(sg, 7);
+const h = (core as unknown as { instantiate: (...args: any[]) => any }).instantiate(sg, 8);
+const i = (fake as unknown as { instantiate: (...args: any[]) => any }).instantiate(sg, 9);
 process(() => {});`;
       const snapshot = programs.emptySnapshot();
       const runtime = lower(source, {
@@ -389,8 +391,32 @@ process(() => {});`;
       expect(code).toContain(".instantiate(sg, 5)");
       expect(code).toContain(".instantiate(sg, f32(6))");
       expect(code).toContain(".instantiate(sg, 7)");
+      expect(code).toContain(".instantiate(sg, f32(8))");
+      expect(code).toContain(".instantiate(sg, 9)");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+}
+
+for (const [mode, emit] of Object.entries(emitters)) {
+  test(`${mode}: broad asserted signatures do not hide a proven binding`, () => {
+    const source = `import * as core from "@unworklet/core";
+import { instantiate as make } from "@unworklet/core";
+const fakeCall = ((_sg: unknown, value: unknown) => value) as typeof make;
+const fake: typeof core = { ...core, instantiate: fakeCall };
+const sg = defineSubgraph((a: Node<"f32">) => ({}));
+const a = (make as any)(sg, 1);
+const b = (make as unknown as (...args: any[]) => any)(sg, 2);
+const c = (instantiate as any)(sg, 3);
+const d = (core as any).instantiate(sg, 4);
+const e = (core as unknown as { instantiate: (...args: any[]) => any }).instantiate(sg, 5);
+const f = (fakeCall as any)(sg, 6);
+const g = (fake as unknown as { instantiate: (...args: any[]) => any }).instantiate(sg, 7);
+process(() => {});`;
+    const code = emit(source);
+    for (const value of [1, 2, 3, 4, 5]) expect(code).toContain(`(sg, f32(${value}))`);
+    expect(code).toContain("(sg, 6)");
+    expect(code).toContain("(sg, 7)");
   });
 }

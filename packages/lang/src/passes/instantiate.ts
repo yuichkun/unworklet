@@ -28,8 +28,6 @@ function isInstantiate(
   canonical: ts.Symbol,
   ambient: ts.SourceFile,
 ): boolean {
-  const declaration = checker.getResolvedSignature(call)?.declaration;
-  if (declaration === undefined || !canonical.declarations!.includes(declaration)) return false;
   const expression = unwrapValue(call.expression);
   if (ts.isPropertyAccessExpression(expression)) {
     const receiverSymbol = checker.getSymbolAtLocation(unwrapValue(expression.expression));

@@ -700,11 +700,20 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
   receive the same Nodes as an explicit constructor call. Runtime lowering and
   editor/CLI virtual code share these constructor decisions. — [cite: packages/lang/src/passes/instantiate.ts :: `export function instantiateArgumentConstructors(`]
 - The recognized calls are the ambient `instantiate`, named imports (including
-  imported aliases), and properties of namespace imports resolving to core's
-  actual `instantiate` export. Runtime-transparent parentheses, non-null assertions,
+  imported aliases), and direct namespace property calls such as
+  `core.instantiate(...)` resolving to core's actual export. Runtime-transparent parentheses, non-null assertions,
   `as` / type assertions, `satisfies`, and explicit callee type instantiation preserve
-  this binding check. Custom functions/objects and unproven local aliases are left
-  unchanged. Cross-file subgraphs retain their declared argument types.
+  this binding check. Custom functions/objects, local or assigned aliases, and
+  computed-property, conditional, or comma-expression callees are left unchanged.
+  Cross-file subgraphs retain their declared argument types.
+- Construction happens before the subgraph body runs, so arithmetic uses the
+  declared scalar even when every supplied value is primitive. With a
+  `Node<"f64">` coefficient of `1e8`, `(coef + 1) - coef` evaluates to `1`.
+  With a `Node<"i32">` coefficient of `1.75`, `coef + 1` evaluates to `2`, using
+  the constructor's truncation. Choose `Node<"f32">` for f32 arithmetic and
+  fractional values; `f32(coef)` inside an f64 body explicitly converts that
+  value to f32. Converting an i32 value afterward cannot recover a fraction
+  discarded during argument construction.
 - Existing Nodes, plain primitive/config arguments, and declared primitive
   alternatives such as `Node<"f32"> | number` stay unchanged. Optional slots can
   construct a supplied primitive; omitted or `undefined` arguments stay unchanged.
@@ -722,6 +731,26 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
   example `instantiate(sg, f32(0.5))`, in raw core and any unsupported lowering
   case. Otherwise method-form calls or Node pass-through use can fail at capture.
   — [cite: packages/core/src/processor.ts :: `type LiftArg<A> =`] [cite: packages/core/src/processor.ts :: `methods = body(...(args as Args));`]
+  For `.uwk.ts` code that deliberately needs f32 arithmetic, keep the formal
+  parameter and conversion consistent. The first declaration retains an f64 input
+  and converts inside the body; the second uses a floating-point formal so a
+  fractional input is preserved:
+
+```ts
+const f32Arithmetic = defineSubgraph((coef: Node<"f64">) => ({
+  tick: () => f32(coef) + 1 - f32(coef),
+}));
+const fractional = defineSubgraph((coef: Node<"f32">) => ({
+  tick: () => coef + 1,
+}));
+```
+
+In processor declaration scope, `instantiate(f32Arithmetic, 1e8)` produces an
+instance whose `tick()` returns `0`; `instantiate(fractional, 1.75)` returns
+`2.75` from `tick()`. Passing `f32(...)` into an unchanged `Node<"f64">` or
+`Node<"i32">` formal is a type error; changing the caller's constructor alone
+is not that migration.
+
 - An instance with a named / persistent / published internal slot **must** be
   given an explicit `{ name }` (snapshot-path stability). — [cite: packages/core/src/processor.ts :: `if (instanceName === undefined) {`]
 
