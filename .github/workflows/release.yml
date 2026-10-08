@@ -24,6 +24,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: write
+      pull-requests: read
       id-token: write
     env:
       # The commit the merge created on main. npm's provenance names this commit,
@@ -49,6 +50,10 @@ jobs:
       - run: vp install
       - name: Check that this is the listened-to release
         run: vp exec node scripts/release-check.ts
+      - name: Verify release scope and CHANGELOG accounting
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: vp exec node scripts/release-inventory.ts check
       - run: vp run build
       - name: Install Chromium for the release soak
         working-directory: examples/demo
