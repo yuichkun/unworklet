@@ -89,3 +89,16 @@ pull-request evidence. Full-workflow elapsed time and runner sum are separate
 acceptance axes: reducing one does not establish a reduction in the other.
 Preserve every coverage denominator, threshold, browser transport, demo,
 packaging, compatibility and soak lane when interpreting an optimization.
+
+## SysEx payload differential scope
+
+`packages/offline/src/sysex-ring-differential.test.ts` belongs to the offline
+Node coverage owner. It compares literal payload bytes and an independent FIFO
+with compiled-WASM dispatch/emission and public offline injection/drain. Bounded
+schedules exercise zero through 1020-byte payloads, 16/32/512-slot queues,
+chunk-index high bytes, counter wrap, eviction, refill, rejected outbound lengths,
+and retained result bytes after later writes and drains. SysEx reserves one
+1024-byte content chunk per MIDI slot; there is no separately pressured byte ring.
+Input validation and outbound rejection are different contracts. These tests do
+not cover same-name duplex ports, generic payload rings, browser transport,
+concurrent interleavings, or realtime deadlines, and are only part of issue #14.
