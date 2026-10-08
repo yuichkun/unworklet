@@ -2,6 +2,9 @@ import type { CrossRealmCase, CrossRealmObservation } from "./fixtures/crossreal
 
 declare module "vite-plus/test/browser" {
   interface BrowserCommands {
+    renderGenericIngress: () => Promise<
+      Omit<import("./fixtures/generic-ingress-model.ts").IngressObservation, "overflow">
+    >;
     renderCrossRealmOracle: (
       name: CrossRealmCase,
       sampleRate: number,
