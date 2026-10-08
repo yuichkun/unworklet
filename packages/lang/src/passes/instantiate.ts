@@ -1,6 +1,7 @@
 import ts from "typescript";
 
 import { isDspExpr } from "../classify.ts";
+import { unwrapValue } from "../container-values.ts";
 import { buildProgram, type BuiltProgram, type BuildProgramOptions } from "../program.ts";
 
 type ScalarConstructor = "f32" | "f64" | "i32" | "bool";
@@ -29,11 +30,10 @@ function isInstantiate(
 ): boolean {
   const declaration = checker.getResolvedSignature(call)?.declaration;
   if (declaration === undefined || !canonical.declarations!.includes(declaration)) return false;
-  let expression: ts.Expression = call.expression;
-  while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+  const expression = unwrapValue(call.expression);
   if (ts.isPropertyAccessExpression(expression)) {
-    const receiver = checker.getSymbolAtLocation(expression.expression);
-    if (!receiver?.declarations?.some(ts.isNamespaceImport)) return false;
+    const receiverSymbol = checker.getSymbolAtLocation(unwrapValue(expression.expression));
+    if (!receiverSymbol?.declarations?.some(ts.isNamespaceImport)) return false;
   }
   const binding = checker.getSymbolAtLocation(expression);
   if (binding === undefined) return false;

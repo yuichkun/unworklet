@@ -63,6 +63,52 @@ const instance = instantiate(graph, ${argument});`,
     },
   );
 
+  test(`${mode}: parenthesized namespace receivers construct method-form arguments`, async () => {
+    const processor = lower(
+      mono(
+        `import * as core from "@unworklet/core";
+const graph = defineSubgraph((value: Node<"f32">) => ({ tick: (x: Node<"f32">) => value.add(x) }));
+const instance = ((core)).instantiate(graph, 0.5);`,
+        "instance.tick(f32(1))",
+      ),
+    );
+    await expectSamples(processor, 1.5);
+  });
+
+  test(`${mode}: transparent callee and receiver wrappers preserve canonical and custom calls`, async () => {
+    const wrap = [
+      (name: string) => `((${name}))`,
+      (name: string) => `${name}!`,
+      (name: string) => `(${name} as typeof ${name})`,
+      (name: string) => `(<typeof ${name}>${name})`,
+      (name: string) => `(${name} satisfies typeof ${name})`,
+      (name: string) => `((${name}! as typeof ${name}) satisfies typeof ${name})`,
+    ];
+    const calls = wrap.flatMap((wrapper) => [
+      `${wrapper("make")}(graph, 0.5)`,
+      `${wrapper("core")}.instantiate(graph, 0.5)`,
+      `${wrapper("fakeCall")}(graph, 0.5)`,
+      `${wrapper("fake")}.instantiate(graph, 0.5)`,
+    ]);
+    const processor = lower(
+      mono(
+        `import * as core from "@unworklet/core";
+import { instantiate as make } from "@unworklet/core";
+const fakeCall = ((_graph: unknown, value: number) => {
+  if (typeof value !== "number") throw new Error("custom call received a Node");
+  return { tick: (_x: Node<"f32">) => f32(value) };
+}) as typeof make;
+const fake: typeof core = { ...core, instantiate: fakeCall };
+const graph = defineSubgraph((value: Node<"f32">) => ({ tick: (x: Node<"f32">) => value.add(x) }));
+${calls.map((call, i) => `const instance${i} = ${call};`).join("\n")}`,
+        calls
+          .map((_, i) => `instance${i}.tick(f32(1))`)
+          .reduce((sum, value) => `${sum}.add(${value})`, "f32(0)"),
+      ),
+    );
+    await expectSamples(processor, 24);
+  });
+
   test(`${mode}: argument expressions evaluate once and existing Node identity is retained`, async () => {
     const processor = lower(
       mono(

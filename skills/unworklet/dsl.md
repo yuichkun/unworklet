@@ -701,8 +701,10 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
   editor/CLI virtual code share these constructor decisions. — [cite: packages/lang/src/passes/instantiate.ts :: `export function instantiateArgumentConstructors(`]
 - The recognized calls are the ambient `instantiate`, named imports (including
   imported aliases), and properties of namespace imports resolving to core's
-  actual `instantiate` export. Custom functions/objects and unproven local aliases
-  are left unchanged. Cross-file subgraphs retain their declared argument types.
+  actual `instantiate` export. Runtime-transparent parentheses, non-null assertions,
+  `as` / type assertions, `satisfies`, and explicit callee type instantiation preserve
+  this binding check. Custom functions/objects and unproven local aliases are left
+  unchanged. Cross-file subgraphs retain their declared argument types.
 - Existing Nodes, plain primitive/config arguments, and declared primitive
   alternatives such as `Node<"f32"> | number` stay unchanged. Optional slots can
   construct a supplied primitive; omitted or `undefined` arguments stay unchanged.

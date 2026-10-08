@@ -284,3 +284,62 @@ process(() => {});`;
     expect(emit(source)).toContain("instantiate(outer, f32(instantiate(inner, f64(3)).value()))");
   });
 }
+
+for (const [mode, emit] of Object.entries(emitters)) {
+  test(`${mode}: parenthesized namespace receivers keep their actual import binding`, () => {
+    const source = `import * as core from "@unworklet/core";
+const fake: typeof core = { ...core, instantiate: ((_sg: unknown, value: unknown) => value) as typeof core.instantiate };
+const sg = defineSubgraph((a: Node<"f32">) => ({}));
+const a = (core).instantiate(sg, 2);
+const b = ((core)).instantiate(sg, 3);
+const c = (fake).instantiate(sg, 4);
+process(() => {});`;
+    const code = emit(source);
+    expect(code).toContain("(core).instantiate(sg, f32(2))");
+    expect(code).toContain("((core)).instantiate(sg, f32(3))");
+    expect(code).toContain("(fake).instantiate(sg, 4)");
+  });
+}
+
+const bindingWrappers = [
+  ["nested parentheses", (name: string) => `((${name}))`],
+  ["non-null", (name: string) => `${name}!`],
+  ["as", (name: string) => `(${name} as typeof ${name})`],
+  ["type assertion", (name: string) => `(<typeof ${name}>${name})`],
+  ["satisfies", (name: string) => `(${name} satisfies typeof ${name})`],
+  ["mixed", (name: string) => `((${name}! as typeof ${name}) satisfies typeof ${name})`],
+] as const;
+
+for (const [mode, emit] of Object.entries(emitters)) {
+  test.each(bindingWrappers)(`${mode}: %s wrappers preserve binding proof`, (_, wrap) => {
+    const source = `import * as core from "@unworklet/core";
+import { instantiate as make } from "@unworklet/core";
+const fakeCall = ((_sg: unknown, value: unknown) => value) as typeof make;
+const fake: typeof core = { ...core, instantiate: fakeCall };
+const sg = defineSubgraph((a: Node<"f32">) => ({}));
+const a = ${wrap("make")}(sg, 2);
+const b = ${wrap("core")}.instantiate(sg, 3);
+const c = ${wrap("fakeCall")}(sg, 4);
+const d = ${wrap("fake")}.instantiate(sg, 5);
+process(() => {});`;
+    const code = emit(source);
+    expect(code).toMatch(/\(sg, f32\(2\)\)/);
+    expect(code).toMatch(/\.instantiate\(sg, f32\(3\)\)/);
+    expect(code).toMatch(/\(sg, 4\)/);
+    expect(code).toMatch(/\.instantiate\(sg, 5\)/);
+  });
+}
+
+for (const [mode, emit] of Object.entries(emitters)) {
+  test(`${mode}: type-instantiated callees retain their underlying binding identity`, () => {
+    const source = `import { instantiate as make } from "@unworklet/core";
+const fakeCall = ((_sg: unknown, value: unknown) => value) as typeof make;
+const sg = defineSubgraph((a: Node<"f32">) => ({}));
+const a = (make<[Node<"f32">], {}>)(sg, 2);
+const b = (fakeCall<[Node<"f32">], {}>)(sg, 3);
+process(() => {});`;
+    const code = emit(source);
+    expect(code).toContain("(sg, f32(2))");
+    expect(code).toContain("(sg, 3)");
+  });
+}
