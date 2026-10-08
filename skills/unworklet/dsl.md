@@ -874,10 +874,26 @@ that default import, including its declared parameters and message payloads.
 | `node.events.<name>`      | `EventSurface<T>` — `.on(handler)` (out) / `.emit(payload)` (in) / `.diagnostics.overflowCount()`; direction-narrowed                                                                                                                                                                                                                                           |
 | `node.midi.<name>`        | `{ send(event, atTime?); connectFromWebMIDI(input); onEvent(type, handler); diagnostics }`                                                                                                                                                                                                                                                                      |
 | `node.diagnostics`        | `{ readonly transport: "sab" \| "postMessage" }`                                                                                                                                                                                                                                                                                                                |
-| `node.onError(handler)`   | subscribe to runtime errors (`wasm-trap` / `sab-unavailable` / `block-length-mismatch` / `worklet-initialize-not-called`); returns unsubscribe; see notification details below                                                                                                                                                                                  |
+| `node.onError(handler)`   | subscribe after successful creation (`wasm-trap` / `sab-unavailable` / `block-length-mismatch`); returns unsubscribe; see lifecycle details below                                                                                                                                                                                                               |
 | `node.snapshot(options?)` | `Promise<Uint8Array>` — block-atomic state capture; `options?: { profile?: string }`                                                                                                                                                                                                                                                                            |
 | `node.restore(blob)`      | `Promise<RestoreResult>` — runs migrations, applies slots + param values; never throws (returns `{ ok }`)                                                                                                                                                                                                                                                       |
 | `node.dispose()`          | idempotent teardown; stops polling, removes listeners, disconnects proxies; does not touch your graph edges                                                                                                                                                                                                                                                     |
+
+Catch `createNode()` rejections separately: initialization failures and
+`processorerror` during the ready handshake reject its promise; a missing ready
+acknowledgment rejects after 10 seconds. `onError` is available only after
+creation succeeds. `wasm-trap` and `block-length-mismatch` notifications go to
+current subscribers and are not replayed. —
+[cite: packages/core/src/client.ts :: `const awaitReady = (node: AudioWorkletNode): Promise<void> =>`]
+[cite: packages/core/src/client.ts :: `await awaitReady(node);`]
+[cite: packages/core/src/client.ts :: `const dispatchError = (event: NodeErrorEvent): void => {`]
+
+The public `NodeErrorEvent` union also includes `worklet-initialize-not-called`.
+The worklet posts it if `process()` runs without `initialize()`. If initialization
+is never called, no ready acknowledgment follows, so normal `createNode()` usage
+times out instead of exposing this code through `node.onError`. —
+[cite: packages/core/src/worklet.ts :: `self.port.postMessage({ kind: "error", code: "worklet-initialize-not-called" });`]
+[cite: packages/core/src/worklet.ts :: `self.port.postMessage({ kind: "ready" });`]
 
 `node.onError` notifies the first subscriber exactly once with `sab-unavailable`
 when the node uses the `postMessage` fallback; later subscribers do not receive

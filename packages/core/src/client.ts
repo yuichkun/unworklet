@@ -1387,8 +1387,8 @@ export async function createNode<C>(
 
   // Install after awaitReady removes its init-time listeners so runtime errors
   // keep reaching subscribers for the node's lifetime. SAB fallback is reported
-  // once to the first subscriber by onError below; queue overflow is exposed
-  // through each port's diagnostics rather than emitted as an error event.
+  // once to the first subscriber by onError below. Queue overflow is not emitted
+  // as an error event; available counters are exposed through port diagnostics.
   const errorSubscribers = new Set<(event: NodeErrorEvent) => void>();
   const dispatchError = (event: NodeErrorEvent): void => {
     for (const fn of errorSubscribers) {
