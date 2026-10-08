@@ -10,6 +10,29 @@ permissions:
   pull-requests: read
 
 jobs:
+  api-contract:
+    name: Published release inventory API contract
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install
+      - name: Compare live inventory with the fixed published Git range
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: vp exec node scripts/release-inventory.integration.ts "$RUNNER_TEMP/published-inventory.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: published-release-inventory
+          path: ${{ runner.temp }}/published-inventory.json
+          if-no-files-found: error
   inventory:
     if: startsWith(github.event.pull_request.head.ref, 'release/v')
     runs-on: ubuntu-latest

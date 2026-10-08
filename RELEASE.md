@@ -138,6 +138,14 @@ LISTENED=FULL_CANDIDATE_SHA vp exec node scripts/release-inventory.ts check /tmp
 ```
 
 The Release inventory PR workflow checks on open, body edits and head changes.
+Its separate API contract job also runs for ordinary PRs (excluding body edits),
+using only the read-only workflow token and public repository metadata. It checks
+the published range from `v0.4.1` (`fff85f19d2a24032a962479143ab3657fffb8e14`)
+to `v0.5.0` (`0c4c889f4898197009cfc8879a1aedd1509246e2`) against an independent
+`git rev-list`, including the known merge associations for PRs #107 and #130.
+Only the verified public inventory JSON is uploaded; credentials, headers and
+raw API responses are excluded. API failures fail the job. This tests the live
+API contract, not CHANGELOG disposition semantics or a future release candidate.
 The publishing workflow repeats the same check against the listened-to SHA before
 building, soaking or publishing. Any new candidate requires regeneration and
 review of its decisions and validation evidence; do not reuse stale results.
