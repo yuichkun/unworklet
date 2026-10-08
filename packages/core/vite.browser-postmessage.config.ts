@@ -13,11 +13,14 @@ import unworklet from "@unworklet/unplugin";
 import { playwright } from "vite-plus/test/browser-playwright";
 import { defineConfig } from "vite-plus";
 
+import { nativeRateWorklet } from "../../scripts/native-rate-worklet.ts";
+
 import { renderCrossRealmOracle } from "./src/__tests__/browser/fixtures/crossrealm-oracle.ts";
 
 export default defineConfig({
-  plugins: [unworklet({ crossOriginIsolation: false })],
+  plugins: [unworklet({ crossOriginIsolation: false }), nativeRateWorklet()],
   test: {
+    provide: { nativeRateTransport: "postMessage" },
     name: "core-browser-postmessage",
     include: ["src/__tests__/browser/postmessage/**/*.test.ts"],
     browser: {

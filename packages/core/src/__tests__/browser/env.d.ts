@@ -9,3 +9,9 @@ declare module "*?worklet" {
   const processor: CompiledProcessor<unknown>;
   export default processor;
 }
+
+declare module "virtual:native-rate-worklet" {
+  import type { CompiledProcessor } from "../../index.ts";
+  const processor: CompiledProcessor<unknown>;
+  export default processor;
+}

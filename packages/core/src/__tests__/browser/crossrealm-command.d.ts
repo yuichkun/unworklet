@@ -8,3 +8,9 @@ declare module "vite-plus/test/browser" {
     ) => Promise<CrossRealmObservation>;
   }
 }
+
+declare module "vite-plus/test" {
+  interface ProvidedContext {
+    nativeRateTransport: "sab" | "postMessage";
+  }
+}

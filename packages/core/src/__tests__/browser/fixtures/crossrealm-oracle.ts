@@ -1,4 +1,5 @@
 import { renderOffline } from "../../../../../offline/src/index.ts";
+import nativeRate from "./native-rate.processor.ts";
 import { saw } from "./saw.processor.ts";
 import { stereoGain } from "./stereo-gain.processor.ts";
 import { crossrealmStateful } from "./crossrealm-stateful.processor.ts";
@@ -13,7 +14,7 @@ import {
 export async function renderCrossRealmOracle(name: CrossRealmCase, sampleRate: number) {
   const inputs = crossRealmInputs(name);
   const result = await renderOffline(
-    { saw, stereo: stereoGain, stateful: crossrealmStateful }[name],
+    { saw, stereo: stereoGain, stateful: crossrealmStateful, "native-rate": nativeRate }[name],
     {
       sampleRate,
       duration: CROSSREALM_SAMPLES / sampleRate,

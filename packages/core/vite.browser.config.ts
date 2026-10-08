@@ -15,10 +15,12 @@ import unworklet from "@unworklet/unplugin";
 import { playwright } from "vite-plus/test/browser-playwright";
 import { defineConfig } from "vite-plus";
 
+import { nativeRateWorklet } from "../../scripts/native-rate-worklet.ts";
+
 import { renderCrossRealmOracle } from "./src/__tests__/browser/fixtures/crossrealm-oracle.ts";
 
 export default defineConfig({
-  plugins: [unworklet()],
+  plugins: [unworklet(), nativeRateWorklet()],
   server: {
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
@@ -26,6 +28,7 @@ export default defineConfig({
     },
   },
   test: {
+    provide: { nativeRateTransport: "sab" },
     name: "core-browser-sab",
     include: ["src/__tests__/browser/*.test.ts"],
     browser: {

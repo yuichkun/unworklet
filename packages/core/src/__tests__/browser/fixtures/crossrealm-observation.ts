@@ -1,7 +1,7 @@
 import { decodeSnapshot } from "../../../snapshotBlob.ts";
 
 export const CROSSREALM_SAMPLES = 128 * 4;
-export type CrossRealmCase = "saw" | "stereo" | "stateful";
+export type CrossRealmCase = "saw" | "stereo" | "stateful" | "native-rate";
 export type CrossRealmEvent = {
   name: string;
   atSample: number;
@@ -9,7 +9,7 @@ export type CrossRealmEvent = {
 };
 
 export const crossRealmInputs = (name: CrossRealmCase): Float32Array[] =>
-  name === "saw"
+  name === "saw" || name === "native-rate"
     ? []
     : Array.from({ length: name === "stereo" ? 2 : 1 }, (_, channel) =>
         Float32Array.from({ length: CROSSREALM_SAMPLES }, (_, i) =>
