@@ -15,6 +15,8 @@ import unworklet from "@unworklet/unplugin";
 import { playwright } from "vite-plus/test/browser-playwright";
 import { defineConfig } from "vite-plus";
 
+import { renderCrossRealmOracle } from "./src/__tests__/browser/fixtures/crossrealm-oracle.ts";
+
 export default defineConfig({
   plugins: [unworklet()],
   server: {
@@ -28,6 +30,10 @@ export default defineConfig({
     include: ["src/__tests__/browser/*.test.ts"],
     browser: {
       enabled: true,
+      commands: {
+        renderCrossRealmOracle: (_context, name, sampleRate) =>
+          renderCrossRealmOracle(name, sampleRate),
+      },
       provider: playwright(),
       instances: [{ browser: "chromium" }],
       headless: true,

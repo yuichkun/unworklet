@@ -33,6 +33,37 @@ through `vite.ci.config.ts`. Every package and DevTools UI must retain at least
 | Repository and release guards     | Lockstep versions, build-cache soundness, sound-update safety, release soak evidence                                                               | These span packages or spawn intentional consumer/update checks; they do not belong to one package's branch gate.                                                   |
 | Runtime and release soak          | Sustained transport, visibility and long-duration integrity                                                                                        | Functional correctness, bounded offline rendering and long-duration stability protect different failures. Execution durations and release evidence remain explicit. |
 
+## Cross-realm differential matrix
+
+`packages/core/src/__tests__/browser/crossrealm.test.ts` compares real Chromium
+AudioWorklet execution with Node `renderOffline` for the same saw, stereo gain,
+and stateful input/event processors at the plugin’s baked 48 kHz rate. Both SAB and postMessage
+projects execute the matrix; the fallback wrapper imports the common assertions.
+Vitest browser commands run the offline oracle in Node, without bundling its
+compiler or WAV dependencies into the browser.
+
+Each case compares all 512 PCM samples per output channel by Float32 bit pattern,
+the complete ordered event list (block-local sample offsets, scalar values and
+typed-array contents), and snapshot identity plus every persistent slot byte.
+Snapshot comparison uses decoded full buffers, not the truncated inspection
+preview. The stateful fixture emits one distinguishable frame per quantum.
+The context suspends after each quantum so transport delivery is drained before
+continuing; the fourth suspension captures state at exactly the compared boundary.
+An extra unobserved quantum lets the context finish after that snapshot.
+
+The Node oracle tests independently pin stereo/stateful PCM and complete event and
+state values at 44.1 and 48 kHz. Negative controls mutate raw PCM, events and decoded state before the observation
+projection, then require the same exact equality assertion to
+reject a one-bit PCM error, a missing/reordered/mistimed/corrupted event, a changed
+state scalar and a changed byte beyond the snapshot preview. The existing saw
+range/reference and repeated-render checks remain separate witnesses.
+
+This is a bounded renderer/transport comparison using shared compiler code, not
+an independent compiler proof. It covers static params and audio inputs, not all
+processors, scheduled messages/MIDI, automation, snapshot restore/migration,
+other native sample rates (the plugin artifact rejects mismatches), real-time
+contention, deadlines or other browsers.
+
 ## Consolidation policy
 
 The five package coverage jobs own their ordinary Node assertions once per Test workflow.
@@ -81,8 +112,9 @@ HEAD and pull-request merge-tree results separate and disclose runner variance.
 
 ## Known limits
 
-The portfolio does not yet establish every desired guarantee. Track the missing
-online/offline PCM/event/snapshot matrix in [#14](https://github.com/yuichkun/unworklet/issues/14),
+The portfolio does not yet establish every desired guarantee. The bounded matrix
+above addresses layer D in [#14](https://github.com/yuichkun/unworklet/issues/14);
+its independent ring/wire differential and debug self-check items remain open. Track
 real-time CPU/deadline/xrun budgets in [#24](https://github.com/yuichkun/unworklet/issues/24),
 and deterministic MIDI boundaries and missing semantic assertions in
 [#31](https://github.com/yuichkun/unworklet/issues/31).

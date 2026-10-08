@@ -1,24 +1,15 @@
-/**
- * Layer D — real-realm rendering, validated in chromium.
- *
- * The audio thread runs in a separate realm (`AudioWorkletGlobalScope`) that
- * coverage cannot see, so the audio path is exercised here in a REAL
- * AudioWorklet under a real `OfflineAudioContext`. A self-generating sawtooth is
- * rendered and checked two ways:
- *
- *   1. determinism — two renders are BIT-identical. Any realm-only
- *      non-determinism (a torn SAB read, a race) would perturb a sample;
- *   2. correctness — the output is the finite, bounded sawtooth it should be,
- *      not garbage from a marshalling slip.
- *
- * Bit-exact comparison against `renderOffline` (the node oracle) is a deeper
- * cross-check that needs the offline renderer bundled into the browser env (its
- * WAV path pulls a node-only dep); that is left to the review pass.
- */
-
+import { commands } from "vite-plus/test/browser";
 import { expect, test } from "vite-plus/test";
 
 import { createNode } from "../../index.ts";
+import {
+  CROSSREALM_SAMPLES,
+  crossRealmInputs,
+  observeCrossRealm,
+  type CrossRealmEvent,
+} from "./fixtures/crossrealm-observation.ts";
+import stereoWorklet from "./fixtures/stereo-gain.processor.ts?worklet";
+import statefulWorklet from "./fixtures/crossrealm-stateful.processor.ts?worklet";
 import sawWorklet from "./fixtures/saw.processor.ts?worklet";
 
 const SR = 48_000;
@@ -64,3 +55,77 @@ test("cross-realm: the real AudioWorklet output is the finite, bounded sawtooth"
   // the saw actually moves (not stuck / silent)
   expect(real.some((s) => s !== real[0])).toBe(true);
 });
+
+for (const name of ["saw", "stereo", "stateful"] as const) {
+  const sampleRate = SR;
+  test(`cross-realm: ${name} PCM/events/snapshot match renderOffline at ${sampleRate} Hz`, async () => {
+    const oracle = await commands.renderCrossRealmOracle(name, sampleRate);
+    const ctx = new OfflineAudioContext({
+      numberOfChannels: name === "stereo" ? 2 : 1,
+      length: CROSSREALM_SAMPLES + 128,
+      sampleRate,
+    });
+    const node = await createNode(
+      ctx,
+      { saw: sawWorklet, stereo: stereoWorklet, stateful: statefulWorklet }[name],
+      { initial: name === "stereo" ? { gain: 0.5 } : {} },
+    );
+    const received: CrossRealmEvent[] = [];
+    const unsubscribe =
+      name === "stateful"
+        ? node.events.frame!.on((raw) => {
+            const { atSample, block, level, samples } = raw as {
+              atSample: number;
+              block: number;
+              level: number;
+              samples: Float32Array;
+            };
+            received.push({
+              name: "frame",
+              atSample,
+              payload: { block, level, samples: Array.from(samples) },
+            });
+          })
+        : () => {};
+    let source: AudioBufferSourceNode | undefined;
+    try {
+      expect(node.diagnostics.transport).toBe(
+        globalThis.crossOriginIsolated ? "sab" : "postMessage",
+      );
+      const input = crossRealmInputs(name);
+      if (input.length > 0) {
+        const buffer = ctx.createBuffer(input.length, CROSSREALM_SAMPLES, sampleRate);
+        for (const [channel, samples] of input.entries())
+          buffer.copyToChannel(new Float32Array(samples), channel);
+        source = new AudioBufferSourceNode(ctx, { buffer });
+        source.connect(node.inputs.main!);
+        source.start(0);
+      }
+      node.outputs.main!.connect(ctx.destination);
+      // Drain each quantum while suspended: no wall-clock scheduling or
+      // postMessage pool exhaustion is part of this bounded differential test.
+      const boundaries = Array.from({ length: 4 }, (_, i) =>
+        ctx.suspend(((i + 1) * 128) / sampleRate),
+      );
+      const rendering = ctx.startRendering();
+      let state: Uint8Array = new Uint8Array();
+      for (const [block, boundary] of boundaries.entries()) {
+        await boundary;
+        state = await node.snapshot();
+        if (name === "stateful") await expect.poll(() => received.length).toBe(block + 1);
+        if (block < boundaries.length - 1) await ctx.resume();
+      }
+      unsubscribe();
+      await ctx.resume();
+      const rendered = await rendering;
+      const pcm = Array.from({ length: rendered.numberOfChannels }, (_, i) =>
+        rendered.getChannelData(i).slice(0, CROSSREALM_SAMPLES),
+      );
+      expect(observeCrossRealm(pcm, received, state)).toEqual(oracle);
+    } finally {
+      unsubscribe();
+      source?.disconnect();
+      node.dispose();
+    }
+  });
+}
