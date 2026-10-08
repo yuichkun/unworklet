@@ -9,6 +9,7 @@ import { defineRpcFunction, type ViteDevToolsNodeContext } from "@vitejs/devtool
 import { chromium } from "playwright";
 import { createServer, type Plugin } from "vite-plus";
 import { expect, test } from "vite-plus/test";
+import { createDevtoolsEvidence } from "./devtools-evidence.ts";
 import { closeHmrServer } from "./hmr-fixture.ts";
 import type {
   DevPages,
@@ -157,9 +158,11 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     ssr: { noExternal: [/^@unworklet\//] },
   });
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+  const evidence = createDevtoolsEvidence();
   try {
     await server.listen();
     browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
+    evidence.watchBrowser(browser);
     const browserContext = await browser.newContext();
     const dock = ctx.docks.values().find((entry) => entry.id === "unworklet");
     if (!dock || dock.type !== "iframe") throw new Error("unworklet dock was not registered");
@@ -170,6 +173,8 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     expect(new URL(descriptor.websocket).origin).toBe(appOrigin.replace(/^http/, "ws"));
     panelUrl.hash = "/midi";
     const panel = await browserContext.newPage();
+    evidence.watch("panel", panel);
+    evidence.stage("panel-navigation");
     await panel.goto(panelUrl.href);
     const selector = panel.getByLabel("Application page");
     const playKey = async (index: number): Promise<void> => {
@@ -178,14 +183,19 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
       if (!bounds) throw new Error("Piano key is not visible");
       await key.click({ position: { x: bounds.width / 2, y: bounds.height - 8 } });
     };
+    evidence.stage("panel-auth-ready");
     await panel.waitForFunction(
       (token) => Object.values(localStorage).includes(token),
       descriptor.authToken,
     );
     const a = await browserContext.newPage();
+    evidence.watch("a", a);
     const b = await browserContext.newPage();
+    evidence.watch("b", b);
     const url = server.resolvedUrls!.local[0]!;
+    evidence.stage("a-navigation");
     await a.goto(url);
+    evidence.stage("a-ready");
     await a.waitForFunction("globalThis.generation === 1");
     await a.waitForFunction("globalThis.devtoolsStatus() === 'connected'");
     await expect
@@ -196,11 +206,14 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
       .toBe(1);
     const pages = await ctx.rpc.sharedState.get<DevPages>("unworklet:pages");
     const aId = pages.value().pages[0]!.id;
+    evidence.stage("b-navigation");
     await b.goto(url);
+    evidence.stage("b-ready");
     await b.waitForFunction("globalThis.generation === 1");
     await b.waitForFunction("globalThis.devtoolsStatus() === 'connected'");
     await expect.poll(() => pages.value().pages.length).toBe(2);
     const bId = pages.value().pages.find((p) => p.id !== aId)!.id;
+    evidence.stage("routing");
     const midi =
       await ctx.rpc.sharedState.get<DevPageSnapshots<DevMidiState>>("unworklet:page-midi");
     const input = (id: string) => midi.value().pages[id]?.ports.find((p) => p.direction === "in");
@@ -247,6 +260,7 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await playKey(1);
     await b.waitForFunction("globalThis.received.length === 1");
     expect(await a.evaluate("globalThis.received")).toEqual([60]);
+    evidence.stage("hmr");
     await writeFile(processorPath, source("second"));
     await a.waitForFunction("globalThis.generation === 2");
     await b.waitForFunction("globalThis.generation === 2");
@@ -261,12 +275,15 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await a.waitForFunction("globalThis.received.length === 2");
     expect(await a.evaluate("globalThis.received")).toEqual([60, 64]);
     expect(await b.evaluate("globalThis.received")).toEqual([62]);
+    evidence.stage("close-a");
     await a.close();
     await expect.poll(() => pages.value().pages.map((p) => p.id), { timeout: 5000 }).toEqual([bId]);
     expect(await selector.inputValue()).toBe(aId);
     await expect.poll(() => panel.locator(".inject-routing select option").count()).toBe(0);
     expect(await panel.locator(".inject-routing select").inputValue()).toBe("");
+    evidence.stage("reload");
     await b.reload();
+    evidence.stage("reload-ready");
     await b.waitForFunction("globalThis.generation === 1");
     await b.waitForFunction("globalThis.devtoolsStatus() === 'connected'");
     await expect
@@ -318,7 +335,9 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await inject(reloadedId, input(reloadedId)!.nodeId, 69);
     await b.waitForFunction("globalThis.received.filter(note => note === 69).length === 4");
     expect(await b.evaluate("globalThis.released.filter(note => note === 69).length")).toBe(1);
+    evidence.stage("disconnect");
     disconnectPage();
+    evidence.stage("disconnected-ready");
     await b.waitForFunction("globalThis.released.filter(note => note === 69).length === 4");
     await b.waitForFunction("globalThis.audioLevel() < 0.001");
     // A telemetry send racing socket closure leaves devframe in its terminal error state.
@@ -329,10 +348,13 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     expect(await selector.inputValue()).toBe(reloadedId);
     await panel.keyboard.up("h");
     expect(await b.evaluate("globalThis.released")).toEqual([67, 69, 69, 69, 69]);
+    evidence.stage("reload-disconnected");
     await b.reload();
+    evidence.stage("recovery-ready");
     await b.waitForFunction("globalThis.generation === 1");
     await b.waitForFunction("globalThis.devtoolsStatus() === 'connected'");
     await expect.poll(() => pages.value().pages.length).toBe(1);
+    evidence.stage("recovered-routing");
     const recoveredId = pages.value().pages[0]!.id;
     expect(recoveredId).not.toBe(reloadedId);
     await expect.poll(() => input(recoveredId)?.nodeId).toBe("n0");
@@ -362,7 +384,11 @@ test("real DevTools routes two same-app tabs independently across node HMR, page
     await b.waitForFunction("globalThis.released.includes(60)");
     expect(await b.evaluate("globalThis.released")).toEqual([71, 60]);
     await b.waitForFunction("globalThis.audioLevel() < 0.001");
+  } catch (error) {
+    await evidence.report();
+    throw error;
   } finally {
+    evidence.dispose();
     await browser?.close();
     await closeHmrServer(server);
     await rm(root, { recursive: true, force: true });
