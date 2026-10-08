@@ -33,6 +33,16 @@ through `vite.ci.config.ts`. Every package and DevTools UI must retain at least
 | Repository and release guards     | Lockstep versions, build-cache soundness, sound-update safety, release soak evidence                                                               | These span packages or spawn intentional consumer/update checks; they do not belong to one package's branch gate.                                                   |
 | Runtime and release soak          | Sustained transport, visibility and long-duration integrity                                                                                        | Functional correctness, bounded offline rendering and long-duration stability protect different failures. Execution durations and release evidence remain explicit. |
 
+## Fixed-slot MIDI differential
+
+The offline owner runs `midi-ring-differential.test.ts`: literal fixed-slot MIDI
+wire/semantic pairs compare compiled WASM input decoding and output encoding,
+public offline injection/draining, and an independent array FIFO. The bounded
+Node matrix covers eight non-sysex types, capacities 16/32, overflow/refill and
+signed/unsigned counter wrap, including head/tail crossings during drop-oldest.
+It does not establish generic payload, sysex, concurrent transport or native
+AudioWorklet equivalence.
+
 ## Cross-realm differential matrix
 
 `packages/core/src/__tests__/browser/crossrealm.test.ts` compares real Chromium
