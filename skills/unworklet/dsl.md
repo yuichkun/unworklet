@@ -893,6 +893,12 @@ does not emit it. Read overflow counts from the relevant port's
 [cite: packages/core/src/client.ts :: `return messageOverflowMirror[ringIndex]!;`]
 [cite: packages/core/src/client.ts :: `return midiOverflowMirror[ringIndex]!;`]
 
+When input and output events share a name, their merged `node.events.<name>`
+surface retains only the outbound (worklet-to-main) ring's diagnostics. Its
+`overflowCount()` does not expose drops on the inbound (main-to-worklet) ring.
+Use distinct event names to inspect both directions' overflow counters. —
+[cite: packages/core/src/client.ts :: `existingEntry.emit = emit;`]
+
 Processors with no declared audio ports use one silent native output to satisfy
 Web Audio's constructor requirements. Their public `inputs` and `outputs` remain
 empty. `dispose()` sends a shutdown message; once the worklet receives it, DSP
