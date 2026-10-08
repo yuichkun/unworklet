@@ -1244,18 +1244,21 @@ async function heldInitialization(
   let cleaning: Promise<void> | undefined;
   const cleanup = () =>
     (cleaning ??= (async () => {
-      held.reject(cancelled);
-      // Flush registration before advancing the handshake deadline; readiness may
-      // never be notified, even when compile was already released.
-      await vi.advanceTimersByTimeAsync(0);
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(settled).toBe(true);
-      await Promise.allSettled([pending, readiness, started]);
-      expect(vi.getTimerCount()).toBe(0);
-      signal.removeEventListener("abort", abort);
-      spy.mockRestore();
-      harness.cleanup();
-      vi.useRealTimers();
+      try {
+        held.reject(cancelled);
+        // Flush registration before advancing the handshake deadline; readiness may
+        // never be notified, even when compile was already released.
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(settled).toBe(true);
+        await Promise.allSettled([pending, readiness, started]);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        signal.removeEventListener("abort", abort);
+        spy.mockRestore();
+        harness.cleanup();
+        vi.useRealTimers();
+      }
     })());
   const abort = () => {
     void observed(cleanup());
@@ -1379,6 +1382,12 @@ for (const crossOriginIsolated of [true, false]) {
         }
       } finally {
         await f.cleanup();
+      }
+      if (stage === "constructor" || stage === "listener") {
+        const timeout = await f.rejection;
+        expect(timeout).toBeInstanceOf(Error);
+        expect((timeout as Error).message).toContain("timed out after 10000ms");
+        await expect(f.readiness).rejects.toBe(timeout);
       }
       expect(f.settled()).toBe(true);
       expect(vi.isFakeTimers()).toBe(false);
