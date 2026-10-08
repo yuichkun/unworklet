@@ -5,6 +5,8 @@ import { createNode } from "../../index.ts";
 import {
   CROSSREALM_SAMPLES,
   crossRealmInputs,
+  crossRealmGainSteps,
+  corruptCrossRealmAutomation,
   observeCrossRealm,
   type CrossRealmEvent,
 } from "./fixtures/crossrealm-observation.ts";
@@ -56,18 +58,23 @@ test("cross-realm: the real AudioWorklet output is the finite, bounded sawtooth"
   expect(real.some((s) => s !== real[0])).toBe(true);
 });
 
-for (const name of ["saw", "stereo", "stateful"] as const) {
+for (const name of ["saw", "stereo", "automated-stereo", "stateful"] as const) {
   const sampleRate = SR;
   test(`cross-realm: ${name} PCM/events/snapshot match renderOffline at ${sampleRate} Hz`, async () => {
-    const oracle = await commands.renderCrossRealmOracle(name, sampleRate);
+    const channels = name === "stereo" || name === "automated-stereo" ? 2 : 1;
     const ctx = new OfflineAudioContext({
-      numberOfChannels: name === "stereo" ? 2 : 1,
+      numberOfChannels: name === "automated-stereo" ? 3 : channels,
       length: CROSSREALM_SAMPLES + 128,
       sampleRate,
     });
     const node = await createNode(
       ctx,
-      { saw: sawWorklet, stereo: stereoWorklet, stateful: statefulWorklet }[name],
+      {
+        saw: sawWorklet,
+        stereo: stereoWorklet,
+        "automated-stereo": stereoWorklet,
+        stateful: statefulWorklet,
+      }[name],
       { initial: name === "stereo" ? { gain: 0.5 } : {} },
     );
     const received: CrossRealmEvent[] = [];
@@ -88,6 +95,7 @@ for (const name of ["saw", "stereo", "stateful"] as const) {
           })
         : () => {};
     let source: AudioBufferSourceNode | undefined;
+    const probeNodes: AudioNode[] = [];
     try {
       expect(node.diagnostics.transport).toBe(
         globalThis.crossOriginIsolated ? "sab" : "postMessage",
@@ -101,7 +109,25 @@ for (const name of ["saw", "stereo", "stateful"] as const) {
         source.connect(node.inputs.main!);
         source.start(0);
       }
-      node.outputs.main!.connect(ctx.destination);
+      if (name === "automated-stereo") {
+        const splitter = new ChannelSplitterNode(ctx, { numberOfOutputs: 2 });
+        const merger = new ChannelMergerNode(ctx, { numberOfInputs: 3 });
+        const unity = new ConstantSourceNode(ctx, { offset: 1 });
+        const probe = new GainNode(ctx);
+        for (const { sample, value } of crossRealmGainSteps) {
+          node.params.gain!.setValueAtTime(value, sample / sampleRate);
+          probe.gain.setValueAtTime(value, sample / sampleRate);
+        }
+        node.outputs.main!.connect(splitter);
+        splitter.connect(merger, 0, 0);
+        splitter.connect(merger, 1, 1);
+        unity.connect(probe).connect(merger, 0, 2);
+        merger.connect(ctx.destination);
+        unity.start(0);
+        probeNodes.push(splitter, merger, unity, probe);
+      } else {
+        node.outputs.main!.connect(ctx.destination);
+      }
       // Drain each quantum while suspended: no wall-clock scheduling or
       // postMessage pool exhaustion is part of this bounded differential test.
       const boundaries = Array.from({ length: 4 }, (_, i) =>
@@ -118,13 +144,22 @@ for (const name of ["saw", "stereo", "stateful"] as const) {
       unsubscribe();
       await ctx.resume();
       const rendered = await rendering;
-      const pcm = Array.from({ length: rendered.numberOfChannels }, (_, i) =>
+      const pcm = Array.from({ length: channels }, (_, i) =>
         rendered.getChannelData(i).slice(0, CROSSREALM_SAMPLES),
       );
+      const gainSamples =
+        name === "automated-stereo"
+          ? Array.from(rendered.getChannelData(2).slice(0, CROSSREALM_SAMPLES))
+          : undefined;
+      const oracle = await commands.renderCrossRealmOracle(name, sampleRate, gainSamples);
       expect(observeCrossRealm(pcm, received, state)).toEqual(oracle);
+      if (name === "automated-stereo")
+        for (const corrupted of corruptCrossRealmAutomation(pcm))
+          expect(observeCrossRealm(corrupted, received, state)).not.toEqual(oracle);
     } finally {
       unsubscribe();
       source?.disconnect();
+      for (const probe of probeNodes) probe.disconnect();
       node.dispose();
     }
   });

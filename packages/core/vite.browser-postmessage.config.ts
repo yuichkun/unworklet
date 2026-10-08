@@ -23,8 +23,8 @@ export default defineConfig({
     browser: {
       enabled: true,
       commands: {
-        renderCrossRealmOracle: (_context, name, sampleRate) =>
-          renderCrossRealmOracle(name, sampleRate),
+        renderCrossRealmOracle: (_context, name, sampleRate, gainSamples) =>
+          renderCrossRealmOracle(name, sampleRate, gainSamples),
       },
       provider: playwright(),
       instances: [{ browser: "chromium" }],

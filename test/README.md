@@ -51,6 +51,23 @@ The context suspends after each quantum so transport delivery is drained before
 continuing; the fourth suspension captures state at exactly the compared boundary.
 An extra unobserved quantum lets the context finish after that snapshot.
 
+The stereo automation row schedules gain values 0.5, 0.25, 1, 0 and 2 at times
+0/48000, 64/48000, 128/48000, 255/48000 and 384/48000 seconds. A framework-free
+ConstantSourceNode (value 1) through a native GainNode receives the same schedule
+in the same context and render as the worklet. A third output channel captures
+that native parameter vector; only this independent channel supplies the offline
+renderer's per-sample gain. The two worklet output channels never supply an
+expected value. Every worklet PCM bit and persistent snapshot byte is compared.
+This controls for the host's seconds-to-sample quantization; it does not establish
+that quantization is correct or promise all floating-point time boundaries.
+
+Independent Node piecewise expectations cover both the authored sample vector
+and a separately supplied literal vector. Negative controls alter raw native and
+offline PCM before projection, modeling a one-sample late first transition and
+holding that transition until the next quantum. For example,
+`(255 / 48000) * 48000` evaluates to `255.00000000000003`; the native probe
+avoids assuming an authored integer sample boundary survives conversion to seconds.
+
 The Node oracle tests independently pin stereo/stateful PCM and complete event and
 state values at 44.1 and 48 kHz. Negative controls mutate raw PCM, events and decoded state before the observation
 projection, then require the same exact equality assertion to
@@ -59,8 +76,8 @@ state scalar and a changed byte beyond the snapshot preview. The existing saw
 range/reference and repeated-render checks remain separate witnesses.
 
 This is a bounded renderer/transport comparison using shared compiler code, not
-an independent compiler proof. It covers static params and audio inputs, not all
-processors, scheduled messages/MIDI, automation, snapshot restore/migration,
+an independent compiler proof. It covers static params, audio inputs, and one bounded a-rate step schedule, not all
+processors, scheduled messages/MIDI, other automation curves, snapshot restore/migration,
 other native sample rates (the plugin artifact rejects mismatches), real-time
 contention, deadlines or other browsers.
 
