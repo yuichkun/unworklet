@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -24,7 +26,7 @@ export const probe = defineProcessor(() => {
 const appSource = `
 import { createNode } from "@unworklet/core";
 import processor from "./probe.processor.mjs?worklet";
-globalThis.runSelfcheck = async (corrupt) => {
+globalThis.runSelfcheck = async (corrupt, flag) => {
   const context = new OfflineAudioContext(1, 128, 48000);
   const node = await createNode(context, processor);
   const violations = [];
@@ -35,7 +37,7 @@ globalThis.runSelfcheck = async (corrupt) => {
       if (data.kind === "selfcheck-test-complete") resolve(data);
     });
   });
-  node.node.port.postMessage({ kind: "selfcheck-test-inject", corrupt });
+  node.node.port.postMessage({ kind: "selfcheck-test-inject", corrupt, flag });
   // Acknowledgment precedes rendering so the fault cannot race the quantum.
   await new Promise(resolve => {
     node.node.port.addEventListener("message", ({data}) => {
@@ -69,6 +71,8 @@ function instrumentWorklet(): Plugin {
           `__unworkletNs.initialize(this, opts);
     this.port.addEventListener("message", ({data}) => {
       if (data.kind !== "selfcheck-test-inject") return;
+      if (data.flag === null) delete globalThis[["__UNWORKLET", "SELFCHECK__"].join("_")];
+      else globalThis[["__UNWORKLET", "SELFCHECK__"].join("_")] = data.flag;
       const key = Object.getOwnPropertySymbols(this).find(s => s.description === "unworklet.workletState");
       this[key].eventRingsWasmHeaderViews[0][2] = data.corrupt ? -1 : 0;
       this.port.postMessage({kind: "selfcheck-test-ready"});
@@ -78,25 +82,78 @@ function instrumentWorklet(): Plugin {
         .replace(
           "return __unworkletNs.process(this, inputs, outputs, parameters);",
           `const result = __unworkletNs.process(this, inputs, outputs, parameters);
-    this.port.postMessage({kind: "selfcheck-test-complete"});
+    this.port.postMessage({kind: "selfcheck-test-complete", flag: globalThis[["__UNWORKLET", "SELFCHECK__"].join("_")] ?? null});
     return result;`,
         );
     },
   };
 }
 
-test.each(["serve", "build"] as const)(
-  "real Vite %s worklet applies the self-check gate in its own realm",
-  async (command) => {
+test.each([
+  { command: "serve", delivery: "source" },
+  { command: "build", delivery: "source" },
+  { command: "serve", delivery: "packed" },
+  { command: "build", delivery: "packed" },
+] as const)(
+  "real Vite $command $delivery worklet applies the self-check gate in its own realm",
+  async ({ command, delivery }) => {
     const root = await mkdtemp(path.join(tmpdir(), "unworklet-selfcheck-"));
     let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
     let closeServer: (() => Promise<void>) | undefined;
     try {
       await mkdir(path.join(root, "node_modules/@unworklet"), { recursive: true });
-      await symlink(
-        path.join(repo, "packages/core"),
-        path.join(root, "node_modules/@unworklet/core"),
-      );
+      let plugin = unworklet;
+      if (delivery === "source") {
+        await symlink(
+          path.join(repo, "packages/core"),
+          path.join(root, "node_modules/@unworklet/core"),
+        );
+      } else {
+        for (const name of ["core", "lang", "unplugin"]) {
+          execFileSync(
+            path.join(repo, "node_modules/.bin/vp"),
+            ["pm", "pack", "--pack-destination", root],
+            {
+              cwd: path.join(repo, "packages", name),
+              stdio: "pipe",
+              timeout: 30_000,
+            },
+          );
+          const tarball = (await readdir(root)).find(
+            (file) => file.startsWith(`unworklet-${name}-`) && file.endsWith(".tgz"),
+          )!;
+          const target = path.join(root, "node_modules/@unworklet", name);
+          await mkdir(target);
+          execFileSync("tar", [
+            "-xf",
+            path.join(root, tarball),
+            "--strip-components=1",
+            "-C",
+            target,
+          ]);
+        }
+        for (const name of ["devframe", "magic-string", "typescript", "unplugin", "vite"]) {
+          await symlink(
+            name === "vite" && process.env.UWK_SELFCHECK_VITE_ROOT
+              ? process.env.UWK_SELFCHECK_VITE_ROOT
+              : path.join(repo, "packages/unplugin/node_modules", name),
+            path.join(root, "node_modules", name),
+          );
+        }
+        await symlink(
+          path.join(repo, "packages/core/node_modules/binaryen"),
+          path.join(root, "node_modules/binaryen"),
+        );
+        await symlink(
+          path.join(repo, "packages/lang/node_modules/@volar"),
+          path.join(root, "node_modules/@volar"),
+        );
+        plugin = (
+          await import(
+            pathToFileURL(path.join(root, "node_modules/@unworklet/unplugin/dist/index.mjs")).href
+          )
+        ).default;
+      }
       await writeFile(
         path.join(root, "index.html"),
         '<script type="module" src="/main.mjs"></script>',
@@ -107,19 +164,23 @@ test.each(["serve", "build"] as const)(
         root,
         configFile: false as const,
         logLevel: "error" as const,
-        plugins: [unworklet() as Plugin, instrumentWorklet()],
+        plugins: [plugin() as Plugin, instrumentWorklet()],
         server: { host: "127.0.0.1", port: 0, fs: { allow: [root, repo] } },
         preview: { host: "127.0.0.1", port: 0 },
         ssr: { noExternal: [/^@unworklet\//] },
       };
+      const vite: Pick<typeof import("vite-plus"), "build" | "createServer" | "preview"> = process
+        .env.UWK_SELFCHECK_VITE_MODULE
+        ? await import(process.env.UWK_SELFCHECK_VITE_MODULE)
+        : { build, createServer, preview };
       let url: string;
       if (command === "serve") {
-        const server = await createServer(config);
+        const server = await vite.createServer(config);
         closeServer = () => closeHmrServer(server);
         await server.listen();
         url = server.resolvedUrls!.local[0]!;
       } else {
-        await build(config);
+        await vite.build(config);
         const assets = path.join(root, "dist/assets");
         const worklets = (await readdir(assets)).filter(
           (name) => name.endsWith(".js") && name.includes("worklet"),
@@ -131,7 +192,7 @@ test.each(["serve", "build"] as const)(
           expect(code).not.toContain("selfcheck-violation");
           expect(code).not.toContain("ring overflow counter is negative");
         }
-        const server = await preview(config);
+        const server = await vite.preview(config);
         closeServer = () =>
           new Promise<void>((resolve, reject) =>
             server.httpServer.close((error) => (error ? reject(error) : resolve())),
@@ -144,10 +205,12 @@ test.each(["serve", "build"] as const)(
       page.on("pageerror", (error) => errors.push(error.message));
       await page.goto(url);
       await page.waitForFunction("typeof globalThis.runSelfcheck === 'function'");
-      for (const corrupt of [false, true]) {
+      for (const [corrupt, flag] of [false, true].flatMap((corrupt) =>
+        [null, false, true].map((flag) => [corrupt, flag]),
+      )) {
         await page.evaluate(`globalThis.selfcheckResult = undefined;
           globalThis.selfcheckFailure = undefined;
-          globalThis.runSelfcheck(${corrupt}).then(
+          globalThis.runSelfcheck(${corrupt}, ${flag}).then(
             result => globalThis.selfcheckResult = result,
             error => globalThis.selfcheckFailure = String(error),
           );`);
@@ -162,7 +225,7 @@ test.each(["serve", "build"] as const)(
           samples: number[];
           violations: unknown[];
         }>("globalThis.selfcheckResult");
-        expect(result.completed).toEqual({ kind: "selfcheck-test-complete" });
+        expect(result.completed).toEqual({ kind: "selfcheck-test-complete", flag });
         expect(result.samples).toEqual(Array(128).fill(0.25));
         expect(result.violations).toEqual(
           command === "serve" && corrupt

@@ -75,6 +75,7 @@
   "dependencies": {
     "@unworklet/lang": "workspace:^",
     "devframe": "^0.8.0",
+    "magic-string": "^0.30.21",
     "typescript": "catalog:",
     "unplugin": "catalog:"
   },

@@ -210,6 +210,7 @@ declare module "@vitejs/devtools-kit" {
 }
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
+import { defineDevSelfcheck } from "./selfcheck-define.ts";
 
 /**
  * Suffix appended to the processor export name to derive the
@@ -1103,6 +1104,11 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
       }
     },
     transform(code, id) {
+      // The page's Vite dev defines do not reach AudioWorkletGlobalScope.
+      if (isServe) {
+        const selfcheck = defineDevSelfcheck(code, id);
+        if (selfcheck) return selfcheck;
+      }
       // Lower a `.uwk.ts` sugar source to plain core `.ts` before any downstream
       // loader / bundler evaluates it. `enforce: "pre"` runs this ahead of Vite's
       // own TS→JS transform, and it covers every Vite-pipeline evaluation of the
