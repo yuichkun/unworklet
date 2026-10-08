@@ -1654,10 +1654,39 @@ export async function createNode<C>(
     number,
     { resolve: (slots: SnapshotSlot[]) => void; reject: (err: Error) => void }
   >();
-  const pendingRestores = new Map<
-    number,
-    { resolve: (report: RestoreReport) => void; reject: (err: Error) => void }
-  >();
+  type PendingRestore = {
+    slots: SnapshotSlot[];
+    profile: string | undefined;
+    phase: "queued" | "prepare" | "barrier" | "commit";
+    captures: Array<() => void>;
+    resolve: (report: RestoreReport) => void;
+    reject: (err: unknown) => void;
+  };
+  const pendingRestores = new Map<number, PendingRestore>();
+  const startNextRestore = (): void => {
+    for (const [requestId, pending] of pendingRestores) {
+      if (pending.phase !== "queued") return;
+      pending.phase = "prepare";
+      try {
+        node.port.postMessage({
+          kind: "restore-prepare",
+          requestId,
+          slots: pending.slots,
+          profile: pending.profile,
+        });
+        return;
+      } catch (err) {
+        pendingRestores.delete(requestId);
+        pending.reject(err);
+        for (const capture of pending.captures) capture();
+      }
+    }
+  };
+  const afterPendingRestores = (capture: () => void): void => {
+    const preceding = Array.from(pendingRestores.values()).at(-1);
+    if (preceding) preceding.captures.push(capture);
+    else capture();
+  };
   // Dev X-ray dumps share the request-id sequence + the snapshot port listener.
   const pendingDevDumps = new Map<
     number,
@@ -1713,15 +1742,52 @@ export async function createNode<C>(
       if (pending === undefined) return;
       pendingSnapshots.delete(data.requestId);
       pending.resolve(Array.isArray(data.slots) ? (data.slots as SnapshotSlot[]) : []);
-    } else if (data.kind === "restore-done") {
+    } else if (
+      data.kind === "restore-prepared" ||
+      data.kind === "restore-barrier-done" ||
+      data.kind === "restore-done"
+    ) {
       const pending = pendingRestores.get(data.requestId);
       if (pending === undefined) return;
-      pendingRestores.delete(data.requestId);
-      pending.resolve({
-        applied: Array.isArray(data.applied) ? (data.applied as string[]) : [],
-        skipped: Array.isArray(data.skipped) ? (data.skipped as string[]) : [],
-        missing: Array.isArray(data.missing) ? (data.missing as string[]) : [],
-      });
+      try {
+        if (data.kind === "restore-prepared" && pending.phase === "prepare") {
+          const applied = Array.isArray(data.applied) ? (data.applied as string[]) : [];
+          const settings: Array<[AudioParam, number]> = [];
+          for (const slot of pending.slots) {
+            if (slot.kind !== "param" || !applied.includes(slot.name)) continue;
+            const ap = params[slot.name];
+            if (ap) settings.push([ap, Number(decodeScalar("f32", slot.data))]);
+          }
+          for (const [ap, value] of settings) ap.value = value;
+          pending.phase = "barrier";
+          node.port.postMessage({ kind: "restore-barrier", requestId: data.requestId });
+        } else if (data.kind === "restore-barrier-done" && pending.phase === "barrier") {
+          // Web Audio drains control messages before a captured batch of port tasks.
+          // The barrier reply forces commit into a later batch, after native param
+          // updates have crossed that drain, without replacing automation/modulation.
+          pending.phase = "commit";
+          node.port.postMessage({
+            kind: "restore",
+            requestId: data.requestId,
+            slots: pending.slots,
+            profile: pending.profile,
+          });
+        } else if (data.kind === "restore-done" && pending.phase === "commit") {
+          pendingRestores.delete(data.requestId);
+          pending.resolve({
+            applied: Array.isArray(data.applied) ? (data.applied as string[]) : [],
+            skipped: Array.isArray(data.skipped) ? (data.skipped as string[]) : [],
+            missing: Array.isArray(data.missing) ? (data.missing as string[]) : [],
+          });
+          for (const capture of pending.captures) capture();
+          startNextRestore();
+        }
+      } catch (err) {
+        pendingRestores.delete(data.requestId);
+        pending.reject(err);
+        for (const capture of pending.captures) capture();
+        startNextRestore();
+      }
     } else if (data.kind === "dev-dump-response") {
       const pending = pendingDevDumps.get(data.requestId);
       if (pending === undefined) return;
@@ -1755,7 +1821,14 @@ export async function createNode<C>(
           ),
         reject,
       });
-      node.port.postMessage({ kind: "snapshot-request", requestId, profile });
+      afterPendingRestores(() => {
+        try {
+          node.port.postMessage({ kind: "snapshot-request", requestId, profile });
+        } catch (err) {
+          pendingSnapshots.delete(requestId);
+          reject(err);
+        }
+      });
     });
   };
 
@@ -1818,22 +1891,20 @@ export async function createNode<C>(
     }
     const decoded = decodeSnapshot(migrated.blob);
     const requestId = snapshotRequestSeq++;
-    // Hand ALL slots to the worklet — it is the single authority on declarations,
-    // so it computes applied / skipped / missing (across state / buffer / param) +
-    // writes state / buffer into linear memory at the quantum boundary. dispose() /
-    // processorerror reject the pending promise so a torn-down node never hangs here.
+    // Serialize complete restores so another request cannot replace the native
+    // parameter settings between this request's barrier and state commit.
     let report: RestoreReport;
     try {
       report = await new Promise<RestoreReport>((resolve, reject) => {
-        pendingRestores.set(requestId, { resolve, reject });
-        node.port.postMessage({
-          kind: "restore",
-          requestId,
+        pendingRestores.set(requestId, {
           slots: decoded.slots,
-          // Scope the worklet's `missing` report to the profile the blob was
-          // captured under (= not the union of all profiles).
           profile: decoded.profile ?? undefined,
+          phase: "queued",
+          captures: [],
+          resolve,
+          reject,
         });
+        startNextRestore();
       });
     } catch (err) {
       pendingRestores.delete(requestId);
@@ -1849,14 +1920,6 @@ export async function createNode<C>(
         skipped: [],
         missing: [],
       };
-    }
-    // param values live on `AudioParam` (main thread), so apply them here using
-    // the worklet's authoritative applied report.
-    for (const slot of decoded.slots) {
-      if (slot.kind !== "param") continue;
-      if (!report.applied.includes(slot.name)) continue;
-      const ap = params[slot.name];
-      if (ap) ap.value = Number(decodeScalar("f32", slot.data));
     }
     return {
       ok: true,
@@ -1984,7 +2047,14 @@ export async function createNode<C>(
             resolve({ ...dump, slots: currentSnapshotSlots(dump.slots, settings) }),
           reject,
         });
-        node.port.postMessage({ kind: "dev-dump-request", requestId });
+        afterPendingRestores(() => {
+          try {
+            node.port.postMessage({ kind: "dev-dump-request", requestId });
+          } catch (err) {
+            pendingDevDumps.delete(requestId);
+            reject(err);
+          }
+        });
       });
     };
     devHandle = {

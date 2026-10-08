@@ -26,10 +26,24 @@ import { expect, test, vi } from "vite-plus/test";
 import { createNode } from "./client.ts";
 import { compile } from "./compile/index.ts";
 import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
-import { audioOutput, event, state } from "./dsl/declarations.ts";
+import { audioOutput, event, param, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
+import { decodeScalar } from "./snapshot.ts";
+import { decodeSnapshot } from "./snapshotBlob.ts";
 import { defineProcessor } from "./processor.ts";
 import type { CompiledProcessor, MidiEvent } from "./types.ts";
+
+type RestoreQueues = {
+  enabled: boolean;
+  controls: Array<() => void>;
+  replies: Array<() => void>;
+  tasks: Array<() => void>;
+};
+type LoopbackOptions = {
+  crossOriginIsolated: boolean;
+  beforeRestoreDone?: () => void;
+  queues?: RestoreQueues;
+};
 
 type PortListener = (e: { data: unknown }) => void;
 
@@ -44,6 +58,7 @@ type LoopbackHarness = {
   };
   /** processorOptions captured from the mock AudioWorkletNode constructor. */
   capturedProcessorOptions: () => Record<string, unknown>;
+  renderedParams: Map<string, number>;
   /** True once the mock node exists and the client's port listener is attached. */
   readyToInitialize: () => boolean;
   /** Fire every rAF callback queued at entry (one main-thread drain pass). */
@@ -57,10 +72,7 @@ type LoopbackHarness = {
  * keeps `WebAssembly.compile` REAL (the worklet side instantiates the module)
  * and bridges the two ports so `ready` / fallback data messages actually flow.
  */
-const installLoopback = (
-  wasmBytes: Uint8Array,
-  opts: { crossOriginIsolated: boolean },
-): LoopbackHarness => {
+const installLoopback = (wasmBytes: Uint8Array, opts: LoopbackOptions): LoopbackHarness => {
   const coiTarget = globalThis as unknown as { crossOriginIsolated?: boolean };
   const prevCoi = coiTarget.crossOriginIsolated;
   if (opts.crossOriginIsolated) {
@@ -80,8 +92,13 @@ const installLoopback = (
   const workletSelf: LoopbackHarness["workletSelf"] = {
     port: {
       postMessage: (m: unknown) => {
-        // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot: a listener (awaitReady) removes itself during dispatch
-        for (const fn of [...clientPortListeners]) fn({ data: m });
+        if ((m as { kind: string }).kind === "restore-done") opts.beforeRestoreDone?.();
+        const deliver = () => {
+          // oxlint-disable-next-line unicorn/no-useless-spread -- a listener (awaitReady) removes itself during dispatch
+          for (const fn of [...clientPortListeners]) fn({ data: m });
+        };
+        if (opts.queues?.enabled) opts.queues.replies.push(deliver);
+        else deliver();
       },
       addEventListener: (kind: string, fn: PortListener) => {
         if (kind !== "message") return;
@@ -93,6 +110,7 @@ const installLoopback = (
     },
   };
 
+  const renderedParams = new Map<string, number>();
   let captured: Record<string, unknown> | null = null;
   const readyToInitialize = (): boolean => captured !== null && clientPortListeners.length > 0;
   class LoopbackWorkletNode {
@@ -102,8 +120,12 @@ const installLoopback = (
           pendingToWorklet.push(m);
           return;
         }
-        // oxlint-disable-next-line unicorn/no-useless-spread -- snapshot against listener-list mutation during dispatch
-        for (const fn of [...workletPortListeners]) fn({ data: m });
+        const deliver = () => {
+          // oxlint-disable-next-line unicorn/no-useless-spread -- listeners can change during dispatch
+          for (const fn of [...workletPortListeners]) fn({ data: m });
+        };
+        if (opts.queues?.enabled) opts.queues.tasks.push(deliver);
+        else deliver();
       },
       onmessage: null as PortListener | null,
       addEventListener: (kind: string, fn: PortListener) => {
@@ -116,7 +138,26 @@ const installLoopback = (
       start: () => {},
       close: () => {},
     };
-    parameters = { get: (_name: string) => ({ value: 0 }) };
+    private paramValues = new Map<string, { value: number }>();
+    parameters = {
+      get: (name: string) => {
+        if (!this.paramValues.has(name)) {
+          let value = 0;
+          this.paramValues.set(name, {
+            get value() {
+              return value;
+            },
+            set value(next: number) {
+              value = next;
+              const apply = () => renderedParams.set(name, next);
+              if (opts.queues?.enabled) opts.queues.controls.push(apply);
+              else apply();
+            },
+          });
+        }
+        return this.paramValues.get(name)!;
+      },
+    };
     context: unknown;
     constructor(ctx: unknown, _name: string, nodeOptions: { processorOptions?: unknown }) {
       this.context = ctx;
@@ -173,6 +214,7 @@ const installLoopback = (
   return {
     context,
     workletSelf,
+    renderedParams,
     capturedProcessorOptions: () => {
       if (captured === null) throw new Error("AudioWorkletNode not constructed yet");
       return captured;
@@ -250,7 +292,7 @@ type LoopbackSession = {
 /** Boot the real client against the real worklet namespace and return both ends. */
 const bootLoopback = async (
   processor: CompiledProcessor<unknown>,
-  opts: { crossOriginIsolated: boolean },
+  opts: LoopbackOptions,
 ): Promise<LoopbackSession> => {
   const { wasm } = await compile(processor);
   const harness = installLoopback(wasm, opts);
@@ -271,7 +313,17 @@ const bootLoopback = async (
     node,
     harness,
     runQuantum: () => {
-      processor.worklet.process(harness.workletSelf as never, [], outputs, {});
+      processor.worklet.process(
+        harness.workletSelf as never,
+        [],
+        outputs,
+        Object.fromEntries(
+          Object.keys(node.params).map((name) => [
+            name,
+            new Float32Array([harness.renderedParams.get(name) ?? 0]),
+          ]),
+        ),
+      );
     },
   };
 };
@@ -992,3 +1044,109 @@ test("SAB sysex sends during copying are queued as immutable complete messages",
     session.harness.cleanup();
   }
 });
+
+for (const transport of ["sab", "postMessage"] as const) {
+  test(`restore (${transport}): restored persistent state never runs with the pre-restore control`, async () => {
+    const processor = defineProcessor(() => {
+      const freeze = param
+        .f32({ default: 1, min: 0, max: 1, automationRate: "k-rate" })
+        .named("freeze");
+      const count = state.named("count").f32(0);
+      const out = audioOutput({ channels: 1, name: "main" });
+      return {
+        process: () =>
+          forSample((i) => {
+            count.write(count.read().add(freeze.at(i).neg().add(1)));
+            out.ch(0).at(i).write(count.read());
+          }),
+      };
+    }) as unknown as CompiledProcessor<unknown>;
+    let onRestore = () => {};
+    const session = await bootLoopback(processor, {
+      crossOriginIsolated: transport === "sab",
+      beforeRestoreDone: () => onRestore(),
+    });
+    try {
+      session.node.params.freeze!.value = 1;
+      session.runQuantum();
+      const saved = await session.node.snapshot();
+      session.node.params.freeze!.value = 0;
+      session.runQuantum();
+      onRestore = () => {
+        for (let i = 0; i < 3; i++) session.runQuantum();
+      };
+      expect((await session.node.restore(saved)).ok).toBe(true);
+      session.runQuantum();
+      const restored = decodeSnapshot(await session.node.snapshot());
+      expect(decodeScalar("f32", restored.slots.find((slot) => slot.name === "count")!.data)).toBe(
+        0,
+      );
+    } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
+
+for (const transport of ["sab", "postMessage"] as const) {
+  test(`restore (${transport}): a control update arriving after the control drain precedes restored DSP`, async () => {
+    const processor = defineProcessor(() => {
+      const freeze = param
+        .f32({ default: 1, min: 0, max: 1, automationRate: "k-rate" })
+        .named("freeze");
+      const count = state.named("count").f32(0);
+      const out = audioOutput({ channels: 1, name: "main" });
+      return {
+        process: () =>
+          forSample((i) => {
+            count.write(count.read().add(freeze.at(i).neg().add(1)));
+            out.ch(0).at(i).write(count.read());
+          }),
+      };
+    }) as unknown as CompiledProcessor<unknown>;
+    const queues: RestoreQueues = { enabled: false, controls: [], replies: [], tasks: [] };
+    const session = await bootLoopback(processor, {
+      crossOriginIsolated: transport === "sab",
+      queues,
+    });
+    try {
+      session.node.params.freeze!.value = 1;
+      session.runQuantum();
+      const saved = await session.node.snapshot();
+      session.node.params.freeze!.value = 0;
+      session.runQuantum();
+      queues.enabled = true;
+      let restoring: ReturnType<typeof session.node.restore> | undefined;
+      let settled = false;
+      for (let turn = 0; turn < 8 && !settled; turn++) {
+        for (const apply of queues.controls.splice(0)) apply();
+        // Prepare replies reach main after the control drain but before task capture.
+        for (const deliver of queues.replies.splice(0)) deliver();
+        // Main posts after the rendering thread has captured its control batch.
+        if (turn === 0) {
+          restoring = session.node.restore(saved);
+          void restoring.then(() => {
+            settled = true;
+          });
+        }
+        // Tasks posted while this captured batch runs belong to the next batch.
+        for (const deliver of queues.tasks.splice(0)) {
+          deliver();
+          await Promise.resolve();
+        }
+        session.runQuantum();
+        await Promise.resolve();
+      }
+      expect(settled).toBe(true);
+      expect((await restoring!).ok).toBe(true);
+      queues.enabled = false;
+      const restored = decodeSnapshot(await session.node.snapshot());
+      expect(decodeScalar("f32", restored.slots.find((slot) => slot.name === "count")!.data)).toBe(
+        0,
+      );
+    } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}

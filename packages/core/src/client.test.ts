@@ -3359,6 +3359,8 @@ test("node.restore(blob): ok path → worklet applies + param set on AudioParam 
       { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) },
     ]);
     const p = node.restore(blob);
+    replyRestore(h.lastNode!, posted, "restore-prepare");
+    replyRestore(h.lastNode!, posted, "restore-barrier");
     const req = findPosted(posted, "restore")!;
     expect((req["slots"] as unknown[]).length).toBe(2);
     for (const l of h.lastNode!.port.__listeners) {
@@ -3398,6 +3400,8 @@ test("node.restore(blob): worklet skipped / missing report is forwarded verbatim
       { name: "ghost", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
     ]);
     const p = node.restore(blob);
+    replyRestore(h.lastNode!, posted, "restore-prepare");
+    replyRestore(h.lastNode!, posted, "restore-barrier");
     const req = findPosted(posted, "restore")!;
     for (const l of h.lastNode!.port.__listeners) {
       l({
@@ -3508,6 +3512,8 @@ test("node.restore() forwards the blob's profile to the worklet (= profile-scope
       { name: "a", kind: "state", type: "f32", data: encodeScalar("f32", 1) },
     ]);
     const p = node.restore(blob);
+    replyRestore(h.lastNode!, posted, "restore-prepare");
+    replyRestore(h.lastNode!, posted, "restore-barrier");
     const req = findPosted(posted, "restore")!;
     // The worklet needs the profile to scope its `missing` report correctly.
     expect(req["profile"]).toBe("preset");
@@ -3588,9 +3594,14 @@ const autoAnswer = (
           data: { kind: "snapshot-response", requestId: msg.requestId, slots: [] },
         } as MessageEvent);
       }
-    } else if (msg?.kind === "restore") {
+    } else if (
+      msg?.kind === "restore" ||
+      msg?.kind === "restore-prepare" ||
+      msg?.kind === "restore-barrier"
+    ) {
+      const kind = msg.kind === "restore-prepare" ? "restore-prepared" : `${msg.kind}-done`;
       for (const l of mockNode.port.__listeners) {
-        l({ data: { kind: "restore-done", requestId: msg.requestId, ...report } } as MessageEvent);
+        l({ data: { kind, requestId: msg.requestId, ...report } } as MessageEvent);
       }
     }
   };
@@ -4122,7 +4133,7 @@ test("restore proceeds when the blob carries no id (legacy blobs keep working)",
     const legacy = encodeSnapshot("test", null, []); // no id
     void node.restore(legacy); // resolves only when the worklet answers; the send is the assertion
     await new Promise((r) => setTimeout(r, 0));
-    expect(posted.map((m) => m.kind)).toEqual(["restore"]);
+    expect(posted.map((m) => m.kind)).toEqual(["restore-prepare"]);
   } finally {
     h.cleanup();
   }
@@ -4411,6 +4422,8 @@ test("snapshot replies tolerate missing lists and ignore duplicate or unrelated 
     deliver({ kind: "snapshot-response", requestId: request.requestId, slots: [] });
     expect(decodeSnapshot(await snapshot).slots).toEqual([]);
     const restore = node.restore(encodeSnapshot("test", null, []));
+    replyRestore(h.lastNode!, posted, "restore-prepare");
+    replyRestore(h.lastNode!, posted, "restore-barrier");
     const restoreRequest = findPosted(posted, "restore")!;
     deliver({
       kind: "restore-done",
@@ -4625,11 +4638,12 @@ for (const applied of [false, true]) {
       h.lastNode!.parameters.get = () => undefined;
       h.lastNode!.port.postMessage = (message) => {
         const request = message as { kind: string; requestId: number };
-        if (request.kind !== "restore") return;
+        if (!["restore", "restore-prepare", "restore-barrier"].includes(request.kind)) return;
         for (const listener of h.lastNode!.port.__listeners)
           listener({
             data: {
-              kind: "restore-done",
+              kind:
+                request.kind === "restore-prepare" ? "restore-prepared" : `${request.kind}-done`,
               requestId: request.requestId,
               applied: applied ? ["freq"] : [],
               skipped: applied ? [] : ["freq"],
@@ -4847,3 +4861,302 @@ for (const contextState of ["suspended", "running"] as const) {
     });
   }
 }
+
+const restoreReport = { applied: ["freq"], skipped: [], missing: [] };
+const replyRestore = (
+  mock: MockAudioWorkletNode,
+  posted: unknown[],
+  requestKind: string,
+  report = restoreReport,
+): void => {
+  const request = posted.findLast((m) => (m as { kind: string }).kind === requestKind) as
+    | { requestId: number }
+    | undefined;
+  expect(request).toBeDefined();
+  const kind = requestKind === "restore-prepare" ? "restore-prepared" : `${requestKind}-done`;
+  for (const listener of mock.port.__listeners)
+    listener({ data: { kind, requestId: request!.requestId, ...report } });
+};
+
+test("restore validates with the worklet, fences native params, then commits persistent slots", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m) => posted.push(m);
+    const before = node.params.freq!.value;
+    const restoring = node.restore(
+      encodeSnapshot("test", null, [
+        { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) },
+      ]),
+    );
+    expect(posted.map((m) => (m as { kind: string }).kind)).toEqual(["restore-prepare"]);
+    expect(node.params.freq!.value).toBe(before);
+    replyRestore(h.lastNode!, posted, "restore-prepare");
+    expect(node.params.freq!.value).toBe(440);
+    expect(findPosted(posted, "restore")).toBeUndefined();
+    replyRestore(h.lastNode!, posted, "restore-barrier");
+    expect(findPosted(posted, "restore")).toBeDefined();
+    replyRestore(h.lastNode!, posted, "restore");
+    expect(await restoring).toMatchObject({ ok: true, restored: 1 });
+  } finally {
+    h.cleanup();
+  }
+});
+
+for (const phase of ["prepare", "barrier", "commit"] as const) {
+  for (const failure of ["dispose", "processorerror"] as const) {
+    test(`restore ${failure} at ${phase} settles active and queued requests without another commit`, async () => {
+      const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+      try {
+        const node = await startCreate(
+          () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+          h.fireReady,
+        );
+        const posted: unknown[] = [];
+        h.lastNode!.port.postMessage = (m) => posted.push(m);
+        const blob = encodeSnapshot("test", null, [
+          { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) },
+        ]);
+        const first = node.restore(blob);
+        const second = node.restore(blob);
+        if (phase !== "prepare") replyRestore(h.lastNode!, posted, "restore-prepare");
+        if (phase === "commit") replyRestore(h.lastNode!, posted, "restore-barrier");
+        if (failure === "dispose") node.dispose();
+        else h.fireProcessorError("boom");
+        const messagesAtFailure = posted.length;
+        for (const requestKind of ["restore-prepare", "restore-barrier", "restore"]) {
+          if (findPosted(posted, requestKind)) replyRestore(h.lastNode!, posted, requestKind);
+        }
+        expect(await first).toMatchObject({ ok: false });
+        expect(await second).toMatchObject({ ok: false });
+        expect(posted).toHaveLength(messagesAtFailure);
+      } finally {
+        h.cleanup();
+      }
+    });
+  }
+}
+
+test("overlapping restores commit in invocation order without mixing their parameter settings", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m) => posted.push(m);
+    const blob = (value: number) =>
+      encodeSnapshot("test", null, [
+        { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", value) },
+      ]);
+    const first = node.restore(blob(440));
+    const second = node.restore(blob(880));
+    expect(posted).toHaveLength(1);
+    replyRestore(h.lastNode!, posted, "restore-prepare");
+    replyRestore(h.lastNode!, posted, "restore-barrier");
+    expect(node.params.freq!.value).toBe(440);
+    replyRestore(h.lastNode!, posted, "restore");
+    expect(await first).toMatchObject({ ok: true });
+    expect(posted.filter((m) => (m as { kind: string }).kind === "restore-prepare")).toHaveLength(
+      2,
+    );
+    replyRestore(h.lastNode!, posted, "restore-prepare");
+    replyRestore(h.lastNode!, posted, "restore-barrier");
+    expect(node.params.freq!.value).toBe(880);
+    replyRestore(h.lastNode!, posted, "restore");
+    expect(await second).toMatchObject({ ok: true });
+  } finally {
+    h.cleanup();
+  }
+});
+
+for (const capture of ["snapshot", "devDump"] as const) {
+  test(`${capture} between restores captures the first committed state before the second restore`, async () => {
+    (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__ = true;
+    const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+    try {
+      const node = await startCreate(
+        () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+        h.fireReady,
+      );
+      const posted: unknown[] = [];
+      h.lastNode!.port.postMessage = (m) => posted.push(m);
+      Object.assign(h.context, { state: "suspended" });
+      const initial = node.params.freq!.value;
+      const blob = encodeSnapshot("test", null, [
+        { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) },
+      ]);
+      const first = node.restore(blob);
+      const captured =
+        capture === "snapshot"
+          ? node.snapshot()
+          : getDevNodes()
+              .find((handle) => handle.node === node)!
+              .devDump();
+      Object.assign(h.context, { state: "running" });
+      const second = node.restore(blob);
+      const kind = capture === "snapshot" ? "snapshot-request" : "dev-dump-request";
+      expect(findPosted(posted, kind)).toBeUndefined();
+      replyRestore(h.lastNode!, posted, "restore-prepare");
+      replyRestore(h.lastNode!, posted, "restore-barrier");
+      replyRestore(h.lastNode!, posted, "restore");
+      expect(await first).toMatchObject({ ok: true });
+      expect(posted.map((m) => (m as { kind: string }).kind)).toEqual([
+        "restore-prepare",
+        "restore-barrier",
+        "restore",
+        kind,
+        "restore-prepare",
+      ]);
+      const request = findPosted(posted, kind)!;
+      for (const listener of h.lastNode!.port.__listeners)
+        listener({
+          data: {
+            kind: capture === "snapshot" ? "snapshot-response" : "dev-dump-response",
+            requestId: request.requestId,
+            slots: [{ name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) }],
+          },
+        });
+      const result = await captured;
+      const slots = result instanceof Uint8Array ? decodeSnapshot(result).slots : result.slots;
+      expect(slots[0]!.data).toEqual(encodeScalar("f32", initial));
+      replyRestore(h.lastNode!, posted, "restore-prepare");
+      replyRestore(h.lastNode!, posted, "restore-barrier");
+      replyRestore(h.lastNode!, posted, "restore");
+      expect(await second).toMatchObject({ ok: true });
+    } finally {
+      delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
+      h.cleanup();
+    }
+  });
+}
+
+for (const failure of [
+  "setter",
+  "restore-barrier",
+  "restore",
+  "queued-prepare",
+  "capture",
+] as const) {
+  test(`restore ${failure} failure settles captures and permits the next queued request`, async () => {
+    (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__ = true;
+    const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+    try {
+      const node = await startCreate(
+        () => createNode(h.context as never, makeMockProcessor({ params: [{ name: "freq" }] })),
+        h.fireReady,
+      );
+      const posted: unknown[] = [];
+      let failed = false;
+      h.lastNode!.port.postMessage = (m) => {
+        const message = m as { kind: string };
+        const shouldFail =
+          message.kind === failure ||
+          (failure === "queued-prepare" &&
+            message.kind === "restore-prepare" &&
+            posted.length > 0) ||
+          (failure === "capture" && message.kind === "snapshot-request");
+        if (shouldFail && !failed) {
+          failed = true;
+          throw new Error("send failed");
+        }
+        posted.push(m);
+      };
+      if (failure === "setter") {
+        Object.defineProperty(node.params.freq!, "value", {
+          configurable: true,
+          get: () => 0,
+          set: () => {
+            if (!failed) {
+              failed = true;
+              throw new Error("setter failed");
+            }
+          },
+        });
+      }
+      const blob = encodeSnapshot("test", null, [
+        { name: "freq", kind: "param", type: "f32", data: encodeScalar("f32", 440) },
+      ]);
+      const first = node.restore(blob);
+      const second = failure === "queued-prepare" ? node.restore(blob) : undefined;
+      const snapshot = node.snapshot().then(
+        () => "ok",
+        () => "failed",
+      );
+      const dump = getDevNodes()
+        .find((handle) => handle.node === node)!
+        .devDump();
+      const last = node.restore(blob);
+      replyRestore(h.lastNode!, posted, "restore-prepare");
+      if (failure !== "setter" && failure !== "restore-barrier")
+        replyRestore(h.lastNode!, posted, "restore-barrier");
+      if (failure === "queued-prepare" || failure === "capture")
+        replyRestore(h.lastNode!, posted, "restore");
+      expect((await first).ok).toBe(failure === "queued-prepare" || failure === "capture");
+      if (second) expect((await second).ok).toBe(false);
+      for (const kind of ["snapshot-request", "dev-dump-request"]) {
+        const request = findPosted(posted, kind);
+        if (request)
+          for (const listener of h.lastNode!.port.__listeners)
+            listener({
+              data: {
+                kind: kind === "snapshot-request" ? "snapshot-response" : "dev-dump-response",
+                requestId: request.requestId,
+                slots: [],
+              },
+            });
+      }
+      expect(await snapshot).toBe(failure === "capture" ? "failed" : "ok");
+      expect(await dump).toMatchObject({ slots: [] });
+      replyRestore(h.lastNode!, posted, "restore-prepare");
+      replyRestore(h.lastNode!, posted, "restore-barrier");
+      replyRestore(h.lastNode!, posted, "restore");
+      expect((await last).ok).toBe(true);
+    } finally {
+      delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
+      h.cleanup();
+    }
+  });
+}
+
+test("dispose rejects captures deferred behind a restore and ignores its late replies", async () => {
+  (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__ = true;
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    const posted: unknown[] = [];
+    h.lastNode!.port.postMessage = (m) => posted.push(m);
+    const restoring = node.restore(encodeSnapshot("test", null, []));
+    const snapshot = node.snapshot().then(
+      () => "ok",
+      () => "disposed",
+    );
+    const dump = getDevNodes()
+      .find((handle) => handle.node === node)!
+      .devDump()
+      .then(
+        () => "ok",
+        () => "disposed",
+      );
+    node.dispose();
+    replyRestore(h.lastNode!, posted, "restore-prepare");
+    expect((await restoring).ok).toBe(false);
+    expect(await snapshot).toBe("disposed");
+    expect(await dump).toBe("disposed");
+    expect(posted.map((m) => (m as { kind: string }).kind)).toEqual([
+      "restore-prepare",
+      "shutdown",
+    ]);
+  } finally {
+    delete (globalThis as { __UNWORKLET_DEVTOOLS__?: boolean }).__UNWORKLET_DEVTOOLS__;
+    h.cleanup();
+  }
+});

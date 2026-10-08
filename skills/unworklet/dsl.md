@@ -893,16 +893,26 @@ does not emit it. Read overflow counts from the relevant port's
 [cite: packages/core/src/client.ts :: `return messageOverflowMirror[ringIndex]!;`]
 [cite: packages/core/src/client.ts :: `return midiOverflowMirror[ringIndex]!;`]
 
+Counters reflect the latest shared-header or `postMessage` update; they are not
+synchronous delivery acknowledgments.
+
 When input and output events share a name, their merged `node.events.<name>`
 surface retains only the outbound (worklet-to-main) ring's diagnostics. Its
 `overflowCount()` does not expose drops on the inbound (main-to-worklet) ring.
-For same-name input and output MIDI ports, the later declaration's diagnostics
-replace the earlier declaration's diagnostics on `node.midi.<name>`.
-These name collisions affect both the SAB and `postMessage` transports.
-Use distinct names for the two directions of events or MIDI ports to inspect
-both overflow counters. —
+Use distinct event names to inspect both directions' overflow counters. —
 [cite: packages/core/src/client.ts :: `existingEntry.emit = emit;`]
+
+MIDI input and output ports need distinct names for functional bidirectional
+access. With a shared name, the output replaces the entire `node.midi.<name>`
+surface, regardless of source declaration order: descriptors group all inputs
+before all outputs. The retained `send()` is a no-op and the exposed diagnostics
+belong to the output. Same-name MIDI declarations also reuse one name-keyed WASM
+ring; they are not independent bidirectional ports. These naming limitations
+apply to both SAB and `postMessage`. —
+[cite: packages/core/src/worklet.ts :: `const midiDecls = [`]
+[cite: packages/core/src/compile/layout.ts :: `midiRingSlots[decl.name] = {`]
 [cite: packages/core/src/client.ts :: `midiSurface[ring.name] = {`]
+[cite: packages/core/src/client.ts :: `if (disposed || ring.direction !== "in") return;`]
 
 Processors with no declared audio ports use one silent native output to satisfy
 Web Audio's constructor requirements. Their public `inputs` and `outputs` remain
@@ -932,6 +942,18 @@ the last rendered parameter sample. State and buffer restores require the
 saved element type and byte length to match the destination declaration; incompatible
 slots are skipped. This also applies to offline restore. Use a migration to convert
 values when changing a slot's type.
+
+Live restore validates slots before setting accepted native AudioParam values and
+committing persistent state. Scheduled automation and modulation connections remain
+active; restoring saved scalar values does not rewind an automation timeline.
+Overlapping restores and intervening snapshot or DevTools captures retain their
+request order. Suspended captures still use the parameter settings from invocation.
+A failure after native parameter assignment can leave those assignments in effect;
+restore does not provide transactional rollback. Native AudioParam scheduling still
+controls the exact sample at which a value takes effect. The ordering barrier does
+not guarantee zero stale samples at every suspension/resumption boundary; the
+observed native timing limitation is tracked in
+[issue #155](https://github.com/yuichkun/unworklet/issues/155).
 
 ### `inspect(blob)`
 

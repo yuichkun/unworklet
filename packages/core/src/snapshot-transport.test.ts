@@ -135,6 +135,30 @@ test("snapshot captures the persistent slot's live value from linear memory", as
   expect(decodeScalar("f32", slots[0]!.data)).toBeCloseTo(0.75);
 });
 
+test("restore preparation and barrier leave live state untouched until commit", async () => {
+  const proc = gainEcho();
+  const { wasm } = await compile(proc);
+  const self = makeMockSelf();
+  proc.worklet.initialize(self, { processorOptions: { wasm } });
+  const slots = [{ name: "gain", kind: "state", type: "f32", data: encodeScalar("f32", 0.75) }];
+  fireToWorklet(self, { kind: "restore-prepare", requestId: 1, slots });
+  expect(lastOfKind(self, "restore-prepared")).toMatchObject({
+    requestId: 1,
+    applied: ["gain"],
+    skipped: [],
+    missing: [],
+  });
+  fireToWorklet(self, { kind: "restore-barrier", requestId: 1 });
+  expect(lastOfKind(self, "restore-barrier-done")).toMatchObject({ requestId: 1 });
+  let q = quantum();
+  proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  expect(q.outputs[0]![0]![0]).toBe(0);
+  fireToWorklet(self, { kind: "restore", requestId: 1, slots });
+  q = quantum();
+  proc.worklet.process(self, q.inputs, q.outputs, q.parameters);
+  expect(q.outputs[0]![0]![0]).toBe(0.75);
+});
+
 test("restore reports an unknown slot name as skipped, not applied", async () => {
   const proc = gainEcho();
   const { wasm } = await compile(proc);
