@@ -43,6 +43,7 @@ type LoopbackOptions = {
   crossOriginIsolated: boolean;
   beforeRestoreDone?: () => void;
   queues?: RestoreQueues;
+  transferEgress?: boolean;
 };
 
 type PortListener = (e: { data: unknown }) => void;
@@ -51,7 +52,7 @@ type LoopbackHarness = {
   context: { sampleRate: number; audioWorklet: { addModule: (url: string) => Promise<void> } };
   workletSelf: {
     port: {
-      postMessage: (m: unknown) => void;
+      postMessage: (m: unknown, transfer?: Transferable[]) => void;
       addEventListener: (kind: string, fn: PortListener) => void;
       start: () => void;
     };
@@ -59,6 +60,7 @@ type LoopbackHarness = {
   /** processorOptions captured from the mock AudioWorkletNode constructor. */
   capturedProcessorOptions: () => Record<string, unknown>;
   renderedParams: Map<string, number>;
+  transferredEgressBuffers: ArrayBuffer[];
   /** True once the mock node exists and the client's port listener is attached. */
   readyToInitialize: () => boolean;
   /** Fire every rAF callback queued at entry (one main-thread drain pass). */
@@ -86,12 +88,24 @@ const installLoopback = (wasmBytes: Uint8Array, opts: LoopbackOptions): Loopback
   // (e.g. the egress pool seed sent during createNode, before initialize runs)
   // are queued and flushed on attach — mirroring real MessagePort semantics,
   // where messages buffer until the receiving side starts listening.
+  const transferredEgressBuffers: ArrayBuffer[] = [];
+  const transferEgress = (message: unknown, transfer?: Transferable[]): unknown => {
+    const data = message as { kind?: string; buffer?: ArrayBuffer };
+    if (
+      !opts.transferEgress ||
+      !["egress", "egress-buffer", "egress-recycle"].includes(data.kind ?? "")
+    )
+      return message;
+    transferredEgressBuffers.push(data.buffer!);
+    return structuredClone(message, { transfer: transfer ?? [] });
+  };
   const clientPortListeners: PortListener[] = [];
   const workletPortListeners: PortListener[] = [];
   const pendingToWorklet: unknown[] = [];
   const workletSelf: LoopbackHarness["workletSelf"] = {
     port: {
-      postMessage: (m: unknown) => {
+      postMessage: (m: unknown, transfer?: Transferable[]) => {
+        m = transferEgress(m, transfer);
         if ((m as { kind: string }).kind === "restore-done") opts.beforeRestoreDone?.();
         const deliver = () => {
           // oxlint-disable-next-line unicorn/no-useless-spread -- a listener (awaitReady) removes itself during dispatch
@@ -115,7 +129,8 @@ const installLoopback = (wasmBytes: Uint8Array, opts: LoopbackOptions): Loopback
   const readyToInitialize = (): boolean => captured !== null && clientPortListeners.length > 0;
   class LoopbackWorkletNode {
     port = {
-      postMessage: (m: unknown) => {
+      postMessage: (m: unknown, transfer?: Transferable[]) => {
+        m = transferEgress(m, transfer);
         if (workletPortListeners.length === 0) {
           pendingToWorklet.push(m);
           return;
@@ -215,6 +230,7 @@ const installLoopback = (wasmBytes: Uint8Array, opts: LoopbackOptions): Loopback
     context,
     workletSelf,
     renderedParams,
+    transferredEgressBuffers,
     capturedProcessorOptions: () => {
       if (captured === null) throw new Error("AudioWorkletNode not constructed yet");
       return captured;
@@ -510,6 +526,99 @@ const sequenceSurface = (session: LoopbackSession) =>
       }
     >
   ).tick!;
+
+for (const queued of [false, true]) {
+  test(`postMessage transfer ownership: retained event payloads survive recycling (queued=${queued})`, async () => {
+    const queues: RestoreQueues = { enabled: false, controls: [], replies: [], tasks: [] };
+    const session = await bootLoopback(makeSequenceProcessor(), {
+      crossOriginIsolated: false,
+      transferEgress: true,
+      queues,
+    });
+    const received: SequenceEvent[] = [];
+    const surface = sequenceSurface(session);
+    surface.on((value) => received.push(value));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    surface.on(() => {
+      throw new Error("subscriber failed");
+    });
+    queues.enabled = queued;
+    try {
+      for (let round = 0; round < 4; round++) {
+        for (let quantum = 0; quantum < 3; quantum++) session.runQuantum();
+        if (queued) {
+          expect(queues.replies).toHaveLength(3);
+          expect(received).toHaveLength(round * 3);
+          for (const deliver of queues.replies.splice(0)) deliver();
+          expect(queues.tasks).toHaveLength(3);
+          for (const deliver of queues.tasks.splice(0)) deliver();
+        }
+        expect(received).toHaveLength((round + 1) * 3);
+        for (let i = 0; i < received.length; i++) {
+          expect(received[i]!.n).toBe(i);
+          expect(Array.from(received[i]!.data)).toEqual([i, i + 100, i + 200, i + 300]);
+        }
+      }
+      expect(new Set(received.map((value) => value.data.buffer)).size).toBe(12);
+      expect(session.harness.transferredEgressBuffers).toHaveLength(3 + 12 * 2);
+      expect(
+        session.harness.transferredEgressBuffers.every((buffer) => buffer.byteLength === 0),
+      ).toBe(true);
+      expect(surface.diagnostics.overflowCount()).toBe(0);
+      expect(error).toHaveBeenCalledTimes(12);
+    } finally {
+      error.mockRestore();
+      queues.enabled = false;
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+
+  test(`postMessage transfer ownership: retained sysex payloads survive recycling (queued=${queued})`, async () => {
+    const queues: RestoreQueues = { enabled: false, controls: [], replies: [], tasks: [] };
+    const session = await bootLoopback(makeSysexEchoProcessor(), {
+      crossOriginIsolated: false,
+      transferEgress: true,
+      queues,
+    });
+    const received: Uint8Array[] = [];
+    session.node.midi.sout!.onEvent("sysex", (value) => received.push(value.data));
+    try {
+      for (let round = 0; round < 4; round++) {
+        for (let quantum = 0; quantum < 3; quantum++) {
+          queues.enabled = false;
+          session.node.midi.sin!.send({
+            type: "sysex",
+            data: Uint8Array.from([0xf0, round * 3 + quantum, 0xf7]),
+          });
+          queues.enabled = queued;
+          session.runQuantum();
+        }
+        if (queued) {
+          expect(queues.replies).toHaveLength(3);
+          expect(received).toHaveLength(round * 3);
+          for (const deliver of queues.replies.splice(0)) deliver();
+          expect(queues.tasks).toHaveLength(3);
+          for (const deliver of queues.tasks.splice(0)) deliver();
+        }
+        expect(received).toHaveLength((round + 1) * 3);
+        for (let i = 0; i < received.length; i++) {
+          expect(Array.from(received[i]!)).toEqual([0xf0, i, 0xf7]);
+        }
+      }
+      expect(new Set(received.map((value) => value.buffer)).size).toBe(12);
+      expect(session.harness.transferredEgressBuffers).toHaveLength(3 + 12 * 2);
+      expect(
+        session.harness.transferredEgressBuffers.every((buffer) => buffer.byteLength === 0),
+      ).toBe(true);
+      expect(session.node.midi.sout!.diagnostics.overflowCount()).toBe(0);
+    } finally {
+      queues.enabled = false;
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
+}
 
 for (const boundary of ["slots", "content"] as const) {
   test(`SAB snapshot: drain during ${boundary} publication never delivers an overwritten slot`, async () => {
