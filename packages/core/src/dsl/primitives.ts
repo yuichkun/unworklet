@@ -242,6 +242,9 @@ registerNodeMethod("mod", function (this: Node<"f32">, other: Node<"f32"> | numb
   return mod(this, other);
 });
 
+export function neg(x: number): Node<"f32">;
+export function neg<T extends NumericScalar>(x: Node<T>): Node<T>;
+export function neg<T extends NumericScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function neg<T extends NumericScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "neg", type: t, value: lift(x, t) });
@@ -387,6 +390,9 @@ registerNodeMethod(
 // `f32(intNode).sin()` is the explicit path). In the runtime registration, `this` is
 // typed as f32 at the type level (operandType reads the actual type, so f64 works too).
 type FloatScalar = "f32" | "f64";
+export function sin(x: number): Node<"f32">;
+export function sin<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function sin<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function sin<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "sin", type: t, value: lift(x, t) });
@@ -394,6 +400,9 @@ export function sin<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T>
 registerNodeMethod("sin", function (this: Node<"f32">): Node<"f32"> {
   return sin(this);
 });
+export function cos(x: number): Node<"f32">;
+export function cos<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function cos<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function cos<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "cos", type: t, value: lift(x, t) });
@@ -401,6 +410,9 @@ export function cos<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T>
 registerNodeMethod("cos", function (this: Node<"f32">): Node<"f32"> {
   return cos(this);
 });
+export function tan(x: number): Node<"f32">;
+export function tan<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function tan<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function tan<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "tan", type: t, value: lift(x, t) });
@@ -408,6 +420,9 @@ export function tan<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T>
 registerNodeMethod("tan", function (this: Node<"f32">): Node<"f32"> {
   return tan(this);
 });
+export function tanh(x: number): Node<"f32">;
+export function tanh<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function tanh<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function tanh<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "tanh", type: t, value: lift(x, t) });
@@ -415,6 +430,9 @@ export function tanh<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T
 registerNodeMethod("tanh", function (this: Node<"f32">): Node<"f32"> {
   return tanh(this);
 });
+export function exp(x: number): Node<"f32">;
+export function exp<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function exp<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function exp<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "exp", type: t, value: lift(x, t) });
@@ -422,6 +440,9 @@ export function exp<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T>
 registerNodeMethod("exp", function (this: Node<"f32">): Node<"f32"> {
   return exp(this);
 });
+export function log(x: number): Node<"f32">;
+export function log<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function log<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function log<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "log", type: t, value: lift(x, t) });
@@ -452,6 +473,9 @@ registerNodeMethod(
     return pow(this, exponent);
   },
 );
+export function sqrt(x: number): Node<"f32">;
+export function sqrt<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function sqrt<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function sqrt<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "sqrt", type: t, value: lift(x, t) });
@@ -460,6 +484,11 @@ registerNodeMethod("sqrt", function (this: Node<"f32">): Node<"f32"> {
   return sqrt(this);
 });
 // abs is valid for every numeric scalar (f32/f64/i32/i64). Integers emit as select(x<0,-x,x).
+export function abs(x: number): Node<"f32">;
+export function abs<T extends FloatScalar | "i32" | "i64">(x: Node<T>): Node<T>;
+export function abs<T extends FloatScalar | "i32" | "i64" = "f32">(
+  x: Node<T> | number,
+): Node<T> | Node<"f32">;
 export function abs<T extends FloatScalar | "i32" | "i64" = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "abs", type: t, value: lift(x, t) });
@@ -467,6 +496,9 @@ export function abs<T extends FloatScalar | "i32" | "i64" = "f32">(x: Node<T> | 
 registerNodeMethod("abs", function (this: Node<"f32">): Node<"f32"> {
   return abs(this);
 });
+export function floor(x: number): Node<"f32">;
+export function floor<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function floor<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function floor<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "floor", type: t, value: lift(x, t) });
@@ -474,6 +506,9 @@ export function floor<T extends FloatScalar = "f32">(x: Node<T> | number): Node<
 registerNodeMethod("floor", function (this: Node<"f32">): Node<"f32"> {
   return floor(this);
 });
+export function ceil(x: number): Node<"f32">;
+export function ceil<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function ceil<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function ceil<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "ceil", type: t, value: lift(x, t) });
@@ -481,6 +516,9 @@ export function ceil<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T
 registerNodeMethod("ceil", function (this: Node<"f32">): Node<"f32"> {
   return ceil(this);
 });
+export function frac(x: number): Node<"f32">;
+export function frac<T extends FloatScalar>(x: Node<T>): Node<T>;
+export function frac<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> | Node<"f32">;
 export function frac<T extends FloatScalar = "f32">(x: Node<T> | number): Node<T> {
   const t = operandType(x);
   return wrapAst<T>({ kind: "frac", type: t, value: lift(x, t) });

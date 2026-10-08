@@ -11,6 +11,7 @@ import { render } from "../__tests__/behavior/render.ts";
 import { defineProcessor } from "../processor.ts";
 import { vec4 } from "../simd.ts";
 import { SAMPLES_PER_BLOCK } from "./constants.ts";
+import { f32, i32 } from "./constructors.ts";
 import { audioOutput, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
 
@@ -904,3 +905,31 @@ test.each([
     }
   },
 );
+
+test("literal unary results use float division while explicitly typed integer operands use integer division", async () => {
+  const proc = defineProcessor(() => {
+    const out = audioOutput({ channels: 4, name: "main" });
+    const count = state.i32(0);
+    return {
+      process: () => {
+        forSample((i) => {
+          count.write(abs(i32(-7)));
+          out.ch(0).at(i).write(abs(-7).div(2));
+          out.ch(1).at(i).write(P.neg(7).div(2));
+          out
+            .ch(2)
+            .at(i)
+            .write(f32(count.read().div(2)));
+          out
+            .ch(3)
+            .at(i)
+            .write(f32(P.neg(i32(7)).div(2)));
+        });
+      },
+    };
+  });
+  const { outputs } = await render(proc);
+  for (const [channel, expected] of [3.5, -3.5, 3, -3].entries()) {
+    expect(Array.from(outputs.main![channel]!)).toEqual(Array(SAMPLES_PER_BLOCK).fill(expected));
+  }
+});
