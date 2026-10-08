@@ -25,7 +25,8 @@ import { expect, test, vi } from "vite-plus/test";
 
 import { createNode } from "./client.ts";
 import { compile } from "./compile/index.ts";
-import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { CAPACITY_16, CAPACITY_32, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { f32 } from "./dsl/constructors.ts";
 import { audioOutput, event, param, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { decodeScalar } from "./snapshot.ts";
@@ -1259,4 +1260,204 @@ for (const crossOriginIsolated of [true, false]) {
       }
     });
   }
+}
+
+// Per-ring FIFO oracles intentionally make no assertion about cross-ring callback order.
+const multiRingA = [
+  [
+    [2, 2, 2.5, -3],
+    [3, 3, 3.5, -4],
+    [4, 4, 4.5, -5],
+    [5, 5, 5.5, -6],
+    [6, 6, 6.5, -7],
+    [7, 7, 7.5, -8],
+    [8, 8, 8.5, -9],
+    [9, 9, 9.5, -10],
+    [10, 10, 10.5, -11],
+    [11, 11, 11.5, -12],
+    [12, 12, 12.5, -13],
+    [13, 13, 13.5, -14],
+    [14, 14, 14.5, -15],
+    [15, 15, 15.5, -16],
+    [16, 16, 16.5, -17],
+    [17, 17, 17.5, -18],
+  ],
+  [
+    [0, 100, 100.5, -101],
+    [1, 101, 101.5, -102],
+    [2, 102, 102.5, -103],
+  ],
+  [],
+  [],
+  [],
+  [
+    [0, 500, 500.5, -501],
+    [1, 501, 501.5, -502],
+  ],
+  [],
+];
+const multiRingB = [
+  [
+    [60, 1060, -1060, 0.25, 10],
+    [61, 1061, -1061, 0.25, 10],
+    [62, 1062, -1062, 0.25, 10],
+  ],
+  [],
+  [
+    [60, 1260, -1260, 0.25, 12],
+    [61, 1261, -1261, 0.25, 12],
+  ],
+  [
+    [63, 1363, -1363, 0.25, 13],
+    [64, 1364, -1364, 0.25, 13],
+    [65, 1365, -1365, 0.25, 13],
+    [66, 1366, -1366, 0.25, 13],
+    [67, 1367, -1367, 0.25, 13],
+    [68, 1368, -1368, 0.25, 13],
+    [69, 1369, -1369, 0.25, 13],
+    [70, 1370, -1370, 0.25, 13],
+    [71, 1371, -1371, 0.25, 13],
+    [72, 1372, -1372, 0.25, 13],
+    [73, 1373, -1373, 0.25, 13],
+    [74, 1374, -1374, 0.25, 13],
+    [75, 1375, -1375, 0.25, 13],
+    [76, 1376, -1376, 0.25, 13],
+    [77, 1377, -1377, 0.25, 13],
+    [78, 1378, -1378, 0.25, 13],
+    [79, 1379, -1379, 0.25, 13],
+    [80, 1380, -1380, 0.25, 13],
+    [81, 1381, -1381, 0.25, 13],
+    [82, 1382, -1382, 0.25, 13],
+    [83, 1383, -1383, 0.25, 13],
+    [84, 1384, -1384, 0.25, 13],
+    [85, 1385, -1385, 0.25, 13],
+    [86, 1386, -1386, 0.25, 13],
+    [87, 1387, -1387, 0.25, 13],
+    [88, 1388, -1388, 0.25, 13],
+    [89, 1389, -1389, 0.25, 13],
+    [90, 1390, -1390, 0.25, 13],
+    [91, 1391, -1391, 0.25, 13],
+    [92, 1392, -1392, 0.25, 13],
+    [93, 1393, -1393, 0.25, 13],
+    [94, 1394, -1394, 0.25, 13],
+  ],
+  [],
+  [
+    [60, 1560, -1560, 0.25, 15],
+    [61, 1561, -1561, 0.25, 15],
+    [62, 1562, -1562, 0.25, 15],
+  ],
+  [
+    [60, 1660, -1660, 0.25, 16],
+    [61, 1661, -1661, 0.25, 16],
+    [62, 1662, -1662, 0.25, 16],
+    [63, 1663, -1663, 0.25, 16],
+  ],
+];
+
+for (const transport of ["sab", "postMessage"] as const) {
+  test(`typed multi-ring FIFO (${transport}): sparse sections preserve content and consumed tails`, async () => {
+    const processor = defineProcessor(() => {
+      const quantum = state.i32(0);
+      const dataA = state.buffer.f32({ size: 2 });
+      const dataB = state.buffer.f32({ size: 3 });
+      const a = event<{ n: number; data: Float32Array }>({
+        to: "main",
+        name: "a",
+        capacity: CAPACITY_16,
+        payloadCapacity: 8,
+      });
+      const quiet = event<{ n: number }>({
+        to: "main",
+        name: "quiet",
+        capacity: CAPACITY_16,
+      });
+      const b = event<{ n: number; data: Float32Array }>({
+        to: "main",
+        name: "b",
+        capacity: CAPACITY_32,
+        payloadCapacity: 16,
+      });
+      return {
+        process: () => {
+          forSample((i) => {
+            const n = f32(quantum.read().mul(100).add(i));
+            dataA.write(0, n.add(0.5));
+            dataA.write(1, n.add(1).mul(-1));
+            dataB.write(0, n.add(1000).mul(-1));
+            dataB.write(1, 0.25);
+            dataB.write(2, f32(quantum.read().add(10)));
+            for (const [q, count] of [
+              [0, 18],
+              [1, 3],
+              [5, 2],
+            ] as const) {
+              a.emitIf(quantum.read().eq(q).and(i.lt(count)), { n, data: dataA, length: 2 });
+            }
+            quiet.emitIf(false, { n: -999 });
+            for (const [q, count] of [
+              [0, 3],
+              [2, 2],
+              [3, 35],
+              [5, 3],
+              [6, 4],
+            ] as const) {
+              b.emitIf(
+                quantum
+                  .read()
+                  .eq(q)
+                  .and(i.gte(60))
+                  .and(i.lt(60 + count)),
+                {
+                  n: n.add(1000),
+                  data: dataB,
+                  length: 3,
+                },
+              );
+            }
+          });
+          quantum.write(quantum.read().add(1));
+        },
+      };
+    });
+    const session = await bootLoopback(processor, { crossOriginIsolated: transport === "sab" });
+    const receivedA: unknown[] = [];
+    const receivedB: unknown[] = [];
+    const quietPackets: unknown[] = [];
+    const events = session.node.events;
+    events.a!.on((packet) => receivedA.push(packet));
+    events.b!.on((packet) => receivedB.push(packet));
+    events.quiet!.on((packet) => quietPackets.push(packet));
+    try {
+      // The quiet declaration must occupy index 1 even though it emits no section.
+      expect(processor.worklet.eventRings.map(({ name }) => name)).toEqual(["a", "quiet", "b"]);
+      for (let q = 0; q < 7; q++) {
+        session.runQuantum();
+        session.harness.pumpRaf();
+        expect(receivedA.splice(0), `A quantum ${q}`).toEqual(
+          multiRingA[q]!.map(([atSample, n, x, y]) => ({
+            atSample,
+            n,
+            data: new Float32Array([x!, y!]),
+          })),
+        );
+        expect(receivedB.splice(0), `B quantum ${q}`).toEqual(
+          multiRingB[q]!.map(([atSample, n, x, y, z]) => ({
+            atSample,
+            n,
+            data: new Float32Array([x!, y!, z!]),
+          })),
+        );
+        expect(quietPackets, `quiet quantum ${q}`).toEqual([]);
+        expect(events.a!.diagnostics.overflowCount()).toBe([2, 2, 2, 2, 2, 2, 2][q]);
+        expect(events.b!.diagnostics.overflowCount(), `B overflow quantum ${q}`).toBe(
+          [0, 0, 0, 3, 3, 3, 3][q],
+        );
+        expect(events.quiet!.diagnostics.overflowCount()).toBe(0);
+      }
+    } finally {
+      session.node.dispose();
+      session.harness.cleanup();
+    }
+  });
 }
