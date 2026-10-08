@@ -34,7 +34,17 @@ function isInstantiate(
   if (ts.isPropertyAccessExpression(expression)) {
     const receiverSymbol = checker.getSymbolAtLocation(unwrapValue(expression.expression));
     if (!receiverSymbol?.declarations?.some(ts.isNamespaceImport)) return false;
+    const module = checker.getAliasedSymbol(receiverSymbol);
+    const exported = checker
+      .getExportsOfModule(module)
+      .find((symbol) => symbol.name === expression.name.text);
+    if (exported === undefined) return false;
+    return (
+      (exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported) ===
+      canonical
+    );
   }
+  if (!ts.isIdentifier(expression)) return false;
   const binding = checker.getSymbolAtLocation(expression);
   if (binding === undefined) return false;
   const symbol = binding.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(binding) : binding;

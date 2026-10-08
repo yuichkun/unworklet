@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
 import { expect, test, vi } from "vite-plus/test";
 
 import { generateVirtualCode } from "../ide/virtualCode.ts";
@@ -341,5 +344,53 @@ process(() => {});`;
     const code = emit(source);
     expect(code).toContain("(sg, f32(2))");
     expect(code).toContain("(sg, 3)");
+  });
+}
+
+for (const mode of ["runtime", "virtual"]) {
+  test(`${mode}: asserted namespace types cannot replace the receiver module's exports`, () => {
+    const root = mkdtempSync(path.join(import.meta.dirname, "../../.instantiate-binding-"));
+    try {
+      writeFileSync(
+        path.join(root, "forward.ts"),
+        'export { instantiate } from "@unworklet/core";',
+      );
+      writeFileSync(
+        path.join(root, "fake.ts"),
+        "export const instantiate = (_graph: unknown, value: unknown) => value;",
+      );
+      writeFileSync(
+        path.join(root, "typed.ts"),
+        'import { instantiate as coreInstantiate } from "@unworklet/core"; export const instantiate = ((_graph: unknown, value: unknown) => value) as typeof coreInstantiate;',
+      );
+      const source = `import * as core from "@unworklet/core";
+import * as forwarded from "./forward.ts";
+import * as fake from "./fake.ts";
+import * as typed from "./typed.ts";
+const sg = defineSubgraph((a: Node<"f32">) => ({}));
+const a = (core as unknown as typeof core).instantiate(sg, 1);
+const b = (forwarded as unknown as typeof core).instantiate(sg, 2);
+const c = (fake as unknown as typeof core).instantiate(sg, 3);
+const d = typed.instantiate(sg, 4);
+const e = (typed as unknown as typeof core).instantiate(sg, 5);
+const f = (core as { instantiate: typeof core.instantiate }).instantiate(sg, 6);
+const g = (fake as unknown as { instantiate: typeof core.instantiate }).instantiate(sg, 7);
+process(() => {});`;
+      const snapshot = programs.emptySnapshot();
+      const runtime = lower(source, {
+        sourcePath: path.join(root, "main.uwk.ts"),
+        captureInto: snapshot,
+      });
+      const code = mode === "runtime" ? runtime : generateVirtualCode(source, { snapshot }).code;
+      expect(code).toContain(".instantiate(sg, f32(1))");
+      expect(code).toContain(".instantiate(sg, f32(2))");
+      expect(code).toContain(".instantiate(sg, 3)");
+      expect(code).toContain(".instantiate(sg, 4)");
+      expect(code).toContain(".instantiate(sg, 5)");
+      expect(code).toContain(".instantiate(sg, f32(6))");
+      expect(code).toContain(".instantiate(sg, 7)");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 }

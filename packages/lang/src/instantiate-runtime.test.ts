@@ -237,3 +237,44 @@ export const gain = defineSubgraph((value: Node<"f32">) => ({ tick: () => value.
     }
   },
 );
+
+test("loadUwkProcessor proves real namespace exports despite asserted core types", async () => {
+  const root = mkdtempSync(path.join(import.meta.dirname, "../.instantiate-runtime-"));
+  try {
+    writeFileSync(path.join(root, "forward.ts"), 'export { instantiate } from "@unworklet/core";');
+    const body = `(_graph: unknown, value: number) => {
+  if (typeof value !== "number") throw new Error("custom namespace received a Node");
+  return { tick: () => f32(value) };
+}`;
+    writeFileSync(
+      path.join(root, "fake.ts"),
+      `import { f32 } from "@unworklet/core"; export const instantiate = ${body};`,
+    );
+    writeFileSync(
+      path.join(root, "typed.ts"),
+      `import { f32, instantiate as coreInstantiate } from "@unworklet/core"; export const instantiate = (${body}) as typeof coreInstantiate;`,
+    );
+    const file = path.join(root, "main.uwk.ts");
+    writeFileSync(
+      file,
+      mono(
+        `import * as core from "@unworklet/core";
+import * as forwarded from "./forward.ts";
+import * as fake from "./fake.ts";
+import * as typed from "./typed.ts";
+const graph = defineSubgraph((value: Node<"f32">) => ({ tick: () => value.add(1) }));
+const a = (core as unknown as typeof core).instantiate(graph, 1);
+const b = (forwarded as unknown as typeof core).instantiate(graph, 2);
+const c = (fake as unknown as typeof core).instantiate(graph, 3);
+const d = typed.instantiate(graph, 4);
+const e = (typed as unknown as typeof core).instantiate(graph, 5);
+const f = (core as { instantiate: typeof core.instantiate }).instantiate(graph, 6);
+const g = (fake as unknown as { instantiate: typeof core.instantiate }).instantiate(graph, 7);`,
+        "a.tick().add(b.tick()).add(c.tick()).add(d.tick()).add(e.tick()).add(f.tick()).add(g.tick())",
+      ),
+    );
+    await expectSamples(await loadUwkProcessor(file), 31);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
