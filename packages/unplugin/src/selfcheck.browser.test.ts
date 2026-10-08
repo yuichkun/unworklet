@@ -94,13 +94,14 @@ function instrumentWorklet(): Plugin {
 }
 
 test.each([
-  { command: "serve", delivery: "source" },
-  { command: "build", delivery: "source" },
-  { command: "serve", delivery: "packed" },
-  { command: "build", delivery: "packed" },
+  { command: "serve", delivery: "source", optimization: "direct" },
+  { command: "build", delivery: "source", optimization: "direct" },
+  { command: "serve", delivery: "packed", optimization: "direct" },
+  { command: "serve", delivery: "packed", optimization: "prebundle" },
+  { command: "build", delivery: "packed", optimization: "direct" },
 ] as const)(
-  "real Vite $command $delivery worklet applies the self-check gate in its own realm",
-  async ({ command, delivery }) => {
+  "real Vite $command $delivery $optimization worklet applies the self-check gate in its own realm",
+  async ({ command, delivery, optimization }) => {
     const installed = process.env.UWK_SELFCHECK_CONSUMER_ROOT;
     const root = await mkdtemp(path.join(installed ?? tmpdir(), "unworklet-selfcheck-"));
     let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -182,6 +183,15 @@ test.each([
         },
         preview: { host: "127.0.0.1", port: 0 },
         ssr: { noExternal: [/^@unworklet\//] },
+        build: { target: "esnext" },
+        optimizeDeps: {
+          // The dynamic addModule import must be in the initial optimizer graph;
+          // otherwise Vite reloads the page while the observation is in flight.
+          ...(optimization === "prebundle"
+            ? { include: ["@unworklet/core", "@unworklet/core/worklet"] }
+            : { exclude: ["@unworklet/core", "@unworklet/core/worklet"] }),
+          esbuildOptions: { target: "esnext" },
+        },
       };
       const vite: Pick<typeof import("vite-plus"), "build" | "createServer" | "preview"> = process
         .env.UWK_SELFCHECK_VITE_MODULE
