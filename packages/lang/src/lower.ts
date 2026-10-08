@@ -15,6 +15,7 @@ import ts from "typescript";
 
 import { authoredBindingNames, collectBindingNames } from "./bindings.ts";
 import { createAutoNameDeclaration } from "./passes/autoName.ts";
+import { instantiateArgumentConstructors } from "./passes/instantiate.ts";
 import { sugarTransformer } from "./passes/sugar.ts";
 import { buildProgram, type FsSnapshot } from "./program.ts";
 
@@ -536,15 +537,17 @@ export function lower(source: string, options: LowerOptions = {}): string {
   // Build the type-directed program, then run the sugar passes (their type
   // queries hit the pristine source). The remaining split / wrap / ambient logic
   // operates on the desugared statements.
-  const { program, checker, sourceFile } = buildProgram(source, {
+  const built = buildProgram(source, {
     snapshot: options.snapshot,
     record: options.captureInto,
     sourcePath: options.sourcePath,
   });
+  const { program, checker, sourceFile } = built;
+  const constructors = instantiateArgumentConstructors(built);
   const autoNameDeclaration = createAutoNameDeclaration(program, coreModule);
   const generatedAliases = new Map<string, ts.Identifier>();
   const sf = ts.transform(sourceFile, [
-    sugarTransformer(checker),
+    sugarTransformer(checker, constructors),
     generatedHelperBindings(checker, sourceFile, generatedAliases),
   ]).transformed[0] as ts.SourceFile;
 

@@ -692,12 +692,67 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
   `defineSubgraph` body, before the returned `process` / method record);
   instantiating inside `forSample` / `everyNSamples` / a handler throws
   (`scope-violation`). Each instance gets independent internal state. — [cite: packages/core/src/processor.ts :: `if (ctx.currentLoopBody !== null) {`]
-- A `Node<"f32">` arg also accepts a bare `number` (and a `Node<"bool">` arg a
-  `boolean`); the type widening lives in the runtime `LiftArg<A>` union at
-  [cite: packages/core/src/processor.ts :: `type LiftArg<A> =`] — no sugar pass rewrites `instantiate`
-  args, the literal just satisfies the widened signature and any downstream
-  primitive (`mul` / `add` / …) lifts it in place. A plain-`number` config arg
-  is not lifted.
+- In `.uwk.ts`, a statically known `number` argument is constructed with `f32`,
+  `f64`, or `i32` when the subgraph's original argument slot declares exactly that
+  `Node` scalar. A statically known `boolean` is constructed with `bool` for a
+  `Node<"bool">` slot. This applies to expressions as well as literals; each
+  expression is evaluated once. Method bodies and Node pass-through returns
+  receive the same Nodes as an explicit constructor call. Runtime lowering and
+  editor/CLI virtual code share these constructor decisions. — [cite: packages/lang/src/passes/instantiate.ts :: `export function instantiateArgumentConstructors(`]
+- The recognized calls are the ambient `instantiate`, named imports (including
+  imported aliases), and direct namespace property calls such as
+  `core.instantiate(...)` resolving to core's actual export. Runtime-transparent parentheses, non-null assertions,
+  `as` / type assertions, `satisfies`, and explicit callee type instantiation preserve
+  this binding check. Custom functions/objects, local or assigned aliases, and
+  computed-property, conditional, or comma-expression callees are left unchanged.
+  Cross-file subgraphs retain their declared argument types. Metadata intersections,
+  interface inheritance, and readonly wrappers retain the original Args through
+  core's unique subgraph brand; conflicting argument witnesses stay explicit.
+- Construction happens before the subgraph body runs, so arithmetic uses the
+  declared scalar even when every supplied value is primitive. With a
+  `Node<"f64">` coefficient of `1e8`, `(coef + 1) - coef` evaluates to `1`.
+  With a `Node<"i32">` coefficient of `1.75`, `coef + 1` evaluates to `2`, using
+  the constructor's truncation. Choose `Node<"f32">` for f32 arithmetic and
+  fractional values; `f32(coef)` inside an f64 body explicitly converts that
+  value to f32. Converting an i32 value afterward cannot recover a fraction
+  discarded during argument construction.
+- Existing Nodes, plain primitive/config arguments, and declared primitive
+  alternatives such as `Node<"f32"> | number` stay unchanged. Optional slots can
+  construct a supplied primitive; omitted or `undefined` arguments stay unchanged.
+  Ordinary trailing rest slots are supported, and trailing `{ name }` options
+  keep core's existing interpretation.
+- This construction is deliberately partial. Use explicit constructors for
+  `i64`, SIMD, ambiguous scalar targets, generic/unknown targets, nullable or
+  Node-or-primitive argument expressions, and argument positions at or after a
+  spread. A tuple with a nonterminal rest or unresolved variadic portion is left
+  unchanged. The lowering does not select a scalar from a runtime value or
+  recursively construct properties inside config objects.
+- Raw-core calls still pass arguments through unchanged. The public
+  `LiftArg<A>` signature accepts primitives more broadly than the cases above;
+  accepted types alone do not guarantee construction. Pass explicit Nodes, for
+  example `instantiate(sg, f32(0.5))`, in raw core and any unsupported lowering
+  case. Otherwise method-form calls or Node pass-through use can fail at capture.
+  — [cite: packages/core/src/processor.ts :: `type LiftArg<A> =`] [cite: packages/core/src/processor.ts :: `methods = body(...(args as Args));`]
+  For `.uwk.ts` code that deliberately needs f32 arithmetic, keep the formal
+  parameter and conversion consistent. The first declaration retains an f64 input
+  and converts inside the body; the second uses a floating-point formal so a
+  fractional input is preserved:
+
+```ts
+const f32Arithmetic = defineSubgraph((coef: Node<"f64">) => ({
+  tick: () => f32(coef) + 1 - f32(coef),
+}));
+const fractional = defineSubgraph((coef: Node<"f32">) => ({
+  tick: () => coef + 1,
+}));
+```
+
+In processor declaration scope, `instantiate(f32Arithmetic, 1e8)` produces an
+instance whose `tick()` returns `0`; `instantiate(fractional, 1.75)` returns
+`2.75` from `tick()`. Passing `f32(...)` into an unchanged `Node<"f64">` or
+`Node<"i32">` formal is a type error; changing the caller's constructor alone
+is not that migration.
+
 - An instance with a named / persistent / published internal slot **must** be
   given an explicit `{ name }` (snapshot-path stability). — [cite: packages/core/src/processor.ts :: `if (instanceName === undefined) {`]
 

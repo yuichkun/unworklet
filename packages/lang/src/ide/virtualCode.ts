@@ -35,6 +35,7 @@ import { authoredBindingNames } from "../bindings.ts";
 import { argIsInjectable, calledMethod, optionsHaveName, rootCallee } from "../passes/autoName.ts";
 import { classify, isDspExpr, isSugarBinaryOperator } from "../classify.ts";
 import { readsAsBareState } from "../passes/bareState.ts";
+import { instantiateArgumentConstructors } from "../passes/instantiate.ts";
 import { detectEmits } from "../passes/ifSugar.ts";
 import { BINARY_FN, NEGATED_EQ } from "../passes/operators.ts";
 import { prevSlotScalars } from "../passes/prev.ts";
@@ -203,7 +204,9 @@ export function generateVirtualCode(
   source: string,
   options: GenerateOptions = {},
 ): VirtualCodeResult {
-  const { checker, sourceFile } = buildProgram(source, { snapshot: options.snapshot });
+  const built = buildProgram(source, { snapshot: options.snapshot });
+  const { checker, sourceFile } = built;
+  const constructors = instantiateArgumentConstructors(built);
   const text = sourceFile.text;
   const b = new Builder();
   b.raw(MODULE_PREFIX);
@@ -273,6 +276,15 @@ export function generateVirtualCode(
   /** Try to emit `node` as a sugar rewrite; return false if it is not sugar. The
    * cursor is left at `node.getEnd()` on success. */
   const tryEmitSugar = (node: ts.Node): boolean => {
+    const constructor = ts.isExpression(node) ? constructors.get(node) : undefined;
+    if (constructor !== undefined && ts.isExpression(node)) {
+      flushTo(node.getStart(sourceFile));
+      b.synth(`${helper(constructor)}(`, node.getStart(sourceFile));
+      ts.forEachChild(node, walk);
+      flushTo(node.getEnd());
+      b.synth(")", node.getEnd());
+      return true;
+    }
     // Guarded emit: `port.emit(payload)` inside a DSP-guarded `if` (no else) lowers
     // to `port.emitIf(cond, payload)`; the worklet EventDecl exposes only `emitIf`,
     // so a verbatim `emit` is a bogus "Property 'emit' does not exist". Rewrite the

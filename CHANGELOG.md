@@ -11,6 +11,18 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Breaking
 
+- **Primitive `.uwk.ts` subgraph arguments use their declared scalar before the
+  subgraph body runs.** Some already-rendering operator-only bodies therefore
+  produce different audio: with a `Node<"f64">` coefficient of `1e8`,
+  `(coef + 1) - coef` produces `1` rather than the previous `0`; with a
+  `Node<"i32">` coefficient of `1.75`, `coef + 1` produces `2` rather than `2.75`.
+  Review intended precision and integer truncation. Use `Node<"f32">` parameters
+  when f32 arithmetic is intended; an explicit `f32(coef)` inside an f64 body
+  preserves f32 arithmetic for that converted value. Keep fractional arguments
+  in a floating-point slot rather than an i32 slot. This behavior change requires
+  the next minor release under the pre-1.0 compatibility policy. Raw-core
+  signatures and runtime argument forwarding are unchanged.
+
 - **The `.expose(options)` preservation bug fix restores core validation for
   non-literal options.** For example, variable options with
   `publish: { rateFps: 0 }`, buffer `publish`, or whole `null` / `undefined`
@@ -21,6 +33,14 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   release under the pre-1.0 compatibility policy.
 
 ### Fixed
+
+- `.uwk.ts` constructs primitive `instantiate` arguments for unambiguous declared
+  `f32`, `f64`, `i32`, and `bool` Node slots, including method-form and pass-through
+  subgraphs. Runtime and editor/CLI lowering agree; primitive/config alternatives,
+  existing Nodes, omitted/undefined arguments, and trailing options remain
+  unchanged. This is a partial repair related to #34: raw-core signatures/runtime,
+  i64/SIMD, ambiguous/generic targets and unresolved spread positions still require
+  explicit construction.
 
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,
   snapshot policies, and scalar publishing. Nameless options retain the binding

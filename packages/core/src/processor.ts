@@ -118,8 +118,10 @@ export type CreateSubgraphOptions = {
  * One subgraph lambda arg, widened to also accept the raw primitive that lifts
  * to its `Node` type: a `Node<"f32">` / numeric-Node arg also accepts a bare
  * `number`, a `Node<"bool">` arg also accepts a `boolean`. This is what lets the
- * `.uwk.ts` sugar write `instantiate(onepole, 0.2)` (the lowering wraps the bare
- * `0.2` into `f32(0.2)` before it reaches the runtime). A non-`Node` arg — e.g.
+ * `.uwk.ts` sugar write `instantiate(onepole, 0.2)`. Its lowering constructs
+ * statically known primitives for unambiguous f32/f64/i32/bool Node slots;
+ * unsupported cases and raw-core callers need explicit constructors.
+ * A non-`Node` arg — e.g.
  * a plain-number config like `defineSubgraph((sr: number) => ...)` — is left
  * exactly as declared, so it is NOT widened and is NOT lifted at runtime.
  */
@@ -157,8 +159,8 @@ export function instantiate<Args extends unknown[], Methods>(
   // options object. A wrong type, a wrong arity, or a non-liftable value is a
   // compile error — the prior `...rest: unknown[]` accepted anything. There is
   // no runtime lift: a `Node` arg is either an explicit `Node` (raw core) or a
-  // sugar literal the lowering already wrapped; a plain-number arg stays a
-  // plain number.
+  // supported primitive expression the lowering constructed; a plain-number
+  // config arg stays a plain number.
   ...rest: [...LiftArgs<Args>, CreateSubgraphOptions?]
 ): Methods {
   const body = (subgraph as unknown as Record<symbol, ((...a: Args) => Methods) | undefined>)[

@@ -14,9 +14,20 @@ import { tryIndex } from "./index.ts";
 import { tryOperator } from "./operators.ts";
 import { tryPrev } from "./prev.ts";
 
-export function sugarTransformer(checker: ts.TypeChecker): ts.TransformerFactory<ts.SourceFile> {
+export function sugarTransformer(
+  checker: ts.TypeChecker,
+  constructors: ReadonlyMap<ts.Expression, string>,
+): ts.TransformerFactory<ts.SourceFile> {
   return (context) => {
     const visit: ts.Visitor = (node) => {
+      const constructor = ts.isExpression(node) ? constructors.get(node) : undefined;
+      if (constructor !== undefined && ts.isExpression(node)) {
+        return ts.factory.createCallExpression(
+          ts.factory.createIdentifier(constructor),
+          undefined,
+          [ts.visitEachChild(node, visit, context) as ts.Expression],
+        );
+      }
       const prev = tryPrev(checker, node, visit, context);
       if (prev !== undefined) return prev;
       const guarded = tryIfSugar(checker, node, visit);
