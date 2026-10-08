@@ -1390,16 +1390,10 @@ export async function createNode<C>(
   const paramDescriptors = ns.parameterDescriptors as readonly { name: string }[];
   const params = buildParams(node, paramDescriptors);
 
-  // Long-lived error forwarder = installed AFTER awaitReady's init-time
-  // listeners are removed so the runtime error path (= worklet `{ kind:
-  // "error", ... }` messages + `processorerror` event) keeps flowing to
-  // `onError(handler)` subscribers for the node's lifetime. docs/05-client.md
-  // §2 declares `onError` as the discriminated-union surface for 4 codes
-  // (`wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch`).
-  // Phase 6 wires the forwarder skeleton — only `block-length-mismatch` (= from
-  // `worklet.ts` runtime guard) and `wasm-trap` (= from `processorerror`) are
-  // posted at this stage. `queue-overflow` / `sab-unavailable` plumbing lands when
-  // the matching transports ship (= 02-messaging.md / 04-worklet-runtime.md §8).
+  // Install after awaitReady removes its init-time listeners so runtime errors
+  // keep reaching subscribers for the node's lifetime. SAB fallback is reported
+  // once to the first subscriber by onError below. Queue overflow is not emitted
+  // as an error event; available counters are exposed through port diagnostics.
   const errorSubscribers = new Set<(event: NodeErrorEvent) => void>();
   const dispatchError = (event: NodeErrorEvent): void => {
     for (const fn of errorSubscribers) {
@@ -1411,7 +1405,7 @@ export async function createNode<C>(
     }
   };
   /**
-   * Set of `NodeErrorEvent.code` values the runtime posts. Used
+   * Set of accepted `NodeErrorEvent.code` values, including reserved codes. Used
    * to drop unknown / malformed `{ kind: "error", ... }` messages instead
    * of forwarding their raw shape to subscribers as if they were typed
    * `NodeErrorEvent`s (= prevents the structured-union contract from
