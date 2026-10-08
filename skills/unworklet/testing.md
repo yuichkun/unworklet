@@ -381,7 +381,10 @@ self-check violation. This diagnoses those header invariants; it does not prove
 all DSP values finite, every memory access safe, or real-time deadlines met.
 
 The dev replacement is confined to the core runtime's free self-check identifier;
-it does not set an AudioWorklet realm global. The Vite production build sets the
+it does not set an AudioWorklet realm global. Dependency prebundling receives the
+same flag through the optimizer’s compiler define, so it does not rely on the
+page realm either. Other defines and string-embedded Blob source are unchanged.
+The Vite production build sets the
 gate false. The browser regression verifies an actual emitted worklet bundle with
 the checker removed and no diagnostic for the same injected malformed header,
 including when a realm global is true. These guarantees concern the Vite plugin

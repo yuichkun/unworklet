@@ -43,7 +43,7 @@ import {
 } from "@unworklet/lang";
 import { createUnplugin, type UnpluginOptions } from "unplugin";
 import type { Plugin } from "vite";
-import { createServer } from "vite-plus";
+import { createServer, version as viteVersion } from "vite-plus";
 
 import { workletsDts } from "@unworklet/lang";
 
@@ -210,7 +210,7 @@ declare module "@vitejs/devtools-kit" {
 }
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
-import { defineDevSelfcheck } from "./selfcheck-define.ts";
+import { defineDevSelfcheck, selfcheckOptimizerOptions } from "./selfcheck-define.ts";
 
 /**
  * Suffix appended to the processor export name to derive the
@@ -860,7 +860,12 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
         // `false` in build so production tree-shakes every self-check call.
         __UNWORKLET_SELFCHECK__: env.command === "serve" ? "true" : "false",
       };
-      if (!crossOriginIsolation) return { define };
+      // Optimized dependencies bypass transform hooks and do not inherit define.
+      const gates =
+        env.command === "serve"
+          ? { define, optimizeDeps: selfcheckOptimizerOptions(viteVersion) }
+          : { define };
+      if (!crossOriginIsolation) return gates;
       // `SharedArrayBuffer` needs a cross-origin-isolated page. `credentialless`
       // is the least-breaking isolation level (cross-origin subresources still
       // load, without credentials). Both the dev server and `vite preview` get the
@@ -878,8 +883,8 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
         headers["Cross-Origin-Embedder-Policy"] = "credentialless";
       }
       return Object.keys(headers).length > 0
-        ? { define, server: { headers }, preview: { headers } }
-        : { define };
+        ? { ...gates, server: { headers }, preview: { headers } }
+        : gates;
     },
     configResolved(config) {
       isServe = config.command === "serve";

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 import MagicString from "magic-string";
 import ts from "typescript";
+import type { UserConfig } from "vite-plus";
 
 const flag = "__UNWORKLET_SELFCHECK__";
 
@@ -74,4 +75,13 @@ export function defineDevSelfcheck(code: string, id: string) {
     code: edits.toString(),
     map: edits.generateMap({ source: file, includeContent: true, hires: true }),
   };
+}
+
+export function selfcheckOptimizerOptions(
+  version: string,
+): NonNullable<UserConfig["optimizeDeps"]> {
+  const define = { __UNWORKLET_SELFCHECK__: "true" };
+  return Number(version.split(".")[0]) >= 8
+    ? { rolldownOptions: { transform: { define } } }
+    : { esbuildOptions: { define } };
 }

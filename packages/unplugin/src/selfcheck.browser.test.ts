@@ -26,6 +26,8 @@ export const probe = defineProcessor(() => {
 const appSource = `
 import { createNode } from "@unworklet/core";
 import processor from "./probe.processor.mjs?worklet";
+import { controls } from "selfcheck-controls";
+globalThis.optimizerControls = await controls();
 globalThis.runSelfcheck = async (corrupt, flag) => {
   globalThis.selfcheckProgress = "creating node";
   const context = new OfflineAudioContext(1, 128, 48000);
@@ -169,6 +171,27 @@ test.each([
         path.join(root, "index.html"),
         '<script type="module" src="/main.mjs"></script>',
       );
+      const controls = path.join(root, "node_modules/selfcheck-controls");
+      await mkdir(controls);
+      await writeFile(
+        path.join(controls, "package.json"),
+        JSON.stringify({ name: "selfcheck-controls", type: "module", exports: "./index.js" }),
+      );
+      await writeFile(
+        path.join(controls, "index.js"),
+        `
+export async function controls() {
+  const __UNWORKLET_SELFCHECK__ = false;
+  const object = { __UNWORKLET_SELFCHECK__: "unchanged" };
+  return {
+    other: __SELFCHECK_TEST_OTHER__,
+    shadowed: __UNWORKLET_SELFCHECK__,
+    property: object.__UNWORKLET_SELFCHECK__,
+    text: "__UNWORKLET_SELFCHECK__",
+    blob: await new Blob(["__UNWORKLET_SELFCHECK__"]).text(),
+  };
+}`,
+      );
       await writeFile(path.join(root, "main.mjs"), appSource);
       await writeFile(path.join(root, "probe.processor.mjs"), processorSource);
       const config = {
@@ -184,13 +207,18 @@ test.each([
         preview: { host: "127.0.0.1", port: 0 },
         ssr: { noExternal: [/^@unworklet\//] },
         build: { target: "esnext" },
+        define: command === "build" ? { __SELFCHECK_TEST_OTHER__: "23" } : {},
         optimizeDeps: {
           // The dynamic addModule import must be in the initial optimizer graph;
           // otherwise Vite reloads the page while the observation is in flight.
           ...(optimization === "prebundle"
-            ? { include: ["@unworklet/core", "@unworklet/core/worklet"] }
-            : { exclude: ["@unworklet/core", "@unworklet/core/worklet"] }),
-          esbuildOptions: { target: "esnext" },
+            ? { include: ["selfcheck-controls", "@unworklet/core", "@unworklet/core/worklet"] }
+            : {
+                include: ["selfcheck-controls"],
+                exclude: ["@unworklet/core", "@unworklet/core/worklet"],
+              }),
+          esbuildOptions: { target: "esnext", define: { __SELFCHECK_TEST_OTHER__: "23" } },
+          rolldownOptions: { transform: { define: { __SELFCHECK_TEST_OTHER__: "23" } } },
         },
       };
       const vite: Pick<typeof import("vite-plus"), "build" | "createServer" | "preview"> = process
@@ -246,6 +274,13 @@ test.each([
       });
       await page.goto(url);
       await page.waitForFunction("typeof globalThis.runSelfcheck === 'function'");
+      expect(await page.evaluate("globalThis.optimizerControls")).toEqual({
+        other: 23,
+        shadowed: false,
+        property: "unchanged",
+        text: "__UNWORKLET_SELFCHECK__",
+        blob: "__UNWORKLET_SELFCHECK__",
+      });
       for (const [corrupt, flag] of [false, true].flatMap((corrupt) =>
         [null, false, true].map((flag) => [corrupt, flag]),
       )) {
