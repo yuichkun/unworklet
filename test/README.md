@@ -58,6 +58,24 @@ reject a one-bit PCM error, a missing/reordered/mistimed/corrupted event, a chan
 state scalar and a changed byte beyond the snapshot preview. The existing saw
 range/reference and repeated-render checks remain separate witnesses.
 
+`native-rate.test.ts` adds a bounded manual-public-delivery case on an actual
+44100 Hz `OfflineAudioContext`, whose native rate is asserted. The test-only Vite
+adapter calls `compile(processor, { sampleRate: 44100 })`, extracts metadata from
+the recaptured compilation graph, and serves the real generated import-runtime
+entry through Vite's module pipeline alongside its compiled WASM asset. The
+public namespace preserves the honest baked rate. Declarations are independent
+of sample rate; neither `?worklet` nor `compileSource` gains a rate option.
+
+Both transport projects compare four quanta of the i32 sample clock's PCM,
+complete ordered events and every persistent snapshot byte with `renderOffline`.
+Independent expectations use `Math.fround((n + 1) * Math.fround(1 / 44100))`,
+exact counters and f32 state bytes. Event `atSample` stays block-local at 127;
+a separate block counter establishes global order. Independently calculated
+48000-rate PCM must differ, and an honest existing 48000 `?worklet` artifact must
+still fail on the real 44100 context before module or WASM loading. Existing
+mocked rate-guard tests remain separate coverage. This slice establishes manual
+public delivery at one additional native rate, not arbitrary-rate bundler support.
+
 This is a bounded renderer/transport comparison using shared compiler code, not
 an independent compiler proof. It covers static params and audio inputs, not all
 processors, scheduled messages/MIDI, automation, snapshot restore/migration,
