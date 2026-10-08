@@ -1,0 +1,44 @@
+name: Unplugin worklet compatibility
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  selfcheck:
+    name: Packed self-check (Vite ${{ matrix.vite }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        vite: [6.4.3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version: "24"
+          cache: true
+      - run: vp install --frozen-lockfile
+      - run: vp run build
+      - name: Prepare an isolated consumer Vite
+        env:
+          VITE_VERSION: ${{ matrix.vite }}
+        run: |
+          fixture="$RUNNER_TEMP/unworklet-vite-consumer"
+          mkdir -p "$fixture"
+          for package in core lang unplugin; do
+            (cd "packages/$package" && vp pm pack --pack-destination "$fixture")
+          done
+          FIXTURE="$fixture" vp exec node --input-type=module -e 'import { readdirSync, writeFileSync } from "node:fs"; const dependencies = { vite: process.env.VITE_VERSION }; for (const name of ["core", "lang", "unplugin"]) dependencies[`@unworklet/${name}`] = `file:${readdirSync(process.env.FIXTURE).find(file => file.startsWith(`unworklet-${name}-`) && file.endsWith(".tgz"))}`; writeFileSync(`${process.env.FIXTURE}/package.json`, JSON.stringify({ private:true, type:"module", packageManager:"pnpm@11.3.0", dependencies }));'
+          printf 'allowBuilds:\n  esbuild: true\n' > "$fixture/pnpm-workspace.yaml"
+          cd "$fixture"
+          vp install
+          vp exec node --input-type=module -e 'import { writeFileSync } from "node:fs"; import { createRequire } from "node:module"; import { version } from "vite"; import { strict as assert } from "node:assert"; assert.equal(version, process.env.VITE_VERSION); const pluginRequire = createRequire(import.meta.resolve("@unworklet/unplugin"));  console.log(`Baseline consumer Vite ${version}`); writeFileSync(process.env.GITHUB_ENV, `UWK_SELFCHECK_VITE_MODULE=${import.meta.resolve("vite")}\nUWK_SELFCHECK_CONSUMER_ROOT=${process.cwd()}\n`, {flag:"a"});'
+      - name: Install browser
+        working-directory: packages/unplugin
+        run: vp exec playwright install --with-deps chromium
+      - name: Exercise packed dev and production worklets
+        working-directory: packages/unplugin
+        run: vp test run --config vite.integration.config.ts selfcheck.browser -t 'build.*packed'
