@@ -170,3 +170,91 @@ test("restore preserves scheduled steps, a-rate ramps and connected modulation w
     modulation.disconnect();
   }
 });
+
+for (const frame of [57600, 57728, 57856]) {
+  test(`characterize native restore at controlled frame ${frame} without asserting a fix`, async () => {
+    const sampleRate = 48000;
+    const ctx = new OfflineAudioContext(1, frame + 384, sampleRate);
+    const node = await createNode(ctx, frozenCounter);
+    node.outputs.main!.connect(ctx.destination);
+    const observations: Array<Record<string, unknown>> = [];
+    const observe = (phase: string, requestedFrame: number, slots: unknown): void => {
+      const currentTime = ctx.currentTime;
+      observations.push({
+        phase,
+        requestedFrame,
+        requestedTime: requestedFrame / sampleRate,
+        currentTime,
+        frameProduct: currentTime * sampleRate,
+        contextState: ctx.state,
+        nativeFreeze: node.params.freeze!.value,
+        automationRate: node.params.freeze!.automationRate,
+        slots,
+      });
+    };
+    let pcm: Record<string, unknown> | undefined;
+    try {
+      const pauses = [128, frame, frame + 128, frame + 256].map((boundary) =>
+        ctx.suspend(boundary / sampleRate),
+      );
+      const rendering = ctx.startRendering();
+      await pauses[0];
+      const saved = await node.snapshot();
+      const initial = inspectSnapshot(saved);
+      observe("saved-frozen", 128, initial.slots);
+      expect(initial.slots.count).toEqual({ kind: "state", type: "f32", value: 0 });
+      expect(initial.slots.freeze).toEqual({ kind: "param", value: 1 });
+      node.params.freeze!.value = 0;
+      observe("unfreeze-requested", 128, initial.slots);
+      await ctx.resume();
+      await pauses[1];
+      const before = inspectSnapshot(await node.snapshot());
+      observe("before-restore", frame, before.slots);
+      expect(before.slots.count).not.toEqual({ kind: "state", type: "f32", value: 0 });
+      const restored = await node.restore(saved);
+      const immediate = inspectSnapshot(await node.snapshot());
+      observe("restored-while-suspended", frame, immediate.slots);
+      expect(restored.ok).toBe(true);
+      expect(immediate.slots.count).toEqual({ kind: "state", type: "f32", value: 0 });
+      expect(immediate.slots.freeze).toEqual({ kind: "param", value: 1 });
+      for (const [index, boundary] of [frame + 128, frame + 256].entries()) {
+        await ctx.resume();
+        await pauses[index + 2];
+        observe(
+          `after-${index + 1}-quanta`,
+          boundary,
+          inspectSnapshot(await node.snapshot()).slots,
+        );
+      }
+      await ctx.resume();
+      const output = (await rendering).getChannelData(0);
+      const resumed = Array.from(output.slice(frame, frame + 256));
+      const inferredFreeze = resumed.map(
+        (count, index) => 1 - (count - (index === 0 ? 0 : resumed[index - 1]!)),
+      );
+      pcm = {
+        beforeBlock: Array.from(output.slice(frame - 128, frame)),
+        resumedBlocks: resumed,
+        inferredFreezeFromCounterDeltas: inferredFreeze,
+        inference:
+          "1 minus adjacent counter difference; restored count is zero, not a direct AudioParam array capture",
+      };
+      expect(output.length).toBe(frame + 384);
+      expect(resumed.length).toBe(256);
+      expect(resumed.every(Number.isFinite)).toBe(true);
+    } finally {
+      console.log(
+        "CONTROLLED_RESTORE_MEASUREMENT " +
+          JSON.stringify({
+            frame,
+            sampleRate,
+            transport: node.diagnostics.transport,
+            userAgent: navigator.userAgent,
+            observations,
+            pcm,
+          }),
+      );
+      node.dispose();
+    }
+  });
+}
