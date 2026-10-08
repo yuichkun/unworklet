@@ -112,6 +112,9 @@ is asserted through the browser node diagnostics. No MIDI or 44.1 kHz fixture is
 imported. Independent SAB ring captures may interleave; comparisons group packets
 by ring without sorting or changing their within-ring order.
 
+The Node suites and their model, offline and lifecycle helpers are co-located in
+`packages/core/src/__tests__/`; the native processor and browser driver remain in
+`browser/fixtures/`. These Node helpers participate in core V8 coverage.
 `generic-ingress-oracle.test.ts` owns the literal/offline comparison and controls
 for reversed queues, incorrect array byte offsets, stale messages, missing
 intermediate records, changed ledger fields, PCM bits and late snapshot bytes.

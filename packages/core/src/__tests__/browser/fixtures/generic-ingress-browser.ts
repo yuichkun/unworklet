@@ -13,7 +13,7 @@ import {
   INGRESS_RATE,
   INGRESS_SAMPLES,
   type IngressRecord,
-} from "./generic-ingress-model.ts";
+} from "../../generic-ingress-model.ts";
 
 export async function checkGenericIngress(expectedTransport: "sab" | "postMessage") {
   const oracle = await commands.renderGenericIngress();

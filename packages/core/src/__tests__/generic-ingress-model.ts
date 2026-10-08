@@ -1,4 +1,4 @@
-import { decodeSnapshot } from "../../../snapshotBlob.ts";
+import { decodeSnapshot } from "../snapshotBlob.ts";
 
 export type IngressPacket = { id: number; gain: number; flag: boolean; samples: Float32Array };
 export type IngressRecord = { name: string; atSample: number; payload: Record<string, number> };

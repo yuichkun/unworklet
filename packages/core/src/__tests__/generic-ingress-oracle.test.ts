@@ -4,8 +4,8 @@ import {
   ingressBatches,
   ingressLedger,
   ingressByRing,
-} from "./browser/fixtures/generic-ingress-model.ts";
-import { renderGenericIngress } from "./browser/fixtures/generic-ingress-offline.ts";
+} from "./generic-ingress-model.ts";
+import { renderGenericIngress } from "./generic-ingress-offline.ts";
 
 test("generic ingress: four 48kHz quanta match a literal FIFO/f32 oracle", async () => {
   const expected = literalIngress();

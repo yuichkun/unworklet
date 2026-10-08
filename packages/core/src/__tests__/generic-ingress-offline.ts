@@ -1,5 +1,5 @@
-import { renderOffline } from "../../../../../offline/src/index.ts";
-import { genericIngress } from "./generic-ingress.processor.ts";
+import { renderOffline } from "../../../offline/src/index.ts";
+import { genericIngress } from "./browser/fixtures/generic-ingress.processor.ts";
 import {
   ingressBatches,
   ingressBits,
