@@ -134,7 +134,7 @@ const updateMeter = (rms: number, peak: number): void => {
   if (peakFillRef.value)
     peakFillRef.value.style.left = `${(dbToFrac(dbfs(peak)) * 100).toFixed(1)}%`;
   if (levelLabelRef.value) {
-    levelLabelRef.value.textContent = `rms ${fmtDb(dbfs(rms))} · peak ${fmtDb(dbfs(peak))} dBFS`;
+    levelLabelRef.value.textContent = `mono rms ${fmtDb(dbfs(rms))} · peak ${fmtDb(dbfs(peak))} dBFS`;
   }
 };
 
@@ -157,12 +157,13 @@ onUnmounted(() => {
 
 <template>
   <div class="port-channel-view">
+    <span class="measurement-label u-pill">Mono downmix</span>
     <div class="level-row">
       <div class="level-track">
         <div ref="meterFillRef" class="level-fill"></div>
         <div ref="peakFillRef" class="level-peak"></div>
       </div>
-      <span ref="levelLabelRef" class="level-label mono">rms -∞ · peak -∞ dBFS</span>
+      <span ref="levelLabelRef" class="level-label mono">mono rms -∞ · peak -∞ dBFS</span>
     </div>
     <div class="channel-canvases">
       <div class="canvas-block">
@@ -170,14 +171,22 @@ onUnmounted(() => {
           <span class="canvas-title">Waveform</span>
           <span class="canvas-meta mono">time domain · live</span>
         </header>
-        <canvas ref="waveformCanvasRef" class="waveform-canvas"></canvas>
+        <canvas
+          ref="waveformCanvasRef"
+          class="waveform-canvas"
+          aria-label="Mono downmix waveform"
+        ></canvas>
       </div>
       <div class="canvas-block">
         <header class="canvas-head">
           <span class="canvas-title">Spectrogram</span>
           <span class="canvas-meta mono">freq domain · rolling</span>
         </header>
-        <canvas ref="spectrogramCanvasRef" class="spectrogram-canvas"></canvas>
+        <canvas
+          ref="spectrogramCanvasRef"
+          class="spectrogram-canvas"
+          aria-label="Mono downmix spectrogram"
+        ></canvas>
       </div>
     </div>
   </div>
@@ -188,6 +197,10 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.measurement-label {
+  align-self: flex-start;
 }
 
 .level-row {

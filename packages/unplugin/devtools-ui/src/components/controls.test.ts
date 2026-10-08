@@ -160,7 +160,7 @@ test("port scope draws polylines and min/max envelopes, updates decibel meters a
   apps.push(app);
   app.mount(root);
   frame(0);
-  expect(root.querySelector(".level-label")!.textContent).toBe("rms -∞ · peak -∞ dBFS");
+  expect(root.querySelector(".level-label")!.textContent).toBe("mono rms -∞ · peak -∞ dBFS");
   signal.frame = { time: [-2, 2, 0], freq: [-1, 0.5, 2], rms: 0.5, peak: 2 };
   frame(1);
   expect(ctx.lineTo).toHaveBeenCalled();
@@ -183,4 +183,50 @@ test("port scope draws polylines and min/max envelopes, updates decibel meters a
   app.unmount();
   apps.pop();
   expect(cancel).toHaveBeenCalledWith(9);
+});
+
+test("mono downmix labels persist through frames, port changes and reconnects", async () => {
+  let tick!: FrameRequestCallback;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    tick = callback;
+    return 1;
+  });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  const props = reactive({ nodeId: "n1", portName: "stereo" });
+  const app = createApp({ render: () => h(PortChannelView, props) });
+  apps.push(app);
+  app.mount(root);
+  const labels = () => {
+    expect(root.querySelector(".measurement-label")!.textContent).toBe("Mono downmix");
+    expect(root.querySelector(".waveform-canvas")!.getAttribute("aria-label")).toBe(
+      "Mono downmix waveform",
+    );
+    expect(root.querySelector(".spectrogram-canvas")!.getAttribute("aria-label")).toBe(
+      "Mono downmix spectrogram",
+    );
+    expect(root.querySelector(".level-label")!.textContent).toContain("mono rms");
+  };
+  labels();
+  for (const frame of [
+    { time: [0], freq: [0], rms: 0, peak: 0 },
+    { time: [0.5], freq: [0.5], rms: 0.5, peak: 0.5 },
+    undefined,
+  ]) {
+    signal.frame = frame;
+    tick(0);
+    labels();
+  }
+  props.portName = "mono";
+  await nextTick();
+  tick(1);
+  labels();
+  props.nodeId = "reconnected";
+  signal.frame = { time: [0.25], freq: [0.25], rms: 0.25, peak: 0.25 };
+  await nextTick();
+  tick(2);
+  labels();
+  expect(root.querySelector(".level-label")!.textContent).toContain(
+    "mono rms -12.0 · peak -12.0 dBFS",
+  );
 });
