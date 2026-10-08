@@ -7,13 +7,23 @@ on:
 
 jobs:
   selfcheck:
-    name: Packed self-check (Vite ${{ matrix.vite }})
+    name: Packed self-check ${{ matrix.boundary }} (Vite ${{ matrix.vite }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        vite: [6.4.3, 7.3.5, 8.0.16]
+        include:
+          # Packed Vite 6 production is tracked separately in issue #165.
+          - vite: 6.4.3
+            boundary: dev
+            tests: serve.*packed
+          - vite: 7.3.5
+            boundary: dev+production
+            tests: packed
+          - vite: 8.0.16
+            boundary: dev+production
+            tests: packed
     steps:
       - uses: actions/checkout@v4
       - uses: voidzero-dev/setup-vp@v1
@@ -41,4 +51,6 @@ jobs:
         run: vp exec playwright install --with-deps chromium
       - name: Exercise packed dev and production worklets
         working-directory: packages/unplugin
-        run: vp test run --config vite.integration.config.ts selfcheck.browser -t packed
+        env:
+          SELF_CHECK_TESTS: ${{ matrix.tests }}
+        run: vp test run --config vite.integration.config.ts selfcheck.browser -t "$SELF_CHECK_TESTS"

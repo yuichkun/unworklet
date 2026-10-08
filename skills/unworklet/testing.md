@@ -389,7 +389,10 @@ gate false. The browser regression verifies an actual emitted worklet bundle wit
 the checker removed and no diagnostic for the same injected malformed header,
 including when a realm global is true. These guarantees concern the Vite plugin
 pipeline. A standalone packed core runtime or `@unworklet/lang/browser` Blob is
-not covered by that production-removal guarantee.
+not covered by that production-removal guarantee. The packed-consumer matrix covers
+dev on Vite 6.4.3, 7.3.5 and 8.0.16, and production on 7.3.5 and 8.0.16. The
+Vite 6.4.3 packed production build's Binaryen scanning limitation is tracked in
+[issue #165](https://github.com/yuichkun/unworklet/issues/165).
 
 Sources: `packages/unplugin/src/selfcheck-define.ts`,
 `packages/unplugin/src/selfcheck.browser.test.ts`,
