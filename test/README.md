@@ -64,9 +64,9 @@ that quantization is correct or promise all floating-point time boundaries.
 Independent Node piecewise expectations cover both the authored sample vector
 and a separately supplied literal vector. Negative controls alter raw native and
 offline PCM before projection, modeling a one-sample late first transition and
-holding that transition until the next quantum. The sample-255 seconds-to-frame
-difference is characterized by the framework-free native control in
-[PR #166](https://github.com/yuichkun/unworklet/pull/166).
+holding that transition until the next quantum. For example,
+`(255 / 48000) * 48000` evaluates to `255.00000000000003`; the native probe
+avoids assuming an authored integer sample boundary survives conversion to seconds.
 
 The Node oracle tests independently pin stereo/stateful PCM and complete event and
 state values at 44.1 and 48 kHz. Negative controls mutate raw PCM, events and decoded state before the observation
