@@ -1,0 +1,300 @@
+postMessage message-counter: reviewable single-run diagnostic proposal
+
+Status
+  Local branch: diag/postmessage-counter-single-febd2a1
+  Base: febd2a1684d92fc4a9fb86e55e9b6a1af989ec9e
+  No commit, push, PR, workflow dispatch, or existing-CI rerun was performed.
+  No tracked production, fixture, assertion, timeout, or workflow file was edited.
+  Only this scripts/postmessage-diagnostic directory is added.
+  This is a diagnostic prototype, not a production fix or a release-clearance result.
+
+Evidence and comparison boundaries
+  Repository: https://github.com/yuichkun/unworklet
+  Failed job: https://github.com/yuichkun/unworklet/actions/runs/37854889394/job/113576587144
+  Logs were retrieved read-only through the GitHub connector.
+  CI: Node 24.21.0, Vite+ 0.1.24, Vite 8.0.16, Vitest 4.1.8,
+      Playwright Chromium/headless-shell revision 1223, 148.0.7778.96.
+  CI target: expected 42, received 0, source line 73; 1/8 failures in the
+  postMessage file; SAB file 6/6 passes. Other failures are outside this task.
+
+  These blobs match across v0.5.0 0c4c889f4898197009cfc8879a1aedd1509246e2,
+  requested main febd2a1, and PR179 8b7abf7f109a99b347ec7a0e53f8cb9d1f7f9faa:
+    postmessage/message-counter.test.ts: 30ecb6f8056f93ce112990b50cbbd972ac6b7b6e
+    fixtures/message-counter.processor.ts: 7492238456f3fccc484d24da1908b3dc706c3f41
+  PR179 vs requested main changes only 8 release-management files. Runtime,
+  compiler, fixture, scenario, and lockfile match between those two revisions.
+  They are comparable for this isolated scenario, not necessarily for aggregate
+  CI load: PR179 adds repository tests and the failed run used vite.ci.config.ts.
+
+  Runtime client.ts: v0.5.0 5338f6e5e791a6b41f214d8d8bdcb01bcc401907;
+    main/PR179 e71ae14f786b5bab12e27807767aa470d3994772.
+  Runtime worklet.ts: v0.5.0 2918646b99e31bd6c2aa1474deb78ab34a291c07;
+    main/PR179 9c17b0470d6e3be174e480083e024b53de9d5a9f.
+  v0.5.0 registers/starts the worklet listener before ready. Main/PR179 posts
+  ready and then registers/starts it in finally (#171). Success initialization
+  contains no await between these operations. Static ordering is established;
+  lost delivery or the historical failure's causal link to #171 is not.
+  The queue, scalar send, process injection, publish and mirror bodies show no
+  corresponding change in the runtime diff. This is not a proof of unchanged
+  scheduling or a reason to dismiss a regression.
+  Whole compiler/layout files and dependency importers also differ from v0.5.0;
+  no binary-equivalence claim is made. Publish scheduler code for this scenario
+  still adds 128, compares with 1600, subtracts 1600 and increments version.
+
+  32 quanta = 4096 samples at 48000 Hz. Publish occurs on quantum 13 and 25,
+  with currentFrame 1536 and 3072, ending at samples 1664 and 3200.
+  A value consumed in quantum 26..32 can leave the main mirror at 0 because
+  no further publish is due. A published 42 not received by the observation
+  can also leave 0. Two rAF callbacks do not identify which happened.
+  These are theoretical possibilities; the historical log has no stage trace.
+
+Diagnostic mechanism (schema 2)
+  The dedicated config selects the exact original test, retry=0, and applies
+  in-memory transforms only to worklet.ts, client.ts and the original test.
+  Production files, emitted WASM, original fixture, 32 quanta, 2 rAF and
+  expect(observed).toBe(42) remain unchanged on disk and in their assertions.
+  The observation is followed immediately by recording and a synchronous copy
+  plus Object.freeze of the main array, before any new await or disposal.
+  Subsequent deliveries cannot enter that frozen observation snapshot.
+
+  Worklet: preallocated Float32Array(128), 15 records of 8 numbers and 8 header
+  numbers: [54124, count, dropped, successfulProcessCount, 0,0,0,0].
+  Records: [code,currentFrame,value,version,a,b,c,d].
+    1 ready-send attempt; 2 listener registered; 3 start returned.
+    4 queued payload: value; a=ring, b=queue length.
+    5 injected payload: value; a=ring, b=head after injection, c=tail before DSP.
+    6 WASM returned: live counter; a=head, b=tail after DSP.
+    7 publish post returned: live counter/version; a=sample counter,
+      b=published bits low16, c=bits high16, d=slot index.
+    8 final process: live counter/last version; a=queue length,b=head,c=tail.
+  Event 6 alone does NOT establish consumption. The decoder only reports
+  consumptionConfirmed when one main send of 42, a preceding queue receipt,
+  one matching injection, same-frame WASM return, matching head, tail advance
+  by one to head, and the expected live value 42 all correlate.
+
+  Main: preallocated Float64Array(128), 24 records of 5 numbers at offset 8.
+  Header count, dropped, six zeros; records [code,value,version,slotOrRing,seq].
+    1 ready received; 2 send; 3 valid publish received; 4 mirror written;
+    5 render resolved; 6 original observation; 7 createNode returned.
+  Link payloads/versions; local sequence is not a cross-thread clock.
+
+  Markers prove execution of diagnostic code, not merely its server transform:
+    test: createRetention invoked from the transformed test, uwk-diag-test-v2:<runId>;
+    client: evaluated transformed module, uwk-diag-client-v2:<runId>;
+    worklet handshake: uwk-diag-worklet-v2:<runId> + bounded 128-element trace carried
+      in the EXISTING ready/init-error message, captured by the existing client
+      handshake handler. No extra port listener or message is created.
+    worklet final: header 54124 in the final-quantum sideband plus event8/frame3968.
+  A create failure may provide only main/test/client evidence. No received
+  handshake means worklet application is unknown, not disproven.
+
+  The final successful process copies the worklet array to the fixture's silent
+  output at frame3968. AudioBuffer samples3968..4095 are DIAGNOSTIC DATA and
+  INVALID AS AUDIO EVIDENCE. audioEvidenceValid is always false. No sound,
+  silence, clipping, or fidelity conclusion can use the modified PCM.
+
+Failure retention and exception priority
+  A try/catch/finally covers create/render/rAF/observation/assertion. Primary
+  exceptions are rethrown by identity, including a thrown undefined. finish()
+  snapshots whatever is available BEFORE cleanup, records disposal errors, and
+  attempts one bounded export even if dispose throws. Export failure is logged
+  with bounded text and cannot replace a primary or disposal error. After an
+  otherwise passing scenario, export failure still fails diagnostic execution.
+  No original wait, render duration, assertion, or test timeout is extended.
+  The only new awaited RPC, bounded to100ms, exports already-captured data after the observation
+  or failure. It does not request worklet delivery or read the mirror again.
+  Existing Vitest onTestFailed provides a best-effort runner-timeout fallback.
+  A one-attempt latch prevents double export; late-created nodes are disposed,
+  and closed-run checks prevent resuming the scenario after that cutoff.
+  If the browser is dead, this hook may never run. Complete capture is NOT promised.
+
+  Before scenario execution, config validates a new absolute output path and
+  absent sidecars. onInit writes an exclusive <=16KiB manifest. The exporter
+  writes an exclusive <=64KiB trace. onTestRunEnd writes <=16KiB runner metadata:
+  run id, reason, at most two module states, target result with one bounded error,
+  and at most two bounded unhandled errors. It records missing/incomplete trace
+  independently of whether the original assertion passed. Incomplete diagnostic
+  output makes the run exit nonzero without changing the original assertion.
+  If the runner itself is killed, only the pre-run manifest may remain; absence
+  of completion metadata means an interrupted/unknown run, not no delivery.
+
+Strict decoding
+  Require schema2 and test/client/worklet markers; both main/worklet arrays
+  must be exactly128 elements with finite numeric elements. Counts must be
+  finite integers in0..24 and0..15 respectively; drops strictly numeric0;
+  successfulProcessCount32; reserved headers and unused records zero.
+  Validate event codes, integer frame/version/index fields, record-specific
+  shapes and main sequence. Require exactly one terminal event8/frame3968
+  and exactly one terminal main observation matching the recorded observed value.
+  Require the main snapshot to be frozen at observation and recording enabled.
+  Missing, malformed, oversized, partial or overflowed trace is incomplete,
+  with negativeEvidenceAllowed=false and consumptionConfirmed=false. No timeline
+  or no-delivery inference is emitted from incomplete trace.
+  Even complete trace only permits statements up to the main observation and
+  final process cutoffs, never about permanent loss or later delivery.
+
+Perturbation and limits
+  The record arrays/views are preallocated. DSP recording uses bounded scalar
+  stores; there is no console I/O, added port task, timer, rAF, polling or ack.
+  The existing ready/init-error envelope gains a marker and one 512-byte trace
+  clone before rendering; this costs startup serialization and is not free.
+  Per-process counters/branches and the final 128-sample copy also cost time.
+  The main observation freeze copies128 elements synchronously AFTER reading
+  observed, so it cannot change that captured value, but it can affect later work.
+  UWK_DIAG_RECORD=0 still evaluates call arguments (state/header reads), performs
+  instrumentation branches, allocations, handshake fields and final copy. It is
+  an instrumented comparison, NOT a zero-overhead or uninstrumented baseline.
+  No on/off runs were performed. Disabled recording yields incomplete diagnostic
+  status, as expected; do not interpret it as negative delivery evidence.
+  Worklet receipt after final process is unknown; incomplete handshake-only
+  snapshots do not cover later ingress or publication. Main receipt may also
+  occur after observation and is intentionally excluded from the frozen array.
+
+How to run once (from repository root; proposal for the next approved execution)
+  if [ -f /workspace/unworklet-env.sh ]; then source /workspace/unworklet-env.sh; fi
+  vp exec node scripts/postmessage-diagnostic/preflight.mjs
+  UWK_DIAG_OUTPUT=/absolute/new-path/trace.json \
+    vp test run --config scripts/postmessage-diagnostic/vite.config.mts
+  vp exec node scripts/postmessage-diagnostic/decode.mjs /absolute/new-path/trace.json
+
+  Default uses the toolchain's bundled Chromium. A normal explicit native
+  executable can be selected with UWK_DIAG_CHROMIUM=/usr/bin/chromium, but record
+  its version and do not call it a reproduction on 148. Do not add security
+  bypass arguments, change assertion/timing, or retry on failure.
+  Supply a fresh writable artifact filename; the exporter refuses overwrites.
+  Retain test exit status independently of decoding and upload artifacts even
+  when the assertion fails. Missing/invalid artifact is diagnostic failure.
+
+Same-toolchain comparison scope
+  Preflight supports old tag, main and PR head without editing their scenario.
+  For a behavioral old/current comparison, use separate isolated checkouts of
+  the exact old tag and PR179 head, copy ONLY this diagnostic directory to each,
+  freeze each lockfile with vp install --frozen-lockfile, and build through vp
+  in the existing dependency order. Pin the same Node 24.21.0, Vite+ 0.1.24,
+  Chromium/headless-shell 1223 and runner image; retain all versions, lockfile
+  hashes, generated WASM hashes, command lines, source hashes and result JSON.
+  Do not copy newer packages or replace an old lockfile to make installation pass.
+  This compares whole old/current implementations under matched tools; it does
+  not isolate #171 from all intervening changes. Both copies can preserve the
+  same 32-quanta/two-rAF/assert42 scenario, but not historical aggregate CI load.
+  One pass on each side would not establish absence of a race or fix.
+  No old/current browser pair or on/off pair has been executed in this task.
+
+Hosted fallback proposal (not installed, published or dispatched)
+  Native Chromium exists here, so lack of a local browser is NOT the blocker.
+  If the parent chooses the matching CI environment instead, create an isolated
+  workflow_dispatch-only diagnostic workflow after review. No push/PR trigger,
+  no retry, no matrix, one job, one target-test invocation, contents:read only.
+  Checkout PR179 exact head plus the reviewed diagnostic files, setup Node
+  24.21.0/Vite+0.1.24, vp install --frozen-lockfile, use the original build order,
+  and vp exec playwright install --with-deps chromium from examples/demo.
+  Verify revision 1223/version 148.0.7778.96 before the run; mismatch stops it.
+  Execute the command above with fresh artifact path and no executable override.
+  Always upload JSON and console logs; preserve failing test status. This is a
+  new single scoped diagnostic, never a rerun of run37854889394.
+  Do not add a v0.5.0 job, recording-off job, or aggregate suite without separate
+  parent agreement: they are additional scenario executions.
+
+Interpreting a real failing trace
+  No event4 by worklet cutoff: ingress not observed during rendering. Late
+  delivery vs another ingress problem remains unresolved.
+  Event4 but no event5: inspect frame and cutoff; queue was not consumed by a
+  later process call. Use header process count and event8 queue/head/tail.
+  Event5/6 with live42 only after frame3072: 32-quanta publication window can
+  explain stale mirror without proving #171 caused the historical CI failure.
+  Event6 live42 by frame3072 but event7 publishes0: inspect publish scheduling
+  and WASM published slot; distinguish live value from decoded published bits.
+  Event7 published42/versionN but no main event3 before event6 observation:
+  downstream delivery/listener timing is implicated in THAT captured failure.
+  Main event3 sees42 but event4/observation stays0: inspect mirror application
+  and subsequent versions using main local sequence.
+  Success, missing artifact, or invalid trace never closes the regression.
+
+Initial validation history (setup/check superseded below)
+  Native Playwright launch of /usr/bin/chromium succeeded using the existing
+  vp exec path; local Chromium 151.0.7922.173, Node 24.19.0.
+  vp install --frozen-lockfile failed: Read-only file system (os error 30).
+  No permission escalation or installation-path workaround was attempted.
+  Local vp env doctor is unavailable (Command 'env' not found).
+  Initial diagnostic startup failed BEFORE collecting any tests because an
+  anchor also matched MIDI injection. Fail-closed anchor was made unique.
+  Target scenario then ran ONCE locally: 1 passed, 7 skipped, 8.75s total.
+  Console trace was not present in captured output. No stage timeline was
+  recovered and no conclusion about receipt frames can be drawn from that run.
+  Export was changed to post-assertion JSON. The final exporter was smoke-tested
+  using explicitly synthetic data and its overwrite refusal was verified.
+  Final exporter + browser scenario has NOT been rerun end-to-end.
+  Preflight passed for all 3 commits, on/off, preserving scenario invariants.
+  Final vp check: 33 errors / 5 warnings, missing preinstalled dependencies and
+  resulting type errors outside this diagnostic directory; no diagnostic path
+  errors remain. Full vp test not run because the authorized scope is limited.
+  Do not treat the repository validation gate or final telemetry path as green.
+
+  Evidence directory: /workspace/postmessage-evidence
+    ci-selected.txt: original job log excerpts
+    runtime-v050-to-main.diff: source path comparison
+    preflight.txt: three-revision anchor verification
+    native-single.txt: failed initial collection (0 tests)
+    native-single-valid.txt: one completed target execution (no retained trace)
+    check-final.txt: dependency/typecheck blockers
+    exporter-smoke-only.json: synthetic transport check, NOT browser evidence
+
+Parent-requested setup follow-up (supersedes initial setup/check blockers)
+  /workspace/unworklet-env.sh exists. It sets VP_HOME=/workspace/.vite-plus,
+  XDG_DATA_HOME=/workspace/.local/share, XDG_CACHE_HOME=/workspace/.cache,
+  XDG_CONFIG_HOME=/workspace/.config, PLAYWRIGHT_BROWSERS_PATH=/workspace/.cache/ms-playwright,
+  and prepends /workspace/.vite-plus/bin to PATH.
+  Sourcing that existing configuration selected Vite+ 0.1.24 and Node 24.21.0.
+  Normal vp install --frozen-lockfile succeeded without permission changes,
+  lockfile changes, browser downloads, or browser-access workarounds.
+  vp check then passed: 0 errors, 2 existing no-implied-eval warnings outside
+  this diagnostic directory. Logs: install-configured.txt, check-configured.txt.
+  No additional browser scenario, CI run, commit, push or publication occurred.
+  Runtime instrumentation was left unchanged for parent diff review.
+
+Review-requested schema2 validation
+  Retention, artifact sink and decoder tests were written and observed failing
+  before their respective implementations. Node-only synthetic wrapper tests
+  execute transformed test control flow with mocked create/render/rAF, never a
+  browser or real AudioWorklet. They verify exactly32 quanta, two rAF callbacks,
+  assert42 before export, original exception identity under simultaneous export
+  failure, and one export on failure-hook reentry. This is not native DSP evidence.
+  The three exact revisions still pass source-anchor/invariant preflight.
+  Browser end-to-end marker delivery, AudioBuffer sideband and actual Vitest
+  browser timeout/crash behavior remain unverified pending parent approval.
+  No additional native scenario or CI execution was performed for schema2.
+  Final schema2 checks: 49/49 scoped Node tests passed; all three revision
+  preflights passed; vp check passed with 0 errors and 2 existing warnings.
+  Evidence: diagnostic-unit.txt, preflight-v2.txt, check-retention.txt in the
+  same /workspace/postmessage-evidence directory. Native evidence is unchanged.
+
+Run identity and source evidence
+  A fresh UUID is generated per diagnostic config/server instance and embedded
+  in the test, client and worklet transformed source. Returned marker strings
+  must all carry that same UUID. Server-added runId is not sufficient alone.
+  Each of those three transform hook calls hashes its input source and the exact
+  code it returns (SHA-256), recording role, repository-relative sourcePath,
+  runId, sourceHash and transformedHash in the manifest. This is hook output,
+  not a claim about the final code after Vite's subsequent transforms.
+  The original worklet.ts/client.ts/test sources are thereby covered at the hook.
+  Manifest updates use an exclusive pending file and atomic rename. Identical
+  repeated transforms are deduplicated; conflicting results mark that role
+  ambiguous instead of replacing the first evidence. At most three roles exist.
+  Trace captures the current manifest; decodeFile also loads the sibling manifest
+  and verifies runId and all three hash records match it. Missing, stale,
+  malformed or ambiguous evidence is incomplete. Exported artifact validation
+  reports incomplete without discarding the available trace.
+
+Export deadline
+  Only post-observation/failure export receives a100ms Promise.race deadline.
+  Its timer is cleared on success, rejection and timeout. A pending write cannot
+  keep finally waiting indefinitely. The original primary/dispose exception
+  keeps priority; a passing scenario fails with DiagnosticExportTimeout.
+  Bounded secondary error is stored in task.meta.uwkDiagnosticExportFailure;
+  the reporter copies it into runner metadata independently of browser trace.
+  No new render/rAF/readback is introduced and test/runner deadlines are not
+  extended. An already-expired runner deadline or dead browser can still prevent
+  capture; that existing limitation is not overridden. The underlying RPC is
+  not cancelled and may finish later, but no retry or later observation occurs.
+  Unit coverage includes never-resolving write, finite completion, exact primary
+  identity, secondary timeout and timer clearing. No native execution occurred.

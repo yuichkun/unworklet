@@ -1,0 +1,83 @@
+name: Single paired postMessage diagnostic
+
+on:
+  push:
+    branches: [diag/paired-counter-148]
+
+permissions:
+  contents: read
+
+jobs:
+  paired:
+    if: github.event.created && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Prepare artifact location
+        run: mkdir -p "$RUNNER_TEMP/uwk-counter-pair/public"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        id: diagnostic
+        with:
+          ref: ${{ github.sha }}
+          path: diagnostic
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        id: old
+        with:
+          ref: 0c4c889f4898197009cfc8879a1aedd1509246e2
+          path: subjects/old
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        id: main
+        with:
+          ref: febd2a1684d92fc4a9fb86e55e9b6a1af989ec9e
+          path: subjects/main
+          persist-credentials: false
+      - uses: voidzero-dev/setup-vp@8a7496fd44e8a1b0a88a7459e36213b2fefc1d15 # v1
+        id: tools
+        with:
+          version: "0.1.24"
+          node-version: "24.21.0"
+          working-directory: diagnostic
+          run-install: false
+          cache: false
+      - name: Run the two fixed scenarios once
+        id: pair
+        timeout-minutes: 18
+        working-directory: diagnostic
+        run: vp exec node scripts/postmessage-diagnostic/paired.mjs "$GITHUB_WORKSPACE" "$RUNNER_TEMP/uwk-counter-pair"
+      - name: Retain workflow phase outcomes
+        if: always()
+        env:
+          DIAG_CHECKOUT: ${{ steps.diagnostic.outcome }}
+          OLD_CHECKOUT: ${{ steps.old.outcome }}
+          MAIN_CHECKOUT: ${{ steps.main.outcome }}
+          TOOLS_SETUP: ${{ steps.tools.outcome }}
+          PAIRED_RUN: ${{ steps.pair.outcome }}
+        run: |
+          printf '{"diagnosticCheckout":"%s","oldCheckout":"%s","mainCheckout":"%s","tools":"%s","paired":"%s"}\n' \
+            "$DIAG_CHECKOUT" "$OLD_CHECKOUT" "$MAIN_CHECKOUT" "$TOOLS_SETUP" "$PAIRED_RUN" \
+            > "$RUNNER_TEMP/uwk-counter-pair/public/workflow.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: counter-pair-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/uwk-counter-pair/public/workflow.json
+            ${{ runner.temp }}/uwk-counter-pair/public/pair-start.json
+            ${{ runner.temp }}/uwk-counter-pair/public/pair.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/setup-start.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/setup.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/identity.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/source.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/toolchain.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/browser.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/execution-start.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/execution.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/trace.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/trace.json.manifest.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/trace.json.runner.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/decoded.json
+            ${{ runner.temp }}/uwk-counter-pair/public/*/test.log
