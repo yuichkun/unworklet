@@ -239,3 +239,38 @@ for (const automation of ["ramp", "target", "step"] as const) {
     }
   });
 }
+
+for (const rate of ["a-rate", "k-rate"] as const) {
+  test(`suspended restore preserves modulation that keeps ${rate} native input different from the saved scalar`, async () => {
+    const frame = 57728;
+    const ctx = new OfflineAudioContext(1, frame + 256, 48000);
+    const node = await createNode(ctx, frozenCounter);
+    node.params.freeze!.automationRate = rate;
+    const modulation = new ConstantSourceNode(ctx, { offset: -1 });
+    modulation.connect(node.params.freeze!);
+    modulation.start();
+    node.outputs.main!.connect(ctx.destination);
+    try {
+      const saved = await node.snapshot();
+      node.params.freeze!.value = 0;
+      const suspended = ctx.suspend(frame / 48000);
+      const rendering = ctx.startRendering();
+      await suspended;
+      expect((await node.restore(saved)).ok).toBe(true);
+      expect(ctx.state).toBe("suspended");
+      expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
+        kind: "state",
+        type: "f32",
+        value: 0,
+      });
+      await ctx.resume();
+      const samples = (await rendering).getChannelData(0);
+      expect(Array.from(samples.slice(frame))).toEqual(
+        Array.from({ length: 256 }, (_, i) => i + 1),
+      );
+    } finally {
+      node.dispose();
+      modulation.disconnect();
+    }
+  });
+}
