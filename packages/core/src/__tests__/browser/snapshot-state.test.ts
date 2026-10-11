@@ -170,3 +170,72 @@ test("restore preserves scheduled steps, a-rate ramps and connected modulation w
     modulation.disconnect();
   }
 });
+
+for (const frame of [12928, 13056, 13184, 57600, 57728, 57856]) {
+  for (const rate of ["a-rate", "k-rate"] as const) {
+    test(`restore applies at suspended frame ${frame} with ${rate} native parameters`, async () => {
+      const ctx = new OfflineAudioContext(1, frame + 256, 48000);
+      const node = await createNode(ctx, frozenCounter);
+      node.params.freeze!.automationRate = rate;
+      node.outputs.main!.connect(ctx.destination);
+      try {
+        const saved = await node.snapshot();
+        node.params.freeze!.value = 0;
+        const suspended = ctx.suspend(frame / 48000);
+        const rendering = ctx.startRendering();
+        await suspended;
+        expect((await node.restore(saved)).ok).toBe(true);
+        expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
+          kind: "state",
+          type: "f32",
+          value: 0,
+        });
+        await ctx.resume();
+        const samples = (await rendering).getChannelData(0);
+        expect(Array.from(samples.slice(frame))).toEqual(Array(256).fill(0));
+        expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
+          kind: "state",
+          type: "f32",
+          value: 0,
+        });
+      } finally {
+        node.dispose();
+      }
+    });
+  }
+}
+
+for (const automation of ["ramp", "target", "step"] as const) {
+  test(`restore at a rounded boundary preserves ${automation} automation and modulation`, async () => {
+    const frame = 57728;
+    const ctx = new OfflineAudioContext(1, frame + 1024, 48000);
+    const node = await createNode(ctx, automationProcessor);
+    const modulation = new ConstantSourceNode(ctx, { offset: 0.125 });
+    modulation.connect(node.params.gain!);
+    modulation.start();
+    node.outputs.main!.connect(ctx.destination);
+    try {
+      const saved = await node.snapshot();
+      const gain = node.params.gain!;
+      gain.value = 0.75;
+      if (automation === "ramp") gain.linearRampToValueAtTime(1, (frame + 512) / 48000);
+      if (automation === "target") gain.setTargetAtTime(1, 0, 0.1);
+      gain.setValueAtTime(0.5, (frame + 768) / 48000);
+      const suspended = ctx.suspend(frame / 48000);
+      const rendering = ctx.startRendering();
+      await suspended;
+      expect((await node.restore(saved)).ok).toBe(true);
+      expect(gain.value).toBe(0.25);
+      await ctx.resume();
+      const samples = (await rendering).getChannelData(0);
+      for (let i = 0; i < 1024; i++) {
+        const expected =
+          i >= 768 ? 0.5 : automation === "ramp" ? 0.25 + 0.75 * Math.min(i / 512, 1) : 0.25;
+        expect(samples[frame + i], `sample ${i}`).toBeCloseTo(2.125 + expected, 5);
+      }
+    } finally {
+      node.dispose();
+      modulation.disconnect();
+    }
+  });
+}
