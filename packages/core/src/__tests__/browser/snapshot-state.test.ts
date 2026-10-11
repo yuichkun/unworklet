@@ -181,10 +181,12 @@ for (const frame of [12928, 13056, 13184, 57600, 57728, 57856]) {
       try {
         const saved = await node.snapshot();
         node.params.freeze!.value = 0;
-        const suspended = ctx.suspend(frame / 48000);
+        const suspended = ctx.suspend((frame - 1) / 48000);
         const rendering = ctx.startRendering();
         await suspended;
+        expect(Math.round(ctx.currentTime * ctx.sampleRate)).toBe(frame);
         expect((await node.restore(saved)).ok).toBe(true);
+        expect(ctx.state).toBe("suspended");
         expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
           kind: "state",
           type: "f32",
@@ -221,9 +223,10 @@ for (const automation of ["ramp", "target", "step"] as const) {
       if (automation === "ramp") gain.linearRampToValueAtTime(1, (frame + 512) / 48000);
       if (automation === "target") gain.setTargetAtTime(1, 0, 0.1);
       gain.setValueAtTime(0.5, (frame + 768) / 48000);
-      const suspended = ctx.suspend(frame / 48000);
+      const suspended = ctx.suspend((frame - 1) / 48000);
       const rendering = ctx.startRendering();
       await suspended;
+      expect(Math.round(ctx.currentTime * ctx.sampleRate)).toBe(frame);
       expect((await node.restore(saved)).ok).toBe(true);
       expect(gain.value).toBe(0.25);
       await ctx.resume();
@@ -253,9 +256,10 @@ for (const rate of ["a-rate", "k-rate"] as const) {
     try {
       const saved = await node.snapshot();
       node.params.freeze!.value = 0;
-      const suspended = ctx.suspend(frame / 48000);
+      const suspended = ctx.suspend((frame - 1) / 48000);
       const rendering = ctx.startRendering();
       await suspended;
+      expect(Math.round(ctx.currentTime * ctx.sampleRate)).toBe(frame);
       expect((await node.restore(saved)).ok).toBe(true);
       expect(ctx.state).toBe("suspended");
       expect(inspectSnapshot(await node.snapshot()).slots.count).toEqual({
