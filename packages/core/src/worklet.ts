@@ -1449,6 +1449,9 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
                 }
               }
             }
+            if (transport === "postMessage" && !self[STOPPED_KEY]) {
+              postEgressFrame(self, self[STATE_KEY]!);
+            }
             return;
           }
           if (data.kind === "egress-flush") {

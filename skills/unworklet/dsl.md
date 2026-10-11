@@ -843,7 +843,10 @@ while DSP continues. While the context is suspended, interrupted, or closed, the
 drain loop requests a bounded publication retry over the control port, with at
 most one request in flight; retained
 events and MIDI can reach subscribers without another render quantum. A retry
-does not advance DSP or wait for ring ownership. A full WASM ring follows its
+does not advance DSP or wait for ring ownership. In postMessage mode, receipt of
+an initial or recycled transfer buffer retries retained output immediately,
+without requiring another render quantum or advancing DSP. Shutdown disables
+these retries. A full WASM ring follows its
 drop-oldest policy and reports overflow through the ring's diagnostics.
 
 For shared inbound events and MIDI, `emit` / `send` copies caller data

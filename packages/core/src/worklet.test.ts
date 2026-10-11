@@ -946,17 +946,27 @@ test("egress frame (postMessage): a starved pool skips the post and the backlog 
   eventEmitProc.worklet.process(self, inputs, outputs, {});
   expect(postedEgressFrames(self).length).toBe(0);
 
-  // A buffer arrives; the NEXT quantum ships the accumulated backlog.
+  // A buffer arrival must publish the backlog even without another quantum.
   firePortMessage(self, {
     kind: "egress-buffer",
     buffer: new ArrayBuffer(egressPoolBufferBytes(eventRings, [])),
   });
-  eventEmitProc.worklet.process(self, inputs, outputs, {});
   const frames = postedEgressFrames(self);
   expect(frames.length).toBe(1);
   const dv = new DataView(frames[0]!);
   expect(dv.getUint32(16, true)).toBe(16); // the ring window (backlog capped by drop-oldest)
-  expect(dv.getInt32(20, true)).toBe(240); // 256 emits - 16 kept
+  expect(dv.getInt32(20, true)).toBe(112); // 128 emits - 16 kept
+  eventEmitProc.worklet.process(self, inputs, outputs, {});
+  expect(postedEgressFrames(self).length).toBe(1);
+  firePortMessage(self, { kind: "egress-recycle", buffer: frames[0], eventTails: [[0, 128]] });
+  expect(postedEgressFrames(self).length).toBe(2);
+  expect(new DataView(postedEgressFrames(self)[1]!).getInt32(20, true)).toBe(240);
+  firePortMessage(self, {
+    kind: "egress-recycle",
+    buffer: postedEgressFrames(self)[1],
+    eventTails: [[0, 256]],
+  });
+  expect(postedEgressFrames(self).length).toBe(2);
 });
 
 test("egress frame (postMessage): process does not allocate Uint8Array/DataView per quantum (pool views pre-bound, §5.1 realtime safety)", async () => {
@@ -1730,13 +1740,12 @@ test("fallback MIDI pool starvation keeps the retained window and reports overwr
   processor.worklet.initialize(self, {
     processorOptions: { wasm, transport: "postMessage", midiRings },
   });
-  for (let q = 0; q < 20; q++) processor.worklet.process(self, [], [], {});
+  for (let q = 0; q < 21; q++) processor.worklet.process(self, [], [], {});
   expect(postedEgressFrames(self)).toEqual([]);
   firePortMessage(self, {
     kind: "egress-buffer",
     buffer: new ArrayBuffer(egressPoolBufferBytes([], midiRings)),
   });
-  processor.worklet.process(self, [], [], {});
   const buffer = postedEgressFrames(self)[0]!;
   const frame = new DataView(buffer);
   expect(frame.getUint32(16, true)).toBe(16);
@@ -1922,5 +1931,28 @@ for (const failure of ["missing module", "invalid module"] as const) {
     }
     expect(self.messages).toHaveLength(1);
     expect(self.port.__startCalled).toBe(true);
+  });
+}
+
+for (const transport of ["sab", "postMessage"] as const) {
+  test(`buffer-arrival publication respects transport and shutdown (${transport})`, async () => {
+    const { wasm } = await compile(eventEmitProc);
+    const self = makeMockSelf();
+    const eventRings = eventEmitProc.worklet.eventRings;
+    eventEmitProc.worklet.initialize(self, {
+      processorOptions: {
+        wasm,
+        transport,
+        eventRings,
+        eventRingSabOffsets: [0],
+      },
+    });
+    eventEmitProc.worklet.process(self, [[new Float32Array(128)]], [[new Float32Array(128)]], {});
+    if (transport === "postMessage") firePortMessage(self, { kind: "shutdown" });
+    firePortMessage(self, {
+      kind: "egress-buffer",
+      buffer: new ArrayBuffer(egressPoolBufferBytes(eventRings, [])),
+    });
+    expect(postedEgressFrames(self)).toEqual([]);
   });
 }
