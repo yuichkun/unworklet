@@ -839,8 +839,9 @@ thread, so this path is outside the allocation-free and GC-free guarantee.
 The emitted DSP's fixed-memory, bounded-work constraints apply to both paths.
 Neither transport waits for the main thread while processing audio. Shared
 out-ring publication uses a single try-acquire; contention postpones publication
-while DSP continues. While the context is suspended or closed, the subscriber
-drain loop requests a bounded publication retry over the control port; retained
+while DSP continues. While the context is suspended, interrupted, or closed, the subscriber
+drain loop requests a bounded publication retry over the control port, with at
+most one request in flight; retained
 events and MIDI can reach subscribers without another render quantum. A retry
 does not advance DSP or wait for ring ownership. A full WASM ring follows its
 drop-oldest policy and reports overflow through the ring's diagnostics.

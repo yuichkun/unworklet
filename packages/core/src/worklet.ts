@@ -1387,6 +1387,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         return { applied, skipped, missing };
       };
 
+      const egressFlushed = { kind: "egress-flushed" };
       if (typeof port.addEventListener === "function") {
         handleMessage = (event: MessageEvent) => {
           const data = event.data as
@@ -1451,7 +1452,10 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             return;
           }
           if (data.kind === "egress-flush") {
-            if (!self[STOPPED_KEY]) publishSabEgress(self[STATE_KEY]!);
+            if (!self[STOPPED_KEY]) {
+              publishSabEgress(self[STATE_KEY]!);
+              self.port.postMessage(egressFlushed);
+            }
             return;
           }
           if (data.kind === "snapshot-request") {
