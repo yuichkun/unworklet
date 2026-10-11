@@ -1171,6 +1171,18 @@ export async function createNode<C>(
       pollPublishSlots();
       pollEventRings();
       pollMidiOutRings();
+      // A final render quantum can lose the nonblocking SAB publication lock.
+      // While rendering is stopped, retry on the control port so its retained
+      // output does not depend on a future process() call. One bounded attempt
+      // per existing drain tick; never wait for the reader or advance DSP.
+      if (
+        !disposed &&
+        transportMode === "sab" &&
+        (context.state === "suspended" || context.state === "closed") &&
+        (eventRings.length > 0 || midiRings.some((ring) => ring.direction === "out"))
+      ) {
+        node.port.postMessage({ kind: "egress-flush" });
+      }
       return true;
     } finally {
       draining = false;

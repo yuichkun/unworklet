@@ -838,6 +838,42 @@ test("event ring copy (sab mode): WASM emit reflected into SAB header + slots vi
   expect(slotsView.getFloat32(15 * 8 + 4, true)).toBe(0.5); // level
 });
 
+for (const mode of ["sab", "postMessage", "shutdown"] as const) {
+  test(`control publication is nonblocking and does not advance event DSP (${mode})`, async () => {
+    const { wasm } = await compile(eventEmitProc);
+    const self = makeMockSelf();
+    const ring = eventEmitProc.worklet.eventRings[0]!;
+    const eventRingsBuffer = new SharedArrayBuffer(12 + ring.capacity * ring.slotSize);
+    const access = new Int32Array(new SharedArrayBuffer(4));
+    eventEmitProc.worklet.initialize(self, {
+      processorOptions: {
+        wasm,
+        eventRingsBuffer,
+        egressAccessBuffer: access.buffer,
+        eventRings: eventEmitProc.worklet.eventRings,
+        eventRingSabOffsets: [0],
+        transport: mode === "postMessage" ? "postMessage" : "sab",
+        ingressAccessBuffer: new SharedArrayBuffer(8),
+      },
+    });
+    access[0] = 1;
+    eventEmitProc.worklet.process(self, [[new Float32Array(128)]], [[new Float32Array(128)]], {});
+    const header = new Int32Array(eventRingsBuffer, 0, 3);
+    firePortMessage(self, { kind: "egress-flush" });
+    expect(Array.from(header)).toEqual([0, 0, 0]);
+    expect(access[0]).toBe(1);
+    access[0] = 0;
+    if (mode === "shutdown") firePortMessage(self, { kind: "shutdown" });
+    firePortMessage(self, { kind: "egress-flush" });
+    const expected = mode === "sab" ? [128, 112, 112] : [0, 0, 0];
+    expect(Array.from(header)).toEqual(expected);
+    if (mode === "sab") header[1] = 128;
+    firePortMessage(self, { kind: "egress-flush" });
+    expect(Array.from(header)).toEqual(mode === "sab" ? [128, 128, 112] : expected);
+    expect(access[0]).toBe(0);
+  });
+}
+
 /** The `{ kind: 'egress' }` frames in `self.messages` (see `egressFrame.ts`). */
 const postedEgressFrames = (self: MockSelf): ArrayBuffer[] =>
   self.messages
