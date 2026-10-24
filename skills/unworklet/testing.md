@@ -242,14 +242,14 @@ The processor is authored in `.uwk.ts` (the recommended form; full authoring in
   build-path import — reach for it when the processor splits into a subgraph
   library module.
 
-  Sibling `.uwk.ts` imports are lowered to JavaScript for you, so they run on any
-  supported Node. A plain TypeScript helper (`import { GAIN } from "./constants.ts"`)
-  is left as you wrote it, so loading it needs a Node that strips types
-  (22.18+ / 23.6+) AND a helper that is erasable — stripping removes annotations
-  but cannot build an `enum`, a `namespace` or a parameter property, which Node
-  transforms only behind `--experimental-transform-types`. Either case reports an
-  error naming the import. Give the helper a `.mjs` extension (or keep it
-  erasable — a `const` object rather than an `enum`) to avoid both.
+  Sibling `.uwk.ts` imports are lowered to JavaScript for you. A plain TypeScript
+  helper (`import { GAIN } from "./constants.ts"`) is left as you wrote it, so Node
+  loads it by stripping its types, which needs a helper that is erasable —
+  stripping removes annotations but cannot build an `enum`, a `namespace` or a
+  parameter property, which Node transforms only behind
+  `--experimental-transform-types`. That case reports an error naming the import.
+  Give the helper a `.mjs` extension (or keep it erasable — a `const` object rather
+  than an `enum`) to avoid it.
 
 Single-file pattern from [cite: examples/demo/src/examples.render.test.ts :: `test("lowpass: a step input ramps smoothly toward it ($prev feedback works)"`]:
 
@@ -390,9 +390,7 @@ the checker removed and no diagnostic for the same injected malformed header,
 including when a realm global is true. These guarantees concern the Vite plugin
 pipeline. A standalone packed core runtime or `@unworklet/lang/browser` Blob is
 not covered by that production-removal guarantee. The packed-consumer matrix covers
-dev on Vite 6.4.3, 7.3.5 and 8.0.16, and production on 7.3.5 and 8.0.16. The
-Vite 6.4.3 packed production build's Binaryen scanning limitation is tracked in
-[issue #165](https://github.com/yuichkun/unworklet/issues/165).
+dev and production on Vite 7.3.5 and 8.0.16.
 
 Sources: `packages/unplugin/src/selfcheck-define.ts`,
 `packages/unplugin/src/selfcheck.browser.test.ts`,

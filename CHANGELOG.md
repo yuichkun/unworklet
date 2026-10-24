@@ -30,6 +30,28 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   their inferred binding name. This restored validation requires the next minor
   release under the pre-1.0 compatibility policy.
 
+- **`NodeErrorEvent` no longer includes `{ code: "queue-overflow" }`.** The
+  runtime never delivered it to `onError`. Remove any `queue-overflow` case and
+  read `node.events.<name>.diagnostics.overflowCount()` or
+  `node.midi.<name>.diagnostics.overflowCount()` to detect dropped events.
+
+- **MIDI port names are unique within a processor, across inputs and
+  outputs.** Same-name ports shared one ring and one `node.midi.<name>` entry,
+  so `send()` on the input did nothing. A duplicate name now fails the build;
+  rename one of the ports.
+
+- **`instantiate` no longer accepts a bare number or boolean for a `Node`
+  argument.** `instantiate(sg, 0.5)` type-checked, but the subgraph body
+  received the raw number, so a method-form call such as `coef.add(x)` threw
+  at build time. Construct the argument: `instantiate(sg, f32(0.5))` or
+  `instantiate(sg, bool(true))`. Plain-number arguments such as
+  `(sr: number) => …` are unchanged.
+
+- **Node 20 and Vite 6 are no longer supported.** Every package requires Node
+  `^22.18.0 || >=23.6.0`, the first releases that strip TypeScript types by
+  default, and `@unworklet/unplugin` requires Vite 7 or 8. Upgrade Node and Vite
+  before upgrading unworklet.
+
 ### Fixed
 
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,

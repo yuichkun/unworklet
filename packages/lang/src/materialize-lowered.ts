@@ -371,9 +371,8 @@ const pendingIndirectHelpers = new Map<string, string>();
  *
  * Each temp is emitted as JavaScript (`.uwklowered.mjs`), not TypeScript. The
  * lowering produces TypeScript, and importing that directly would depend on
- * Node's native type-stripping — unavailable before 22.18 / 23.6, so a consumer
- * on the `>=20` this package declares would get `ERR_UNKNOWN_FILE_EXTENSION`
- * instead of a processor. `ts.transpileModule` strips the types here rather than
+ * Node's native type stripping, which a process can switch off and which accepts
+ * erasable syntax only. `ts.transpileModule` strips the types here rather than
  * making that Node's problem; it is per-file and needs no type information, which
  * is all the lowered output requires.
  *
@@ -497,7 +496,7 @@ export const materializeLowered = async (
   if (Object.keys(remap).length > 0) emitted = rewriteImportSpecifiers(emitted, remap);
   // A plain `./helper.ts` the author imported survives lowering as-is, so the
   // temp — JavaScript though it is — still points at raw TypeScript. Only a Node
-  // that strips types can load that, and this package supports older ones.
+  // that strips types can load that, and a process can switch stripping off.
   //
   // We do NOT transpile the author's own modules to make it work: without their
   // tsconfig we would be guessing settings that change meaning (type-only import
@@ -506,19 +505,18 @@ export const materializeLowered = async (
   //
   // Read from the emit, not from the lowered source: which specifiers survive is
   // a property of the emit (a type-only or unused binding is dropped), so
-  // predicting it from the AST reports files Node never asks for. Absent, not
-  // false, is what Node 20 reports for the capability — the property only exists
-  // once the capability does, so comparing against `false` would skip the check
-  // on the exact runtime it is here for.
+  // predicting it from the AST reports files Node never asks for. A runtime
+  // without the capability may not define the property at all, so this tests
+  // falsiness rather than `=== false`.
   const plain = plainTsModuleSpecifiers(emitted);
   if (plain.length > 0 && !process.features.typescript) {
     throw new Error(
       `@unworklet/lang: ${path.basename(sourcePath)} imports ${plain.map((s) => `"${s}"`).join(", ")}, ` +
-        `and this Node (${process.version}) cannot load TypeScript. Either run Node 22.18+ / 23.6+, ` +
-        `which strips types natively as long as the helper is erasable (an enum or namespace ` +
-        `still will not load), or give the helper a JavaScript extension (rename to .mjs and ` +
-        `import it as "./helper.mjs"). Sibling .uwk.ts imports are unaffected — those are ` +
-        `lowered to JavaScript for you.`,
+        `and this Node (${process.version}) cannot load TypeScript. Either run it with type ` +
+        `stripping on (the default from Node 22.18 / 23.6), which loads an erasable helper (an ` +
+        `enum or namespace still will not load), or give the helper a JavaScript extension ` +
+        `(rename to .mjs and import it as "./helper.mjs"). Sibling .uwk.ts imports are ` +
+        `unaffected — those are lowered to JavaScript for you.`,
     );
   }
 

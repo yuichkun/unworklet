@@ -519,6 +519,9 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
 - Events/MIDI carry **no** infix sugar; the helper/handler shapes are identical
   in both forms. Handler BODIES still get operator / bare-state lowering in `.uwk.ts`.
 - Main-thread side is `node.midi.<name>` with the full `MidiEvent` union (§5).
+- Port names are unique within a processor across both directions: an input
+  and an output with the same name fail the build. Give each port its own
+  name. — [cite: packages/core/src/dsl/declarations.ts :: `function checkMidiPortName(`]
 
 ```ts
 // .uwk.ts MIDI synth — one binding per `const` statement (the auto-name pass
@@ -701,12 +704,10 @@ instantiate(subgraph, ...args, options?: { name?: string }): methods
   `defineSubgraph` body, before the returned `process` / method record);
   instantiating inside `forSample` / `everyNSamples` / a handler throws
   (`scope-violation`). Each instance gets independent internal state. — [cite: packages/core/src/processor.ts :: `if (ctx.currentLoopBody !== null) {`]
-- A `Node<"f32">` arg also accepts a bare `number` (and a `Node<"bool">` arg a
-  `boolean`); the type widening lives in the runtime `LiftArg<A>` union at
-  [cite: packages/core/src/processor.ts :: `type LiftArg<A> =`] — no sugar pass rewrites `instantiate`
-  args, the literal just satisfies the widened signature and any downstream
-  primitive (`mul` / `add` / …) lifts it in place. A plain-`number` config arg
-  is not lifted.
+- Args reach the subgraph body as passed. A `Node<…>` arg takes a `Node`, so
+  construct it explicitly: `instantiate(onepole, f32(0.2))`. A bare `number` or
+  `boolean` there is a type error. A plain-`number` config arg, such as
+  `(sr: number) => …`, takes a number. — [cite: packages/core/src/processor.ts :: `...rest: [...Args, CreateSubgraphOptions?]`]
 - An instance with a named / persistent / published internal slot **must** be
   given an explicit `{ name }` (snapshot-path stability). — [cite: packages/core/src/processor.ts :: `if (instanceName === undefined) {`]
 
@@ -779,7 +780,7 @@ export const onepole = defineSubgraph((coef: Node<"f32">) => {
 import { onepole } from "./onepole.uwk.ts";
 const input = audioInput({ channels: 1, name: "main" });
 const out = audioOutput({ channels: 1, name: "main" });
-const lpf = instantiate(onepole, 0.2, { name: "lpf" });
+const lpf = instantiate(onepole, f32(0.2), { name: "lpf" });
 process(() => {
   forSample((i) => {
     out.ch(0)[i] = lpf.tick(input.ch(0)[i]);

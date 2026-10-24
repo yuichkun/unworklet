@@ -90,7 +90,7 @@
   "peerDependencies": {
     "@unworklet/core": "workspace:^",
     "@vitejs/devtools-kit": "^0.4.0",
-    "vite": "^6 || ^7 || ^8"
+    "vite": "^7 || ^8"
   },
   "peerDependenciesMeta": {
     "@vitejs/devtools-kit": {
@@ -98,6 +98,6 @@
     }
   },
   "engines": {
-    "node": ">=20"
+    "node": "^22.18.0 || >=23.6.0"
   }
 }

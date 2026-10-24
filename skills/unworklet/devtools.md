@@ -168,7 +168,7 @@ to the 0.4 major, marked optional (`packages/unplugin/package.json`):
 "peerDependencies": {
   "@unworklet/core": "workspace:^",
   "@vitejs/devtools-kit": "^0.4.0",
-  "vite": "^6 || ^7 || ^8"
+  "vite": "^7 || ^8"
 },
 "peerDependenciesMeta": {
   "@vitejs/devtools-kit": { "optional": true }

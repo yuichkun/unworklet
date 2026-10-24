@@ -899,7 +899,6 @@ export type CreateNodeOptions<C> = {
 
 export type NodeErrorEvent =
   | { code: "wasm-trap"; message: string }
-  | { code: "queue-overflow"; source: "event" | "message" | "midi"; name: string; dropped: number }
   | { code: "sab-unavailable" }
   | { code: "block-length-mismatch"; expected: number; received: number }
   /**
