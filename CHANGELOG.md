@@ -47,6 +47,11 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   `instantiate(sg, bool(true))`. Plain-number arguments such as
   `(sr: number) => …` are unchanged.
 
+- **Node 20 and Vite 6 are no longer supported.** Every package requires Node
+  `^22.18.0 || >=23.6.0`, the first releases that strip TypeScript types by
+  default, and `@unworklet/unplugin` requires Vite 7 or 8. Upgrade Node and Vite
+  before upgrading unworklet.
+
 ### Fixed
 
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,
