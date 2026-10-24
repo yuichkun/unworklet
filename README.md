@@ -383,19 +383,9 @@ A pnpm monorepo driven through the [Vite+](https://viteplus.dev) CLI (`vp`):
 
 ```bash
 vp install        # install dependencies
+vp run build      # build the five packages in dependency order (tests need it)
 vp check          # lint + format + typecheck (vp check --fix to auto-fix)
 vp test run       # vitest (node-side + browser SAB / postMessage)
-```
-
-`core` and `unplugin` form a build cycle, so packages build in an explicit
-order rather than `vp run -r build`:
-
-```bash
-vp run --filter @unworklet/lang build && \
-vp run --filter @unworklet/unplugin build && \
-vp run --filter @unworklet/core build && \
-vp run --filter @unworklet/offline build && \
-vp run --filter @unworklet/test build
 ```
 
 Conventions and design rationale: [`AGENTS.md`](./AGENTS.md).
