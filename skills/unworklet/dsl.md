@@ -933,10 +933,7 @@ Overlapping restores and intervening snapshot or DevTools captures retain their
 request order. Suspended captures still use the parameter settings from invocation.
 A failure after native parameter assignment can leave those assignments in effect;
 restore does not provide transactional rollback. Native AudioParam scheduling still
-controls the exact sample at which a value takes effect. The ordering barrier does
-not guarantee zero stale samples at every suspension/resumption boundary; the
-observed native timing limitation is tracked in
-[issue #155](https://github.com/yuichkun/unworklet/issues/155).
+controls the exact sample at which a value takes effect.
 
 ### `inspect(blob)`
 
