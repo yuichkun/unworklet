@@ -1164,6 +1164,8 @@ export async function createNode<C>(
 
   const pageHidden = (): boolean => pageDocument()?.visibilityState === "hidden";
 
+  let egressFlushPending = false;
+
   function drainOnce(): boolean {
     if (draining || disposed) return false;
     draining = true;
@@ -1171,6 +1173,23 @@ export async function createNode<C>(
       pollPublishSlots();
       pollEventRings();
       pollMidiOutRings();
+      // A final render quantum can lose the nonblocking SAB publication lock.
+      // While rendering is stopped, retry on the control port so its retained
+      // output does not depend on a future process() call. One bounded attempt
+      // per existing drain tick, with at most one request in flight even if the
+      // worklet stops servicing its port. Never wait or advance DSP.
+      if (
+        !disposed &&
+        transportMode === "sab" &&
+        !egressFlushPending &&
+        (context.state === "suspended" ||
+          context.state === "closed" ||
+          context.state === "interrupted") &&
+        (eventRings.length > 0 || midiRings.some((ring) => ring.direction === "out"))
+      ) {
+        egressFlushPending = true;
+        node.port.postMessage({ kind: "egress-flush" });
+      }
       return true;
     } finally {
       draining = false;
@@ -1747,6 +1766,10 @@ export async function createNode<C>(
       | null
       | undefined;
     if (typeof data !== "object" || data === null) return;
+    if (data.kind === "egress-flushed") {
+      egressFlushPending = false;
+      return;
+    }
     if (typeof data.requestId !== "number") return;
     if (data.kind === "snapshot-response") {
       const pending = pendingSnapshots.get(data.requestId);
