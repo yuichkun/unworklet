@@ -1327,7 +1327,25 @@ function makeSysexDataProxy(port: string): TypedArrayFieldRef<"u8"> {
   return proxy as unknown as TypedArrayFieldRef<"u8">;
 }
 
+/**
+ * Name-uniqueness check for a MIDI port. Unlike `event`, both directions share
+ * one name space: the ring layout and `node.midi.<name>` are keyed by name alone.
+ */
+function checkMidiPortName(name: string): void {
+  const ctx = getCurrentCapture();
+  if (
+    ctx.declarations.some(
+      (d) => (d.kind === "midiInput" || d.kind === "midiOutput") && d.name === name,
+    )
+  ) {
+    throw new Error(
+      `unworklet: duplicate MIDI port declaration name "${name}" — MIDI port names must be unique within a processor, across inputs and outputs`,
+    );
+  }
+}
+
 function midiFromMain(options: MidiPortOptions): MidiInputHandle {
+  checkMidiPortName(options.name);
   const decl: MidiInputDecl = {
     kind: "midiInput",
     name: options.name,
@@ -1354,6 +1372,7 @@ function midiFromMain(options: MidiPortOptions): MidiInputHandle {
 }
 
 function midiToMain(options: MidiPortOptions): MidiOutputHandle {
+  checkMidiPortName(options.name);
   const decl: MidiOutputDecl = {
     kind: "midiOutput",
     name: options.name,

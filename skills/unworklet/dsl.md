@@ -519,6 +519,9 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
 - Events/MIDI carry **no** infix sugar; the helper/handler shapes are identical
   in both forms. Handler BODIES still get operator / bare-state lowering in `.uwk.ts`.
 - Main-thread side is `node.midi.<name>` with the full `MidiEvent` union (§5).
+- Port names are unique within a processor across both directions: an input
+  and an output with the same name fail the build. Give each port its own
+  name. — [cite: packages/core/src/dsl/declarations.ts :: `function checkMidiPortName(`]
 
 ```ts
 // .uwk.ts MIDI synth — one binding per `const` statement (the auto-name pass

@@ -78,6 +78,26 @@ test("`midiInput().onEvent(type, handler)` captures a midiOnEvent statement", ()
   expect(stmt).toMatchObject({ kind: "midiOnEvent", port: "mIn", eventType: "noteOn" });
 });
 
+test("MIDI port names are unique across inputs and outputs", () => {
+  const declare = {
+    input: () => event.midi({ from: "main", name: "shared" }),
+    output: () => event.midi({ to: "main", name: "shared" }),
+  };
+  for (const [first, second] of [
+    ["input", "output"],
+    ["output", "input"],
+    ["input", "input"],
+    ["output", "output"],
+  ] as const) {
+    expect(() =>
+      runCapture(newCaptureContext(), () => {
+        declare[first]();
+        declare[second]();
+      }),
+    ).toThrow(/duplicate MIDI port declaration name "shared"/);
+  }
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // audioInput = Step 3.2 register + Step 3.4 `.ch(c).at(i)` reader
 // ─────────────────────────────────────────────────────────────────────────

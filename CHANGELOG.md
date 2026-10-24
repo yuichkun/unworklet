@@ -35,6 +35,11 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   read `node.events.<name>.diagnostics.overflowCount()` or
   `node.midi.<name>.diagnostics.overflowCount()` to detect dropped events.
 
+- **MIDI port names are unique within a processor, across inputs and
+  outputs.** Same-name ports shared one ring and one `node.midi.<name>` entry,
+  so `send()` on the input did nothing. A duplicate name now fails the build;
+  rename one of the ports.
+
 ### Fixed
 
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,
