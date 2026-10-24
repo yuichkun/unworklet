@@ -40,7 +40,6 @@ test.each([
 });
 
 test.each([
-  { code: "queue-overflow", source: "midi", name: "keys", dropped: 2 },
   { code: "block-length-mismatch", expected: 128, received: 64 },
   { code: "sab-unavailable" },
   { code: "worklet-initialize-not-called" },

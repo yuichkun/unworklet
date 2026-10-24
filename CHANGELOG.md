@@ -30,6 +30,11 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   their inferred binding name. This restored validation requires the next minor
   release under the pre-1.0 compatibility policy.
 
+- **`NodeErrorEvent` no longer includes `{ code: "queue-overflow" }`.** The
+  runtime never delivered it to `onError`. Remove any `queue-overflow` case and
+  read `node.events.<name>.diagnostics.overflowCount()` or
+  `node.midi.<name>.diagnostics.overflowCount()` to detect dropped events.
+
 ### Fixed
 
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,

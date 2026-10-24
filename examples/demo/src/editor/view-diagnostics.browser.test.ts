@@ -20,8 +20,8 @@ vi.mock("../composables/useUnworkletDemo.ts", async () => {
         failure.value = {
           phase: "runtime",
           severity: "error",
-          code: "queue-overflow",
-          message: "midi keys dropped: 2",
+          code: "wasm-trap",
+          message: "RuntimeError: unreachable",
         };
       });
       return {
@@ -155,7 +155,7 @@ test("a later runtime event cannot inherit a failed compile's source marker", as
   runtimeError();
   await expect
     .element(page.getByRole("alert", { name: "Compilation and runtime errors" }))
-    .toHaveTextContent("queue-overflow");
+    .toHaveTextContent("wasm-trap");
   await expect
     .element(page.getByRole("button", { name: "Show Line 1, column 1" }))
     .not.toBeInTheDocument();
