@@ -169,7 +169,7 @@ test.each([
       }
       await writeFile(
         path.join(root, "index.html"),
-        '<script type="module" src="/main.mjs"></script>',
+        '<link rel="icon" href="data:,"><script type="module" src="/main.mjs"></script>',
       );
       const controls = path.join(root, "node_modules/selfcheck-controls");
       await mkdir(controls);

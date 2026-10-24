@@ -20,6 +20,10 @@ Guidance for AI agents working on unworklet itself.
 
 `unworklet` — a TypeScript-first framework for declarative Audio Worklet DSP, compiled to WebAssembly. It is published: five packages ship from `packages/`, versioned in lockstep (see `RELEASE.md`).
 
+## Delete or simplify first
+
+Before adding anything — code, tests, docs, tooling, or spec — check whether the goal can be met by deleting or simplifying what already exists. Check work against the feature's original intent (`docs/decisions-log.md`); work outside that intent is a candidate to drop, not to perfect.
+
 ## Source of truth
 
 - **The implementation is the truth about behaviour.** There is no separate specification to defer to. A design-time spec drove the v1.0.0 build and was deleted once the implementation shipped and was verified against reality — an unverified second description of the same behaviour can only drift. Recover it from git history at the `v0.1.0` tag if you need the archaeology.

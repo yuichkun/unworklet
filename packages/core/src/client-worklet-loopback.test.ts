@@ -1166,7 +1166,8 @@ for (const crossOriginIsolated of [true, false]) {
       try {
         const pending = createNode(harness.context as never, withWorkletUrls(processor));
         const rejection = pending.catch((error: unknown) => error);
-        for (let spin = 0; spin < 200 && !harness.readyToInitialize(); spin++) {
+        const deadline = Date.now() + 2_000;
+        while (!harness.readyToInitialize() && Date.now() < deadline) {
           await new Promise<void>((resolve) => setImmediate(resolve));
         }
         expect(harness.readyToInitialize()).toBe(true);
@@ -1225,7 +1226,8 @@ for (const crossOriginIsolated of [true, false]) {
       try {
         const pending = createNode(harness.context as never, withWorkletUrls(processor));
         const rejection = pending.catch((error: unknown) => error);
-        for (let spin = 0; spin < 200 && !harness.readyToInitialize(); spin++) {
+        const deadline = Date.now() + 2_000;
+        while (!harness.readyToInitialize() && Date.now() < deadline) {
           await new Promise<void>((resolve) => setImmediate(resolve));
         }
         expect(harness.readyToInitialize()).toBe(true);

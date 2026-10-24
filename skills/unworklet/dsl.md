@@ -514,8 +514,8 @@ event.midi({ to:   "main"; name; capacity?: Capacity }): MidiOutputHandle  // ou
   larger transfers into multiple messages.
 - Outbound: worklet sends with `.emitIf(cond, event)` only — same rule as
   typed `event<T>` above (no bare `.emit` on the worklet-side handle). The
-  MIDI event must include `atSample: number` (the sample index within the
-  current quantum). — [cite: packages/core/src/dsl/declarations.ts :: `function midiToMain(`]
+  MIDI event must include `atSample: Node<"i32"> | number` (the sample index
+  within the current quantum). — [cite: packages/core/src/dsl/declarations.ts :: `function midiToMain(`]
 - Events/MIDI carry **no** infix sugar; the helper/handler shapes are identical
   in both forms. Handler BODIES still get operator / bare-state lowering in `.uwk.ts`.
 - Main-thread side is `node.midi.<name>` with the full `MidiEvent` union (§5).
@@ -892,7 +892,7 @@ that default import, including its declared parameters and message payloads.
 | `node.events.<name>`      | `EventSurface<T>` — `.on(handler)` (out) / `.emit(payload)` (in) / `.diagnostics.overflowCount()`; direction-narrowed                                                                                                                                                                                                                                           |
 | `node.midi.<name>`        | `{ send(event, atTime?); connectFromWebMIDI(input); onEvent(type, handler); diagnostics }`                                                                                                                                                                                                                                                                      |
 | `node.diagnostics`        | `{ readonly transport: "sab" \| "postMessage" }`                                                                                                                                                                                                                                                                                                                |
-| `node.onError(handler)`   | subscribe to `NodeErrorEvent` (`wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch` / `worklet-initialize-not-called`); returns unsubscribe                                                                                                                                                                                             |
+| `node.onError(handler)`   | subscribe to `NodeErrorEvent` (`wasm-trap` / `sab-unavailable` / `block-length-mismatch`); returns unsubscribe                                                                                                                                                                                                                                                  |
 | `node.snapshot(options?)` | `Promise<Uint8Array>` — block-atomic state capture; `options?: { profile?: string }`                                                                                                                                                                                                                                                                            |
 | `node.restore(blob)`      | `Promise<RestoreResult>` — runs migrations, applies slots + param values; never throws (returns `{ ok }`)                                                                                                                                                                                                                                                       |
 | `node.dispose()`          | idempotent teardown; stops polling, removes listeners, disconnects proxies; does not touch your graph edges                                                                                                                                                                                                                                                     |
@@ -933,10 +933,7 @@ Overlapping restores and intervening snapshot or DevTools captures retain their
 request order. Suspended captures still use the parameter settings from invocation.
 A failure after native parameter assignment can leave those assignments in effect;
 restore does not provide transactional rollback. Native AudioParam scheduling still
-controls the exact sample at which a value takes effect. The ordering barrier does
-not guarantee zero stale samples at every suspension/resumption boundary; the
-observed native timing limitation is tracked in
-[issue #155](https://github.com/yuichkun/unworklet/issues/155).
+controls the exact sample at which a value takes effect.
 
 ### `inspect(blob)`
 

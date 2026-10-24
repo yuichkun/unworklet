@@ -1412,13 +1412,7 @@ export async function createNode<C>(
   // Long-lived error forwarder = installed AFTER awaitReady's init-time
   // listeners are removed so the runtime error path (= worklet `{ kind:
   // "error", ... }` messages + `processorerror` event) keeps flowing to
-  // `onError(handler)` subscribers for the node's lifetime. docs/05-client.md
-  // §2 declares `onError` as the discriminated-union surface for 4 codes
-  // (`wasm-trap` / `queue-overflow` / `sab-unavailable` / `block-length-mismatch`).
-  // Phase 6 wires the forwarder skeleton — only `block-length-mismatch` (= from
-  // `worklet.ts` runtime guard) and `wasm-trap` (= from `processorerror`) are
-  // posted at this stage. `queue-overflow` / `sab-unavailable` plumbing lands when
-  // the matching transports ship (= 02-messaging.md / 04-worklet-runtime.md §8).
+  // `onError(handler)` subscribers for the node's lifetime.
   const errorSubscribers = new Set<(event: NodeErrorEvent) => void>();
   const dispatchError = (event: NodeErrorEvent): void => {
     for (const fn of errorSubscribers) {
