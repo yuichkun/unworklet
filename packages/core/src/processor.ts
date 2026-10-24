@@ -12,7 +12,6 @@
 
 import type {
   CompiledProcessor,
-  Node,
   ProcessorBody,
   ProcessorContext,
   ProcessorGraph,
@@ -114,18 +113,6 @@ export type CreateSubgraphOptions = {
   name?: string;
 };
 
-/**
- * One subgraph lambda arg, widened to also accept the raw primitive that lifts
- * to its `Node` type: a `Node<"f32">` / numeric-Node arg also accepts a bare
- * `number`, a `Node<"bool">` arg also accepts a `boolean`. This is what lets the
- * `.uwk.ts` sugar write `instantiate(onepole, 0.2)` (the lowering wraps the bare
- * `0.2` into `f32(0.2)` before it reaches the runtime). A non-`Node` arg — e.g.
- * a plain-number config like `defineSubgraph((sr: number) => ...)` — is left
- * exactly as declared, so it is NOT widened and is NOT lifted at runtime.
- */
-type LiftArg<A> = A extends Node<infer T> ? (T extends "bool" ? A | boolean : A | number) : A;
-type LiftArgs<Args extends unknown[]> = { [K in keyof Args]: LiftArg<Args[K]> };
-
 // Treat a trailing argument as instantiate options only when it is a plain
 // object whose sole key is `name` — this distinguishes it from a lambda arg that
 // is a Node, an array, or a multi-key object.
@@ -152,14 +139,10 @@ function isCreateSubgraphOptions(v: unknown): v is CreateSubgraphOptions {
  */
 export function instantiate<Args extends unknown[], Methods>(
   subgraph: SubgraphDecl<Args, Methods>,
-  // The lambda args, constrained to the subgraph's declared tuple (each `Node`
-  // arg also accepting its liftable primitive), plus an optional trailing
-  // options object. A wrong type, a wrong arity, or a non-liftable value is a
-  // compile error — the prior `...rest: unknown[]` accepted anything. There is
-  // no runtime lift: a `Node` arg is either an explicit `Node` (raw core) or a
-  // sugar literal the lowering already wrapped; a plain-number arg stays a
-  // plain number.
-  ...rest: [...LiftArgs<Args>, CreateSubgraphOptions?]
+  // The subgraph's declared args, then optional options. Args reach the body
+  // as passed, so a `Node` arg must already be a `Node` (`f32(0.5)`): a bare
+  // number would fail on the first method-form call (`coef.add(x)`).
+  ...rest: [...Args, CreateSubgraphOptions?]
 ): Methods {
   const body = (subgraph as unknown as Record<symbol, ((...a: Args) => Methods) | undefined>)[
     SUBGRAPH_BODY

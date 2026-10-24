@@ -40,6 +40,13 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   so `send()` on the input did nothing. A duplicate name now fails the build;
   rename one of the ports.
 
+- **`instantiate` no longer accepts a bare number or boolean for a `Node`
+  argument.** `instantiate(sg, 0.5)` type-checked, but the subgraph body
+  received the raw number, so a method-form call such as `coef.add(x)` threw
+  at build time. Construct the argument: `instantiate(sg, f32(0.5))` or
+  `instantiate(sg, bool(true))`. Plain-number arguments such as
+  `(sr: number) => …` are unchanged.
+
 ### Fixed
 
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,
