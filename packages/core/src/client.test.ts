@@ -5191,3 +5191,93 @@ for (const shutdownThrows of [false, true]) {
     });
   }
 }
+
+for (const surface of ["event", "midi", "state-only", "midi-in-only"] as const) {
+  test(`stopped-context publication retries follow drain lifecycle (${surface})`, async () => {
+    const raf = installRafMock();
+    const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+    try {
+      Object.assign(h.context, { state: "running" });
+      const node = await startCreate(
+        () =>
+          createNode(
+            h.context as never,
+            makeMockProcessor({
+              ...publishFixture,
+              eventRings: surface === "event" ? [peakEventRing] : [],
+              midiRings:
+                surface === "midi"
+                  ? [midiInFixture, midiOutFixture]
+                  : surface === "midi-in-only"
+                    ? [midiInFixture]
+                    : [],
+            }),
+          ),
+        h.fireReady,
+      );
+      const sent: unknown[] = [];
+      h.lastNode!.port.postMessage = (message) => sent.push(message);
+      const off = node.state.v!.subscribe(() => {});
+      raf.flush();
+      expect(sent).toEqual([]);
+      const hasOutput = surface === "event" || surface === "midi";
+      Object.assign(h.context, { state: "suspended" });
+      raf.flush();
+      expect(sent).toEqual(hasOutput ? [{ kind: "egress-flush" }] : []);
+      sent.length = 0;
+      for (const listener of h.lastNode!.port.__listeners)
+        listener({ data: { kind: "egress-flushed" } });
+      Object.assign(h.context, { state: "closed" });
+      raf.flush();
+      expect(sent).toEqual(hasOutput ? [{ kind: "egress-flush" }] : []);
+      sent.length = 0;
+      for (const listener of h.lastNode!.port.__listeners)
+        listener({ data: { kind: "egress-flushed" } });
+      Object.assign(h.context, { state: "interrupted" });
+      raf.flush();
+      expect(sent).toEqual(hasOutput ? [{ kind: "egress-flush" }] : []);
+      sent.length = 0;
+      off();
+      raf.flush();
+      expect(sent).toEqual([]);
+      node.state.v!.subscribe(() => node.dispose());
+      const publish = new Int32Array(
+        h.lastNode!.__constructorRecord.options.processorOptions!
+          .publishBuffer as SharedArrayBuffer,
+      );
+      publish.set([42, 0, 1]);
+      raf.flush();
+      expect(sent).toEqual([{ kind: "shutdown" }]);
+      expect(raf.pending).toBe(0);
+    } finally {
+      h.cleanup();
+      raf.restore();
+    }
+  });
+}
+
+test("stopped-context retry keeps only one control request in flight", async () => {
+  const raf = installRafMock();
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    Object.assign(h.context, { state: "closed" });
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ eventRings: [peakEventRing] })),
+      h.fireReady,
+    );
+    const sent: unknown[] = [];
+    h.lastNode!.port.postMessage = (message) => sent.push(message);
+    node.events.peak!.on(() => {});
+    raf.flush();
+    raf.flush();
+    expect(sent).toEqual([{ kind: "egress-flush" }]);
+    for (const listener of h.lastNode!.port.__listeners)
+      listener({ data: { kind: "egress-flushed" } });
+    raf.flush();
+    expect(sent).toEqual([{ kind: "egress-flush" }, { kind: "egress-flush" }]);
+    node.dispose();
+  } finally {
+    h.cleanup();
+    raf.restore();
+  }
+});

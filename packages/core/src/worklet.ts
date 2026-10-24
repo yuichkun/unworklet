@@ -482,6 +482,67 @@ type ProcessorOptionsBag = {
   };
 };
 
+/** Publish retained output without advancing DSP, including between render quanta. */
+function publishSabEgress(state: WorkletState): void {
+  if (state.transport !== "sab") return;
+  // event ring copy — SAB path: slot-region bulk copy (NOT the header) +
+  // header Atomics commits. The postMessage path is handled by the pooled
+  // egress frame below, shared with the MIDI out rings (`egressFrame.ts`).
+  if (state.eventRings.length > 0 && state.eventRingsBuffer !== null) {
+    const sabSlotViews = state.eventRingsSabSlotViews;
+    const wasmSlotViews = state.eventRingsWasmSlotViews;
+    const wasmHeaders = state.eventRingsWasmHeaderViews;
+    const sabHeaders = state.eventRingsSabHeaderViews;
+    for (let i = 0; i < state.eventRings.length; i++) {
+      const access = state.egressAccess!;
+      // A busy reader owns a complete snapshot in progress. Keep the WASM
+      // backlog for a later publication; the audio thread never waits for main.
+      if (Atomics.compareExchange(access, i, 0, 1) !== 0) continue;
+      try {
+        const wasmH = wasmHeaders[i]!;
+        const currentHead = wasmH[0]!;
+        const currentTail = wasmH[1]!;
+        const currentOverflow = wasmH[2]!;
+        sabSlotViews[i]!.set(wasmSlotViews[i]!);
+        const contentWasm = state.eventContentWasmViews[i];
+        const contentSab = state.eventContentSabViews[i];
+        if (contentWasm !== null && contentSab !== null) contentSab.set(contentWasm);
+        const sabH = sabHeaders[i]!;
+        atomicMonotoneMax(sabH, 1, currentTail);
+        Atomics.store(sabH, 2, currentOverflow);
+        Atomics.store(sabH, 0, currentHead);
+      } finally {
+        Atomics.store(access, i, 0);
+      }
+    }
+  }
+
+  for (let i = 0; i < state.midiRings.length; i++) {
+    if (state.midiRings[i]!.direction !== "out") continue;
+    const wasmH = state.midiRingsWasmHeaderViews[i]!;
+    if (state.midiRingsBuffer !== null) {
+      const access = state.egressAccess!;
+      const accessIndex = state.eventRings.length + i;
+      if (Atomics.compareExchange(access, accessIndex, 0, 1) !== 0) continue;
+      try {
+        const currentHead = wasmH[0]!;
+        const currentTail = wasmH[1]!;
+        const currentOverflow = wasmH[2]!;
+        state.midiRingsSabSlotViews[i]!.set(state.midiRingsWasmSlotViews[i]!);
+        const sysexWasm = state.sysexContentWasmViews[i];
+        const sysexSab = state.sysexContentSabViews[i];
+        if (sysexWasm !== null && sysexSab !== null) sysexSab.set(sysexWasm);
+        const sabH = state.midiRingsSabHeaderViews[i]!;
+        atomicMonotoneMax(sabH, 1, currentTail);
+        Atomics.store(sabH, 2, currentOverflow);
+        Atomics.store(sabH, 0, currentHead);
+      } finally {
+        Atomics.store(access, accessIndex, 0);
+      }
+    }
+  }
+}
+
 /**
  * postMessage-path egress: encode one quantum's worklet→main ring news (event
  * rings + MIDI out rings) into a pooled transferable frame and post it. See
@@ -502,7 +563,7 @@ type ProcessorOptionsBag = {
  * must be rebound (see the `egress-buffer` / `egress-recycle` handler). What
  * the pool removes is everything that SCALES — the per-quantum frame buffer and
  * the per-slot copies. This is the fallback for realms without a
- * SharedArrayBuffer, where the primary path exchanges no messages at all.
+ * SharedArrayBuffer, where rendering publishes directly into shared rings.
  */
 function postEgressFrame(self: SelfWithState, state: WorkletState): void {
   const eventRings = state.eventRings;
@@ -1326,6 +1387,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         return { applied, skipped, missing };
       };
 
+      const egressFlushed = { kind: "egress-flushed" };
       if (typeof port.addEventListener === "function") {
         handleMessage = (event: MessageEvent) => {
           const data = event.data as
@@ -1386,6 +1448,16 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
                   if (ringLeads(tail, wasmH[1]!)) wasmH[1] = tail;
                 }
               }
+            }
+            if (transport === "postMessage" && !self[STOPPED_KEY]) {
+              postEgressFrame(self, self[STATE_KEY]!);
+            }
+            return;
+          }
+          if (data.kind === "egress-flush") {
+            if (!self[STOPPED_KEY]) {
+              publishSabEgress(self[STATE_KEY]!);
+              self.port.postMessage(egressFlushed);
             }
             return;
           }
@@ -1862,41 +1934,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    // event ring copy — SAB path: slot-region bulk copy (NOT the header) +
-    // header Atomics commits. The postMessage path is handled by the pooled
-    // egress frame below, shared with the MIDI out rings (`egressFrame.ts`).
-    if (
-      state.eventRings.length > 0 &&
-      state.transport === "sab" &&
-      state.eventRingsBuffer !== null
-    ) {
-      const sabSlotViews = state.eventRingsSabSlotViews;
-      const wasmSlotViews = state.eventRingsWasmSlotViews;
-      const wasmHeaders = state.eventRingsWasmHeaderViews;
-      const sabHeaders = state.eventRingsSabHeaderViews;
-      for (let i = 0; i < state.eventRings.length; i++) {
-        const access = state.egressAccess!;
-        // A busy reader owns a complete snapshot in progress. Keep the WASM
-        // backlog for another quantum; the audio thread never waits for main.
-        if (Atomics.compareExchange(access, i, 0, 1) !== 0) continue;
-        try {
-          const wasmH = wasmHeaders[i]!;
-          const currentHead = wasmH[0]!;
-          const currentTail = wasmH[1]!;
-          const currentOverflow = wasmH[2]!;
-          sabSlotViews[i]!.set(wasmSlotViews[i]!);
-          const contentWasm = state.eventContentWasmViews[i];
-          const contentSab = state.eventContentSabViews[i];
-          if (contentWasm !== null && contentSab !== null) contentSab.set(contentWasm);
-          const sabH = sabHeaders[i]!;
-          atomicMonotoneMax(sabH, 1, currentTail);
-          Atomics.store(sabH, 2, currentOverflow);
-          Atomics.store(sabH, 0, currentHead);
-        } finally {
-          Atomics.store(access, i, 0);
-        }
-      }
-    }
+    publishSabEgress(state);
 
     if (state.transport !== "sab") {
       for (let i = 0; i < state.messageRingsWasmHeaderViews.length; i++) {
@@ -1912,46 +1950,17 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       }
     }
 
-    if (state.midiRings.length > 0) {
-      const isSab = state.transport === "sab";
+    if (state.transport !== "sab") {
       for (let i = 0; i < state.midiRings.length; i++) {
-        const ring = state.midiRings[i]!;
-        const wasmH = state.midiRingsWasmHeaderViews[i]!;
-        if (ring.direction === "out") {
-          // SAB path only — the postMessage path rides the pooled egress frame
-          // below, shared with the event rings (`egressFrame.ts`).
-          if (isSab && state.midiRingsBuffer !== null) {
-            const access = state.egressAccess!;
-            const accessIndex = state.eventRings.length + i;
-            if (Atomics.compareExchange(access, accessIndex, 0, 1) !== 0) continue;
-            try {
-              const currentHead = wasmH[0]!;
-              const currentTail = wasmH[1]!;
-              const currentOverflow = wasmH[2]!;
-              state.midiRingsSabSlotViews[i]!.set(state.midiRingsWasmSlotViews[i]!);
-              const sysexWasm = state.sysexContentWasmViews[i];
-              const sysexSab = state.sysexContentSabViews[i];
-              if (sysexWasm !== null && sysexSab !== null) sysexSab.set(sysexWasm);
-              const sabH = state.midiRingsSabHeaderViews[i]!;
-              atomicMonotoneMax(sabH, 1, currentTail);
-              Atomics.store(sabH, 2, currentOverflow);
-              Atomics.store(sabH, 0, currentHead);
-            } finally {
-              Atomics.store(access, accessIndex, 0);
-            }
-          }
-        } else {
-          if (!isSab) {
-            const currentOverflow = wasmH[2]!;
-            if (currentOverflow !== state.lastSentMidiInOverflows[i]) {
-              self.port.postMessage({
-                kind: "midi-overflow",
-                ringIndex: i,
-                overflowCount: currentOverflow,
-              });
-              state.lastSentMidiInOverflows[i] = currentOverflow;
-            }
-          }
+        if (state.midiRings[i]!.direction !== "in") continue;
+        const currentOverflow = state.midiRingsWasmHeaderViews[i]![2]!;
+        if (currentOverflow !== state.lastSentMidiInOverflows[i]) {
+          self.port.postMessage({
+            kind: "midi-overflow",
+            ringIndex: i,
+            overflowCount: currentOverflow,
+          });
+          state.lastSentMidiInOverflows[i] = currentOverflow;
         }
       }
     }
