@@ -42,6 +42,45 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   Existing stride, nesting, and snapshot behavior is preserved; no migration is
   required for public snapshots.
 
+- Events and MIDI emitted in the last rendered quantum reach subscribers after the
+  context suspends, closes or is interrupted, and after an offline render ends.
+
+- A `createNode()` whose ready handshake fails or times out shuts its worklet
+  down: the processor renders silence and stops, including after a WebAssembly
+  initialization failure. The handshake error remains the rejection reason.
+
+- Live `restore()` commits persistent state only after the restored AudioParam
+  values reach the rendering thread, so restored state no longer runs under the
+  previous parameter values.
+
+- Outbound events and MIDI without `atSample` are timestamped with the innermost
+  sample index in nested loops, and with block start in message and MIDI handlers.
+
+- Floating-point remainder (`%`) returns the exact result for finite inputs.
+
+- DSP-conditional buffer writes accept computed indices, such as
+  `if (i < 127) buf[i + 1] = 0.5`.
+
+- `.uwk.ts` runtime compilation keeps core import aliases and namespace imports
+  working instead of failing with `ReferenceError`.
+
+- Authored names such as `mul` or `select` no longer collide with the helpers
+  generated for operator sugar.
+
+- Helper results returned from `if`/`else` branches, and DSP values stored in
+  local array or object literals, keep DSP arithmetic instead of rendering
+  silence.
+
+- `options()` and `migrations()` references are distinguished from object keys
+  and property names that share a processor-body declaration's name.
+
+- Vite dev servers enable the ring self-checks inside the AudioWorklet realm,
+  including for prebundled dependencies.
+
+- DevTools keeps telemetry and MIDI injection separate for each app page on the
+  same dev server, keeps a note held by one input when another input releases
+  it, and labels Signals measurements as a mono downmix.
+
 ## 0.5.0 — 2026-10-06
 
 Safer processor compilation and testing, more reliable runtime and hot-reload
