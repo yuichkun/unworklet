@@ -202,6 +202,9 @@ importers:
       bumpp:
         specifier: ^11.1.0
         version: 11.1.0
+      esbuild:
+        specifier: 'catalog:'
+        version: 0.28.0
       fast-check:
         specifier: 'catalog:'
         version: 4.8.0

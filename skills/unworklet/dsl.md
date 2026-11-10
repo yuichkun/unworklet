@@ -537,7 +537,7 @@ process(() => {
   });
   keys.onEvent("noteOff", () => gate.write(0));
   forSample((i) => {
-    phase.write((phase + hz / 48000) % 1);
+    phase.write((phase + hz / ctx.sampleRate) % 1);
     out.ch(0)[i] = sin(phase * (Math.PI * 2)) * gate * 0.2;
   });
 });
@@ -880,26 +880,22 @@ stages. In-flight copies can therefore use additional storage. Disposal cancels
 pending retries.
 
 ```ts
-const ctx = new AudioContext({ sampleRate: 48000 });
+const ctx = new AudioContext(); // any sampleRate / renderSizeHint
 const node = await createNode(ctx, stereoGain, { initial: { gain: 0.5 } });
 ```
 
-### Rate gate — `?worklet` bakes 48 kHz
+### Compile target — any context rate and render quantum
 
-The WASM bakes rate-dependent coefficients at build time, so `createNode`
-**throws** when `context.sampleRate !== bakedSampleRate`. A `?worklet` import bakes
-`DEFAULT_SAMPLE_RATE = 48000` unless compiled otherwise — create the context at
-the baked rate. — [cite: packages/core/src/client.ts :: `contextSampleRate !== bakedSampleRate`], [cite: packages/core/src/compile/index.ts :: `const DEFAULT_SAMPLE_RATE = 48000;`]
-
-```ts
-new AudioContext({ sampleRate: 48000 });
-new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate: 48000 });
-```
-
-The WASM is also sized for one render quantum (`bakedRenderQuantumSize`, 128 for a
-`?worklet` import), so `createNode` throws when the context's `renderQuantumSize`
-differs — a context created with a `renderSizeHint`. A context without
-`renderQuantumSize` counts as 128. — [cite: packages/core/src/client.ts :: `contextRenderQuantumSize !== bakedRenderQuantumSize`]
+The WASM fixes its compile target: `bakedSampleRate` (the coefficients) and
+`bakedRenderQuantumSize` (samples per call), 48000 and 128 for a `?worklet`
+import. A context without `renderQuantumSize` counts as 128. When the context
+matches, `createNode` loads the build's WASM. When either differs, it compiles
+the processor for the context in the processor's compile worker
+(`worklet.compileWorkerUrl`, a module Web Worker the plugin emits) and loads the
+result from a Blob URL; the node then plays exactly what a build for that
+target would. The rejection when the namespace has no compile worker, or when
+the compile fails, names both targets. — [cite: packages/core/src/client.ts :: `bakedRenderQuantumSize !== undefined && contextRenderQuantumSize !== bakedRenderQuantumSize;`] [cite: packages/core/src/runtimeCompile.ts :: `export async function compileForContext(`]
+Costs, CSP / COEP requirements and failure modes → setup.md §5.
 
 ### `UnworkletNode<C>` surface
 
@@ -1048,9 +1044,10 @@ with core `Node` method chains _inside_ a `.uwk.ts` is fine and common (§2).
   `lowerToProcessor(src)` from `@unworklet/lang/browser`.
   [cite: packages/lang/src/browser.ts :: `export function lowerToProcessor(`]
   [cite: packages/lang/src/browser.ts :: `export async function compileSource(`]
-  `compileSource` bakes
-  48000 Hz: use `new AudioContext({ sampleRate: 48000 })`. `createNode` rejects
-  other context rates before module loading; browser compilation has no rate option.
+  `compileSource(src, { sampleRate, renderQuantumSize })` compiles for that
+  target (defaults 48000 and 128) with no compile worker, so pass the context's:
+  `{ sampleRate: ctx.sampleRate, renderQuantumSize: ctx.renderQuantumSize ?? 128 }`.
+  `createNode` rejects a context that differs before module loading.
   **Programmatic:**
   `lower(uwkSource, { exportName })` → virtual `.ts` string. — [cite: packages/lang/src/index.ts :: `export { lower, LowerError }`]
 - **Test:** render with `@unworklet/offline` (`renderOffline`) + assert with

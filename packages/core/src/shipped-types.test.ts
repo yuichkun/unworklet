@@ -15,6 +15,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import vm from "node:vm";
 
 import ts from "typescript";
 import { beforeAll, expect, test } from "vite-plus/test";
@@ -70,6 +71,31 @@ test("shipped dist carries the Node chain-method API (README + .uwk.ts lowering 
 export const r = [n.add(1), n.sub(1), n.mul(2), n.div(2), n.mod(1), n.neg(), n.eq(0), n.sin()];`,
   );
   expect(msgs).toEqual([]);
+});
+
+test("shipped dist types the compile worker and the inline worklet runtime", () => {
+  const msgs = diagnoseAgainstCore(
+    `import workletRuntime from "./core-dist/worklet-runtime.mjs";
+import { serveCompileRequests } from "./core-dist/compile-worker.mjs";
+import type { CompiledProcessor } from "./core-dist/index.mjs";
+export const source: string = workletRuntime;
+export const serve = (p: CompiledProcessor<unknown>): void =>
+  serveCompileRequests(p, { workletRuntime });`,
+  );
+  expect(msgs).toEqual([]);
+});
+
+test("the shipped inline worklet runtime defines the namespace factory without imports", async () => {
+  const { default: workletRuntime } = (await import(
+    path.join(CORE, "dist/worklet-runtime.mjs")
+  )) as {
+    default: string;
+  };
+  expect(workletRuntime).not.toMatch(/^\s*import\s/m);
+  // A fresh realm stands in for the AudioWorkletGlobalScope a Blob module runs in.
+  const realm = vm.createContext({});
+  vm.runInContext(workletRuntime, realm);
+  expect(typeof (realm as { __uwkMakeNs?: unknown }).__uwkMakeNs).toBe("function");
 });
 
 test("shipped dist carries the simd method surface (lane / loadVec / storeVec)", () => {

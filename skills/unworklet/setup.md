@@ -2,7 +2,7 @@
 
 Scaffold an unworklet project: install the `@unworklet/*` packages, register the
 Vite plugin (optionally with the DevTools dock), wire TypeScript through the
-generated tsconfig, and create the `AudioContext` at the baked 48 kHz. This file
+generated tsconfig, and create the `AudioContext` at any rate. This file
 is the project wiring. Authoring the DSP and the load / `createNode` API both live
 in dsl.md — §1-4 and §5 respectively.
 
@@ -222,22 +222,63 @@ Both compile to the same `CompiledProcessor` and both load identically via
 detail (sugar, the core method API, subgraphs) → dsl.md §1-4; the `?worklet` import +
 `createNode` → dsl.md §5.
 
-## 5. AudioContext — must run at 48 kHz
+## 5. AudioContext — any sample rate and render quantum
 
-A `?worklet` import bakes rate-dependent WASM coefficients at **48 kHz** by
-default (`bakedSampleRate = DEFAULT_SAMPLE_RATE = 48000`;
-[cite: packages/core/src/compile/index.ts :: `const DEFAULT_SAMPLE_RATE = 48000;`] [cite: packages/core/src/compile/index.ts :: `const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;`]). `createNode` **throws** when the
-`AudioContext` rate differs from the baked rate, so create the context at 48000 Hz:
+A processor's WASM is fixed to one compile target: the sample rate its
+coefficients were computed for (`ctx.sampleRate`) and the samples per
+`process()` call (`ctx.renderQuantumSize`). A `?worklet` import is built for
+**48000 Hz and 128 samples** [cite: packages/core/src/compile/index.ts :: `const DEFAULT_SAMPLE_RATE = 48000;`].
+Create the context however the app needs — the device's default rate, a
+`renderSizeHint`, an `OfflineAudioContext` at the file's rate:
 
 ```ts
-const ctx = new AudioContext({ sampleRate: 48000 });
-// headless: new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate: 48000 });
+const ctx = new AudioContext(); // device rate; or { sampleRate }, { renderSizeHint }
+// headless: new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate });
 ```
 
-(rate gate [cite: packages/core/src/client.ts :: `contextSampleRate !== bakedSampleRate`]; rationale
-[cite: packages/core/src/types.ts :: `bakedSampleRate?: number;`]) The full load sequence and the
-`UnworkletNode` surface (`params` / `state` / `events` / `midi` / `inputs` /
-`outputs`) → dsl.md §5.
+When the context matches the build, `createNode` loads the build's WASM. When
+its rate or `renderQuantumSize` differs, `createNode` compiles the processor for
+the context in a Web Worker, then loads the result:
+
+| Step                     | Where                                                            | Detail                                                                                                                                             |
+| ------------------------ | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Start the compile worker | page, `new Worker(worklet.compileWorkerUrl, { type: "module" })` | `@unworklet/unplugin` emits one per processor; the compiler (binaryen) never runs on the main thread                                               |
+| Compile for the context  | worker                                                           | `{ sampleRate, renderQuantumSize }` of the context; the worker replies with WASM, metadata and a self-contained worklet module, then is terminated |
+| Load                     | page                                                             | the module through a Blob URL (`audioWorklet.addModule`, revoked after), the WASM through `WebAssembly.compile`                                    |
+
+[cite: packages/core/src/client.ts :: `const compiled = await compileForContext(context, built, target);`]
+[cite: packages/core/src/runtimeCompile.ts :: `export async function compileForContext(`]
+
+- **Cost.** The first node on such a context waits for the worker to load the
+  compiler and compile (one compile per processor, rate and quantum per page
+  load; later nodes reuse it, and at most two compiles run at once). The
+  compiler is a separate chunk of the build, fetched only by the worker: about
+  12.6 MB, 2.7 MB gzipped, shared by every processor's worker (measured on a
+  minimal Vite+ build with binaryen 129). A compile that takes longer than 60 s
+  is abandoned.
+- **Content-Security-Policy.** A page with a CSP must allow `blob:` in
+  `script-src` (the worklet module), `'wasm-unsafe-eval'` (already needed for
+  any WASM), and same-origin workers (`worker-src 'self'`, which `script-src`
+  covers when `worker-src` is unset).
+- **Cross-origin isolation.** On a cross-origin-isolated page the worker
+  script must carry the page's `Cross-Origin-Embedder-Policy`. The plugin's dev
+  server and `vite preview` set it; serve the built `*.compile-worker-*.js` with
+  the same headers as the page.
+- **The worker evaluates the processor module.** Keep a processor file free of
+  DOM side effects at module level (`document`, `window`): the worker has none.
+- **A target the processor cannot meet fails `createNode`.** `forSample.byN`
+  strides must divide the quantum and literal `.at(k)` offsets must lie inside
+  it, so a processor valid at 128 can fail at 32; the rejection names the
+  target and the diagnostic ID (`illegal-stride`, …).
+- **No compile worker** (a hand-built namespace, `compile`, `compileSource`):
+  compile for the context yourself — `compile(processor, { sampleRate,
+renderQuantumSize })`, or `compileSource(source, { sampleRate,
+renderQuantumSize })` in the browser — or `createNode` rejects a mismatch
+  before loading anything. Pass `context.renderQuantumSize ?? 128`.
+
+(rationale [cite: packages/core/src/types.ts :: `bakedSampleRate?: number;`]) The full
+load sequence and the `UnworkletNode` surface (`params` / `state` / `events` /
+`midi` / `inputs` / `outputs`) → dsl.md §5.
 
 ## Hot reload
 

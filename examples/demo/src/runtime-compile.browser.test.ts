@@ -152,7 +152,39 @@ process(() => { forSample(i => { ${write} }); });`);
   }
 });
 
-test("the live-coding demo requests the baked rate on a 44.1 kHz device", async () => {
+test("compileSource compiles for the context it is given: 440 Hz at 44.1 kHz", async () => {
+  const proc = await compileSource(
+    `const out = audioOutput({ channels: 1, name: "main" });
+const phase = state.f32(0);
+process(() => { forSample(i => { phase.write((phase + 440 / ctx.sampleRate) % 1); out.ch(0)[i] = sin(phase * (Math.PI * 2)) * 0.5; }); });`,
+    { sampleRate: 44100, renderQuantumSize: 128 },
+  );
+  try {
+    expect(proc.worklet.bakedSampleRate).toBe(44100);
+    expect(proc.worklet.bakedRenderQuantumSize).toBe(128);
+    const context = new OfflineAudioContext(1, 22050, 44100);
+    const node = await createNode(context, proc);
+    node.outputs["main"]!.connect(context.destination);
+    const samples = (await context.startRendering()).getChannelData(0);
+    node.dispose();
+    let first = -1;
+    let last = -1;
+    let crossings = 0;
+    for (let k = 1; k < samples.length; k++) {
+      if (samples[k - 1]! < 0 && samples[k]! >= 0) {
+        if (first < 0) first = k;
+        last = k;
+        crossings++;
+      }
+    }
+    expect(((crossings - 1) * 44100) / (last - first)).toBeCloseTo(440, 0);
+  } finally {
+    URL.revokeObjectURL(proc.worklet.moduleUrl!);
+    URL.revokeObjectURL(proc.worklet.wasmUrl!);
+  }
+});
+
+test("the live-coding demo compiles for a 44.1 kHz device's rate", async () => {
   const NativeAudioContext = globalThis.AudioContext;
   const contexts: AudioContext[] = [];
   const addModule = vi.fn().mockRejectedValue(new Error("module loading reached"));
@@ -173,7 +205,9 @@ test("the live-coding demo requests the baked rate on a 44.1 kHz device", async 
     const demo = useUnworkletDemo();
     await demo.prepare(examples.find((example) => example.slug === "distortion")!);
     expect(contexts).toHaveLength(1);
-    expect(contexts[0]!.sampleRate).toBe(48000);
+    // The device rate is kept, and the source compiled for it passes createNode's
+    // rate check and reaches module loading.
+    expect(contexts[0]!.sampleRate).toBe(44100);
     expect(addModule).toHaveBeenCalledTimes(1);
     expect(demo.error.value).toBe("Error: module loading reached");
   } finally {

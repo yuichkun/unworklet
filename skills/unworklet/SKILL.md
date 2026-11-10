@@ -5,7 +5,7 @@ description: Authoring, building, testing, or wiring a Web Audio AudioWorklet pr
 
 # unworklet
 
-unworklet builds Web Audio `AudioWorklet` processors from declarative source. You author DSP in a `.uwk.ts` file (or the explicit `@unworklet/core` method API in a `.processor.ts`); `@unworklet/unplugin` (a Vite plugin) lowers and compiles each processor to fixed-memory, bounded-work WASM at build time, and exposes it through a `?worklet` import. `@unworklet/core`'s `createNode` loads that import and returns a fully-typed main-thread node (`params` / `state` / `events` / `midi` / `inputs` / `outputs`). The `postMessage` compatibility transport can allocate during message delivery and recycling, so the complete fallback audio thread has no allocation-free or GC-free guarantee. A processor `.uwk.ts` cannot contain additional module-level exports: import shared values and types from a separate module instead. A `?worklet` import and browser `compileSource` bake 48 kHz coefficients by default, so the `AudioContext` must run at 48000 Hz or `createNode` throws. Offline render (`@unworklet/offline`), matchers (`@unworklet/test`), a drop-in typecheck CLI (`unworklet-tsc`), and a Vite DevTools panel complete the toolchain.
+unworklet builds Web Audio `AudioWorklet` processors from declarative source. You author DSP in a `.uwk.ts` file (or the explicit `@unworklet/core` method API in a `.processor.ts`); `@unworklet/unplugin` (a Vite plugin) lowers and compiles each processor to fixed-memory, bounded-work WASM at build time, and exposes it through a `?worklet` import. `@unworklet/core`'s `createNode` loads that import and returns a fully-typed main-thread node (`params` / `state` / `events` / `midi` / `inputs` / `outputs`). The `postMessage` compatibility transport can allocate during message delivery and recycling, so the complete fallback audio thread has no allocation-free or GC-free guarantee. A processor `.uwk.ts` cannot contain additional module-level exports: import shared values and types from a separate module instead. A processor's WASM is built for one sample rate and render quantum (48 kHz and 128 samples for a `?worklet` import); `createNode` compiles a `?worklet` processor for any other `AudioContext` in a Web Worker, and browser `compileSource(source, { sampleRate, renderQuantumSize })` compiles for the context you pass. Offline render (`@unworklet/offline`), matchers (`@unworklet/test`), a drop-in typecheck CLI (`unworklet-tsc`), and a Vite DevTools panel complete the toolchain.
 
 **`.uwk.ts` is the primary, recommended authoring form.** `.processor.ts` (the explicit `@unworklet/core` method API) is the secondary, lower-level alternative — it compiles to the same result; reach for it only when you need a surface `.uwk.ts` does not expose (e.g. SIMD). Never treat `.uwk.ts` as optional/skippable sugar.
 
@@ -34,7 +34,7 @@ unworklet builds Web Audio `AudioWorklet` processors from declarative source. Yo
    // package.json
    { "scripts": { "build": "vite build && unworklet-tsc --noEmit" } }
    ```
-5. **Load / wire** the processor: default-import it with `?worklet` and pass it to `createNode` on a 48 kHz `AudioContext`. → dsl.md §5
+5. **Load / wire** the processor: default-import it with `?worklet` and pass it to `createNode` on any `AudioContext`. → dsl.md §5, setup.md §5
 
 ## A `.uwk.ts` taste
 
@@ -54,13 +54,13 @@ process(() => {
 });
 ```
 
-Load it (`README.md` quick start; rate gate [cite: packages/core/src/client.ts :: `contextSampleRate !== bakedSampleRate`]):
+Load it (`README.md` quick start; other rates and render quanta [cite: packages/core/src/client.ts :: `const compiled = await compileForContext(context, built, target);`]):
 
 ```ts
 import { createNode } from "@unworklet/core";
 import stereoGain from "./stereo-gain.uwk.ts?worklet";
 
-const ctx = new AudioContext({ sampleRate: 48000 }); // must equal the baked 48 kHz
+const ctx = new AudioContext(); // any rate; a mismatch compiles in a Web Worker
 const node = await createNode(ctx, stereoGain);
 node.outputs.main.connect(ctx.destination);
 node.params.gain.value = 0.5; // fully-typed AudioParam (name auto-derived from the binding)
@@ -78,7 +78,7 @@ they do not prove the surrounding behavior claim.
 ## Read more (siblings)
 
 - **dsl.md** — authoring the processor AND loading it: the `.uwk.ts` sugar (operators, index, bare-state read, `if`/`?:`, `$prev`, auto-name, subgraphs), the underlying `@unworklet/core` declaration API (`audioInput`/`audioOutput`, `param`, `state`, `state.buffer`, `event`/`event.midi`, `forSample`/`forIndex`, `defineSubgraph`/`instantiate`, math ops), the `?worklet` import + `createNode` + the `UnworkletNode` surface (§5), and the `.processor.ts` alternative.
-- **setup.md** — scaffolding & wiring: which `@unworklet/*` packages to install, `vite.config.ts`, the generated `.unworklet/` dir + tsconfig, file conventions, and the 48 kHz rate gate.
+- **setup.md** — scaffolding & wiring: which `@unworklet/*` packages to install, `vite.config.ts`, the generated `.unworklet/` dir + tsconfig, file conventions, and running at any rate / render quantum (compile worker, CSP, COEP).
 - **ide-and-typecheck.md** — editor types & CI: the `@unworklet/lang/typescript-plugin` editor plugin and the `unworklet-tsc` drop-in typecheck CLI.
 - **testing.md** — headless tests: `renderOffline` (the Node oracle) plus `@unworklet/test` plain matchers, the chain form (`@unworklet/test/extend`), signal generators, and MIDI builders.
 - **devtools.md** — in-browser inspector: the Vite DevTools dock (4 panels), the `@vitejs/devtools` 0.4.x install (host + kit + 4 adapters), and cross-origin isolation.

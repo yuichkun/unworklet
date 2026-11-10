@@ -190,10 +190,13 @@ forIndex(64, (k) => {
 - `defineProcessor(body)` / `defineSubgraph(body)` / `instantiate(decl, ...args)` — compose graphs. `defineProcessor` already returns a ready `CompiledProcessor` — hand it straight to `createNode` or `renderOffline` (`@unworklet/offline`).
 - `compile(processor, opts?)` — graph → `{ wasm, driver, graph, memory, diagnostics, schemaHash, sampleRate, renderQuantumSize }` (`driver` instantiates the WASM; the offline renderer uses it). `opts` is the compile target, `{ sampleRate?, renderQuantumSize? }` (defaults 48000 and 128), bound to `ctx`. You rarely call this yourself; the Vite plugin and the offline renderer compile for you.
 - `createNode(context, processor, options?)` — main-thread `UnworkletNode<C>` (`node`, `inputs`, `outputs`, `params`, `state`, `events`, `midi`, `snapshot`, `restore`, `onError`, `diagnostics`, `dispose`). To name the handle's type up front — a class field or `let` you assign later — write `UnworkletNode<typeof import("./x.processor.ts?worklet")>`: it takes the `?worklet` import directly, so every surface stays typed without a `createNode` round-trip.
+  On a context whose sample rate or `renderQuantumSize` differs from the processor's compile target (`worklet.bakedSampleRate` / `bakedRenderQuantumSize`), it compiles the processor for the context in `worklet.compileWorkerUrl` (every `?worklet` import has one) and loads the result from a Blob URL; without a compile worker it rejects.
 - `replaceProcessor(oldNode, newProcessor)` — hot-swap a running processor.
 - `inspect(blob)` — decode a snapshot without an `AudioContext`.
 - Snapshot codec: `encodeSnapshot` / `decodeSnapshot` / `inspectSnapshot` / `runMigrations` / `SNAPSHOT_VERSION`.
 - MIDI wire codec: `midiEventToWire` / `wireToMidiEvent`.
+- `@unworklet/core/compile-worker` — `serveCompileRequests(processor, { workletRuntime })`, the body of a processor's compile worker (`@unworklet/unplugin` generates one per processor).
+- `@unworklet/core/worklet-runtime` — the worklet runtime as one self-contained script (a string), for a worklet module that cannot import: `emitWorkletModuleSource(meta, { processorName, runtime: { kind: "inline", code: workletRuntime } })`.
 - Capacity constants: `CAPACITY_16` … `CAPACITY_16384`.
 
 ## Realtime safety

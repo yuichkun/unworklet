@@ -46,7 +46,7 @@ process(() => {
   keys.onEvent("noteOff", () => gate.write(0));
 
   forSample((i) => {
-    phase.write((phase + hz / 48000) % 1);            // advance the oscillator
+    phase.write((phase + hz / ctx.sampleRate) % 1);     // advance the oscillator
     out.ch(0)[i] = sin(phase * (Math.PI * 2)) * gate * 0.2;
   });
 });
@@ -81,7 +81,7 @@ const lfo   = state.f32(0).named();
 
 process(() => {
   forSample((i) => {
-    lfo.write((lfo + rate[i] / 48000) % 1);                 // phase 0..1
+    lfo.write((lfo + rate[i] / ctx.sampleRate) % 1);        // phase 0..1
     const g = 1 - depth[i] * (0.5 - 0.5 * cos(lfo * (Math.PI * 2)));
     out.left[i]  = input.left[i] * g;
     out.right[i] = input.right[i] * g;
@@ -279,7 +279,7 @@ process(() => {
     hz.write(advance ? exp(f32(note - 69) * (Math.LN2 / 12)) * 440 : hz);
     env.write(advance ? 1 : env * 0.999);
     arpOut.emitIf(advance, { type: "noteOn", channel: 0, note, velocity: 100, atSample: i });
-    phase.write((phase + hz / 48000) % 1);
+    phase.write((phase + hz / ctx.sampleRate) % 1);
     out.ch(0)[i] = sin(phase * (Math.PI * 2)) * env * f32(playing) * 0.2;
   });
 });
@@ -315,8 +315,8 @@ process(() => {
     gate2.write(abs(hz2 - f) < 0.5 ? 0 : gate2); gate3.write(abs(hz3 - f) < 0.5 ? 0 : gate3);
   });
   forSample((i) => {
-    phase0.write((phase0 + hz0 / 48000) % 1); phase1.write((phase1 + hz1 / 48000) % 1);
-    phase2.write((phase2 + hz2 / 48000) % 1); phase3.write((phase3 + hz3 / 48000) % 1);
+    phase0.write((phase0 + hz0 / ctx.sampleRate) % 1); phase1.write((phase1 + hz1 / ctx.sampleRate) % 1);
+    phase2.write((phase2 + hz2 / ctx.sampleRate) % 1); phase3.write((phase3 + hz3 / ctx.sampleRate) % 1);
     const v0 = sin(phase0 * (Math.PI * 2)) * gate0;
     const v1 = sin(phase1 * (Math.PI * 2)) * gate1;
     const v2 = sin(phase2 * (Math.PI * 2)) * gate2;
@@ -338,7 +338,7 @@ const step  = state.f32(0).named("step");         // phase increment per sample
 process(() => {
   keys.onEvent("noteOn", ({ note }) => {
     const hz = exp(f32(note - 69) * (Math.LN2 / 12)) * 440;
-    step.write(hz / 48000);
+    step.write(hz / ctx.sampleRate);
     pos.write(0);     // (re)trigger the grain
     phase.write(0);
   });
@@ -370,7 +370,7 @@ process(() => {
   });
   keys.onEvent("noteOff", () => gate.write(0));
   forSample((i) => {
-    phase.write((phase + hz / 48000) % 1);
+    phase.write((phase + hz / ctx.sampleRate) % 1);
     out.ch(0)[i] = sin(phase * (Math.PI * 2)) * gate * 0.2;
   });
 });

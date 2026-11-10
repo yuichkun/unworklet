@@ -13,12 +13,12 @@
  *                                                         ctx.renderQuantumSize loops)
  *   diagnostics   = analyze(graph)        ← Layer 3 check (memory-budget, etc.)
  *   memory        = layout(graph)         ← sub-region partitioning + ioScratch
- *   wasm          = await emit(graph,     ← binaryen lower (dynamic import)
- *                              memory)
+ *   wasm          = emitWith(binaryen,   ← binaryen lower (`compile` imports binaryen
+ *                     graph, memory)       dynamically; the compile worker passes its own)
  *   schemaHash    = schemaHash(graph)     ← declarations-only FNV-1a hex
  *
- * Returns `{ wasm, graph, memory, diagnostics, schemaHash,
- * __compiledProcessor }`. `graph` / `memory` / `diagnostics` are opaque branded
+ * Returns `{ wasm, graph, memory, diagnostics, schemaHash, sampleRate,
+ * renderQuantumSize, driver, __compiledProcessor }`. `graph` / `memory` / `diagnostics` are opaque branded
  * casts — consumers treat them as tokens (e.g. unplugin / inspect tooling
  * restores the internal types to emit a JSON artifact).
  */
@@ -38,7 +38,7 @@ import type {
 
 import { analyze, checkMemoryBudget } from "./analyze.ts";
 import type { AudioPortDecl, CapturedGraph, ParamDecl } from "./ast.ts";
-import { emit } from "./emit.ts";
+import { emitWith, type BinaryenAPI } from "./emit.ts";
 import { layout, renderQuantumOf } from "./layout.ts";
 import type { Layout } from "./layout.ts";
 import { schemaHash } from "./schemaHash.ts";
@@ -57,6 +57,18 @@ export async function compile<C>(
   processor: CompiledProcessor<C>,
   options: CompileOptions = {},
 ): Promise<CompileResult<C>> {
+  return compileWith((await import("binaryen")).default, processor, options);
+}
+
+/**
+ * `compile` with a binaryen the caller already loaded (see `emitWith`). Internal:
+ * the compile worker imports binaryen statically and compiles through this.
+ */
+export function compileWith<C>(
+  binaryen: BinaryenAPI,
+  processor: CompiledProcessor<C>,
+  options: CompileOptions = {},
+): CompileResult<C> {
   const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
   const renderQuantumSize = options.renderQuantumSize ?? DEFAULT_RENDER_QUANTUM_SIZE;
   if (!Number.isInteger(renderQuantumSize) || renderQuantumSize < 1) {
@@ -94,7 +106,7 @@ export async function compile<C>(
     const summary = errors.map((d) => `[${d.id}] ${d.message}`).join("\n");
     throw new Error(`unworklet: compile failed with ${errors.length} error(s):\n${summary}`);
   }
-  const wasm = await emit(graph, memory, { sampleRate });
+  const wasm = emitWith(binaryen, graph, memory, { sampleRate });
   const hash = schemaHash(graph);
   return {
     wasm,

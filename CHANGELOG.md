@@ -47,6 +47,25 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Added
 
+- **`?worklet` processors run on any `AudioContext`.** The build still compiles
+  each processor for 48000 Hz and 128-sample render quanta. When the context's
+  sample rate or `renderQuantumSize` differs, `createNode` compiles the
+  processor for the context in a page Web Worker and loads the result from a
+  Blob URL; the node plays what a build for that target would. `@unworklet/unplugin`
+  emits a compile worker per processor (`<name>.compile-worker-<hash>.js`); the
+  compiler is one chunk they share (about 12.6 MB, 2.7 MB gzipped), fetched only
+  by a worker. A page with a Content-Security-Policy must allow `blob:` scripts
+  and same-origin workers, and a cross-origin-isolated page must serve the worker
+  with its COEP header. In dev the plugin adds the worker's core entries to
+  `optimizeDeps.include` (and lets Vite 6 and 7's optimizer accept top-level
+  await), so starting a worker does not reload the page. New surface:
+  `WorkletNamespace.compileWorkerUrl`, `@unworklet/core/compile-worker`
+  (`serveCompileRequests`), and `@unworklet/core/worklet-runtime` (the inline
+  worklet runtime as a string).
+- **`compileSource(source, { sampleRate, renderQuantumSize })`** compiles a
+  `.uwk.ts` source in the browser for a target; pass the context's values.
+  Browser-compiled processors have no compile worker, so `createNode` still
+  rejects a context that differs.
 - **Render quanta other than 128.** `ProcessorContext.renderQuantumSize`,
   `CompileOptions.renderQuantumSize`, and `CompileResult.renderQuantumSize`
   select and report the compile target's samples per call. `forSample` loops,
@@ -54,8 +73,9 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   it; `forSample.byN` accepts the powers of two that divide it, and the
   `illegal-stride` error lists them. `renderOffline` takes
   `renderQuantumSize` and reports it on the result. Namespaces built from
-  compile metadata carry `bakedRenderQuantumSize`, and `createNode` rejects a
-  context whose `renderQuantumSize` differs instead of silencing the node at
+  compile metadata carry `bakedRenderQuantumSize`, and `createNode` compiles
+  for (or, without a compile worker, rejects) a context whose
+  `renderQuantumSize` differs, instead of the worklet silencing the node at
   run time.
 - **`forIndex(count, (index) => …)`** runs a loop exactly `count` times per
   call, whatever the render quantum. `count` is a compile-time integer from 1 to

@@ -728,23 +728,31 @@ export type WorkletNamespace = {
   wasmUrl?: string;
   displayName?: string;
   /**
-   * The sampleRate the `?worklet` WASM was compiled at (build time). Rate-dependent
+   * The sampleRate the namespace's WASM was compiled at. Rate-dependent
    * coefficients (`tan(pi*fc/sr)`, a delay length `sr*seconds`, a phase increment
-   * `freq/sr`) are frozen into the WASM, so running on a context at a different rate
-   * detunes the output. `createNode` compares this against `context.sampleRate` and
-   * rejects on mismatch. Present only on `?worklet`-imported processors; `undefined`
-   * for inline namespaces (no fixed build rate). This is the seam for a future
-   * recompile-at-rate path (recompile at the context rate instead of throwing).
+   * `freq/sr`) are frozen into the WASM, so `createNode` compares this against
+   * `context.sampleRate`: on a mismatch it compiles for the context in
+   * `compileWorkerUrl`, or rejects when there is none. Set on `?worklet` imports
+   * and runtime-compiled namespaces; `undefined` skips the check.
    */
   bakedSampleRate?: number;
   /**
    * Samples per `process()` call the namespace's WASM layout is sized for (the
    * compile target's `renderQuantumSize`). The worklet runtime only accepts
    * blocks of this length (`block-length-mismatch` otherwise), so `createNode`
-   * compares it against the context's `renderQuantumSize`. Set by every
-   * namespace built from compile metadata; `undefined` skips the check.
+   * compares it against the context's `renderQuantumSize` and handles a mismatch
+   * like a rate mismatch. Set by every namespace built from compile metadata;
+   * `undefined` skips the check.
    */
   bakedRenderQuantumSize?: number;
+  /**
+   * URL of the processor's compile worker (a module Web Worker built from
+   * `@unworklet/core/compile-worker`; `?worklet` imports carry one). When the
+   * context's sample rate or render quantum differs from `bakedSampleRate` /
+   * `bakedRenderQuantumSize`, `createNode` compiles the processor for the
+   * context in this worker instead of rejecting it.
+   */
+  compileWorkerUrl?: string;
 };
 
 export type CompiledProcessor<C> = {

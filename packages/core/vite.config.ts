@@ -1,10 +1,21 @@
 import { defineConfig } from "vite-plus";
 
+import { writeWorkletRuntime } from "./build/worklet-runtime.ts";
+
 export default defineConfig({
   pack: {
     dts: true,
-    entry: ["src/index.ts", "src/worklet-entry.ts", "src/simd.ts", "src/dev.ts"],
+    entry: [
+      "src/index.ts",
+      "src/worklet-entry.ts",
+      "src/simd.ts",
+      "src/dev.ts",
+      "src/compile-worker.ts",
+    ],
     exports: false,
+    // `dist/worklet-runtime.mjs` (the `./worklet-runtime` export) is not a bundle
+    // entry: it is the runtime as a string, written after every build.
+    onSuccess: (config) => writeWorkletRuntime(config.cwd),
   },
   lint: {
     options: {

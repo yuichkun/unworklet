@@ -284,8 +284,21 @@ export async function emit(
   layout: Layout,
   options: EmitOptions = {},
 ): Promise<Uint8Array> {
+  return emitWith((await import("binaryen")).default, graph, layout, options);
+}
+
+/**
+ * `emit` with a binaryen the caller already loaded. A bundled Web Worker imports
+ * binaryen statically and passes it here: a bundler's dynamic-import helper may
+ * assume a document, which a worker does not have.
+ */
+export function emitWith(
+  binaryen: BinaryenAPI,
+  graph: CapturedGraph,
+  layout: Layout,
+  options: EmitOptions = {},
+): Uint8Array {
   const sampleRate = options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE;
-  const binaryen = (await import("binaryen")).default;
   const mod = new binaryen.Module();
   // buffer.copyFrom = memory.copy (= bulk-memory, Q31-c), SIMD = f32x4 (= §7).
   // Added on top of the default features (MVP) so that emitBinary can emit the opcodes.
