@@ -65,6 +65,22 @@ function walkForConstantTruthyEmitIf(
 }
 
 /**
+ * Checks the per-block sample loops for constant-truthy emits. A forIndex loop
+ * runs its body once per index per call, so a forSample inside it still emits at
+ * sample rate (count times over) and is checked too; an emit directly in the
+ * forIndex body runs once per index, like the per-block top level, and is not.
+ */
+function walkSampleLoops(body: readonly AstNode[], diagnostics: DiagnosticEntry[]): void {
+  for (const node of body) {
+    if (node.kind === "forSample") {
+      walkForConstantTruthyEmitIf(node.body, diagnostics);
+    } else if (node.kind === "forIndex") {
+      walkSampleLoops(node.body, diagnostics);
+    }
+  }
+}
+
+/**
  * Walks every node and detects branch type mismatches in `select`
  * (= `select-branch-type-mismatch`). Literal branches are already lifted to the
  * branch type by the select builder (= Q33); what is caught here is a genuine
@@ -583,10 +599,8 @@ export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
   walkSysexBufferFit(graph, graph.statements, diagnostics);
   walkVecBufferFit(graph, graph.statements, diagnostics);
   walkHandlerFieldEscape(graph.statements, null, diagnostics);
+  walkSampleLoops(graph.statements, diagnostics);
   for (const stmt of graph.statements) {
-    if (stmt.kind === "forSample") {
-      walkForConstantTruthyEmitIf(stmt.body, diagnostics);
-    }
     walkForTypeErrors(stmt, diagnostics);
   }
   return diagnostics;
