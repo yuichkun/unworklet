@@ -2,7 +2,7 @@ import { expect, test } from "vite-plus/test";
 
 import { COMPILE_WORKER_DEPS, devOptimizeDeps } from "./compile-worker-optimizer.ts";
 
-test("the compile worker's core entries are optimized with the first scan on every Vite", () => {
+test("the compile worker's dependencies are optimized with the first scan on every Vite", () => {
   for (const version of ["6.4.3", "7.3.5", "8.0.16"]) {
     expect(devOptimizeDeps(version).include).toEqual([...COMPILE_WORKER_DEPS]);
   }

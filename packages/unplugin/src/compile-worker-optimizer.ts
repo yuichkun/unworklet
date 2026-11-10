@@ -4,11 +4,18 @@ import { selfcheckOptimizerOptions } from "./selfcheck-define.ts";
 
 /**
  * The core entries a processor's compile worker imports besides the processor
- * module (see the compile worker virtual module in `index.ts`).
+ * module (see the compile worker virtual module in `index.ts`), and binaryen,
+ * which core's compiler imports. As its own entry, binaryen is the module a
+ * later bare `binaryen` import from core resolves to (Vite matches the nested
+ * entry by package). Otherwise a page that reaches core's compiler outside the
+ * optimizer's scan (a linked core the app excludes) adds binaryen as a new
+ * entry, which changes the compile worker's bundle and makes Vite reload the
+ * page.
  */
 export const COMPILE_WORKER_DEPS = [
   "@unworklet/core/compile-worker",
   "@unworklet/core/worklet-runtime",
+  "@unworklet/core > binaryen",
 ] as const;
 
 /**

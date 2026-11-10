@@ -57,9 +57,9 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   compiler is one chunk they share (about 12.6 MB, 2.7 MB gzipped), fetched only
   by a worker. A page with a Content-Security-Policy must allow `blob:` scripts
   and same-origin workers, and a cross-origin-isolated page must serve the worker
-  with its COEP header. In dev the plugin adds the worker's core entries to
-  `optimizeDeps.include` (and lets Vite 6 and 7's optimizer accept top-level
-  await), so starting a worker does not reload the page. New surface:
+  with its COEP header. In dev the plugin adds the worker's core entries and
+  core's binaryen to `optimizeDeps.include` (and lets Vite 6 and 7's optimizer
+  accept top-level await), so starting a worker does not reload the page. New surface:
   `WorkletNamespace.compileWorkerUrl`, `@unworklet/core/compile-worker`
   (`serveCompileRequests`), and `@unworklet/core/worklet-runtime` (the inline
   worklet runtime as a string).

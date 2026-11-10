@@ -174,6 +174,41 @@ test("dev server: a 44.1 kHz and a 96 kHz context play 440 Hz without reloading 
   }
 }, 120_000);
 
+test("dev server with a linked, excluded core: reaching core's compiler after the first optimization does not reload the page", async () => {
+  // A workspace-linked core that the app excludes from optimization is served as
+  // source the optimizer's scan does not enter, so the page's own graph reaches
+  // the binaryen import in core's compiler after the optimizer's first run. That
+  // import must resolve to the binaryen the compile worker already uses: a
+  // separate entry re-runs the optimizer, and the changed compile worker bundle
+  // makes Vite reload the page.
+  const root = await mkdtemp(path.join(consumer ?? tmpdir(), "unworklet-compile-worker-linked-"));
+  await mkdir(path.join(root, "node_modules/@unworklet"), { recursive: true });
+  await symlink(path.join(repo, "packages/core"), path.join(root, "node_modules/@unworklet/core"));
+  await writeFile(path.join(root, "index.html"), '<script type="module" src="/main.mjs"></script>');
+  await writeFile(path.join(root, "main.mjs"), appSource);
+  await writeFile(path.join(root, "tone.processor.mjs"), processorSource);
+  const server = await vite.createServer({
+    root,
+    configFile: false,
+    logLevel: "error",
+    plugins: [plugin()],
+    server: { host: "127.0.0.1", port: 0, fs: { allow: [root, repo] } },
+    optimizeDeps: { exclude: ["@unworklet/core"] },
+  });
+  try {
+    await server.listen();
+    const optimizer = server.environments.client.depsOptimizer!;
+    await expect
+      .poll(() => Object.keys(optimizer.metadata.optimized).length, { timeout: 60_000 })
+      .toBeGreaterThan(0);
+    const observed = await playAt(server.resolvedUrls!.local[0]!, [44_100]);
+    expect(observed.navigations).toBe(1);
+  } finally {
+    await closeHmrServer(server);
+    await rm(root, { recursive: true, force: true });
+  }
+}, 120_000);
+
 test("production build: the emitted compile worker plays 440 Hz at 44.1 kHz", async () => {
   const root = await makeApp();
   const outDir = path.join(root, "dist");
