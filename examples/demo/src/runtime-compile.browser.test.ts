@@ -17,9 +17,9 @@
  */
 import { beforeAll, expect, test, vi } from "vite-plus/test";
 
-import { createNode, extractWorkletMeta } from "@unworklet/core";
+import { compile, createNode, extractWorkletMeta } from "@unworklet/core";
 
-import { compileSource } from "@unworklet/lang/browser";
+import { compileSource, lowerToProcessor } from "@unworklet/lang/browser";
 
 import { examples } from "./examples.ts";
 import { useUnworkletDemo } from "./composables/useUnworkletDemo.ts";
@@ -178,6 +178,22 @@ process(() => { forSample(i => { phase.write((phase + 440 / ctx.sampleRate) % 1)
       }
     }
     expect(((crossings - 1) * 44100) / (last - first)).toBeCloseTo(440, 0);
+  } finally {
+    URL.revokeObjectURL(proc.worklet.moduleUrl!);
+    URL.revokeObjectURL(proc.worklet.wasmUrl!);
+  }
+});
+
+test("compileSource carries the schema hash of the declarations it compiled", async () => {
+  // A buffer sized from the rate gives each target its own slot schema.
+  const source = `const out = audioOutput({ channels: 1, name: "main" });
+const line = state.buffer.f32({ size: Math.round(ctx.sampleRate / 100) }).named("line");
+process(() => { forSample((i) => { out.ch(0)[i] = line[0]; }); });`;
+  const proc = await compileSource(source, { sampleRate: 44100, renderQuantumSize: 128 });
+  try {
+    const expected = await compile(lowerToProcessor(source), { sampleRate: 44100 });
+    expect(proc.schemaHash).toBe(expected.schemaHash);
+    expect(proc.schemaHash).not.toBe(lowerToProcessor(source).schemaHash);
   } finally {
     URL.revokeObjectURL(proc.worklet.moduleUrl!);
     URL.revokeObjectURL(proc.worklet.wasmUrl!);

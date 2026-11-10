@@ -278,10 +278,13 @@ the context in a Web Worker, then loads the result:
   it, so a processor valid at 128 can fail at 32; the rejection names the
   target and the diagnostic ID (`illegal-stride`, …).
 - **No compile worker** (a hand-built namespace, `compile`, `compileSource`):
-  compile for the context yourself — `compile(processor, { sampleRate,
-renderQuantumSize })`, or `compileSource(source, { sampleRate,
-renderQuantumSize })` in the browser — or `createNode` rejects a mismatch
-  before loading anything. Pass `context.renderQuantumSize ?? 128`.
+  compile for the context yourself, or `createNode` rejects a mismatch before
+  loading anything. Pass the context's values as the target:
+  `{ sampleRate: ctx.sampleRate, renderQuantumSize: ctx.renderQuantumSize ?? 128 }`
+  to `compile(processor, target)`, or to `compileSource(source, target)` in the
+  browser. A hand-built namespace takes its metadata from the compiled graph
+  (`extractWorkletMeta(result.graph)`) and the processor its `schemaHash` from
+  `result.schemaHash`, as `compileSource` does.
 
 (rationale [cite: packages/core/src/types.ts :: `bakedSampleRate?: number;`]) The full
 load sequence and the `UnworkletNode` surface (`params` / `state` / `events` /

@@ -69,6 +69,9 @@ export async function compileSource(
   const wasmUrl = URL.createObjectURL(new Blob([wasm as BlobPart], { type: "application/wasm" }));
   return {
     ...(processor as object),
+    // Snapshots and restores key to the compiled slot schema: a declaration sized
+    // from the target's rate or quantum differs from the eager 48000 Hz / 128 one.
+    schemaHash: result.schemaHash,
     worklet: {
       ...makeWorkletNamespaceFromMeta(meta),
       moduleUrl,
