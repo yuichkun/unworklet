@@ -4,21 +4,12 @@
  * Drives memory I/O through the driver-friendly handle
  * (`result.driver.instantiate()`), iterating per render quantum:
  * marshal input/param → process() → read output.
- * duration × sampleRate is rounded up to SAMPLES_PER_BLOCK
- * (= `13-offline-render.md` §2.1).
+ * duration × sampleRate is rounded up to whole render quanta (128 samples by
+ * default; `13-offline-render.md` §2.1).
  */
 
 import "@unworklet/core"; // side-effect load for `.mul` method registration via primitives.ts
-import {
-  defineProcessor,
-  bool,
-  i64,
-  f32,
-  i32,
-  inspectSnapshot,
-  SAMPLES_PER_BLOCK,
-  select,
-} from "@unworklet/core";
+import { defineProcessor, bool, i64, f32, i32, inspectSnapshot, select } from "@unworklet/core";
 import {
   audioInput,
   audioOutput,
@@ -29,6 +20,9 @@ import {
   state,
 } from "@unworklet/core";
 import { expect, test } from "vite-plus/test";
+
+/** Samples per render quantum these renders run at (renderOffline's default). */
+const QUANTUM = 128;
 
 for (const type of ["f64", "u8", "i32", "i64", "bool"] as const) {
   test(`offline event payload preserves ${type} element representation`, async () => {
@@ -138,7 +132,7 @@ import { renderOffline } from "./index.ts";
 const samplePlayer = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
-  const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const buf = state.buffer.f32({ size: QUANTUM });
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
@@ -154,14 +148,14 @@ const samplePlayer = defineProcessor(() => {
 });
 
 test("`renderOffline` delivers a typed-array payload; samples.at(Node) reads each element", async () => {
-  const samples = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) samples[k] = k * 2;
+  const samples = new Float32Array(QUANTUM);
+  for (let k = 0; k < QUANTUM; k++) samples[k] = k * 2;
   const result = await renderOffline(samplePlayer, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages: [{ name: "upload", payload: { samples } }],
   });
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < QUANTUM; k++) {
     expect(result.outputs.main![0]![k]).toBe(k * 2);
   }
 });
@@ -170,7 +164,7 @@ test("`renderOffline` delivers a typed-array payload; samples.at(Node) reads eac
 const sampleCopier = defineProcessor(() => {
   const out = audioOutput({ channels: 1, name: "main" });
   const upload = event<{ samples: Float32Array }>({ from: "main", name: "upload" });
-  const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
+  const buf = state.buffer.f32({ size: QUANTUM });
   return {
     process: () => {
       upload.onReceive(({ samples }) => {
@@ -184,14 +178,14 @@ const sampleCopier = defineProcessor(() => {
 });
 
 test("`renderOffline` buf.copyFrom(payload) bulk-copies the array into the buffer", async () => {
-  const samples = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) samples[k] = k * 3;
+  const samples = new Float32Array(QUANTUM);
+  for (let k = 0; k < QUANTUM; k++) samples[k] = k * 3;
   const result = await renderOffline(sampleCopier, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages: [{ name: "upload", payload: { samples } }],
   });
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < QUANTUM; k++) {
     expect(result.outputs.main![0]![k]).toBe(k * 3);
   }
 });
@@ -201,7 +195,7 @@ test("`renderOffline` buf.copyFrom clamps to min(buf.size, payload length)", asy
   const samples = new Float32Array([1.5, 2.5, 3.5, 4.5]);
   const result = await renderOffline(sampleCopier, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages: [{ name: "upload", payload: { samples } }],
   });
   expect(result.outputs.main![0]![0]).toBe(1.5);
@@ -230,7 +224,7 @@ const oobReader = defineProcessor(() => {
 test("`renderOffline` samples.at out-of-bounds read clamps to [0,length-1] without trapping", async () => {
   const result = await renderOffline(oobReader, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages: [{ name: "upload", payload: { samples: new Float32Array([10, 20, 30, 40]) } }],
   });
   // idx 100000 exceeds length 4 → clamps to last element 40, no trap.
@@ -256,7 +250,7 @@ const twoUploads = defineProcessor(() => {
 test("`renderOffline` two messages in the same quantum are both preserved without content overwrite", async () => {
   const result = await renderOffline(twoUploads, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages: [
       { name: "upload", atQuantum: 0, payload: { samples: new Float32Array([10, 0, 0, 0]) } },
       { name: "upload", atQuantum: 0, payload: { samples: new Float32Array([20, 0, 0, 0]) } },
@@ -274,7 +268,7 @@ test("`renderOffline` preserves all 17 payloads queued within the declared capac
   }));
   return renderOffline(twoUploads, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages,
   }).then((result) => {
     expect(result.outputs.main![0]![0]).toBe(153);
@@ -301,7 +295,7 @@ const sampleLen = defineProcessor(() => {
 test("`renderOffline` resolves samples.length to the delivered payload length", async () => {
   const result = await renderOffline(sampleLen, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages: [{ name: "upload", payload: { samples: new Float32Array(10) } }],
   });
   expect(result.outputs.main![0]![0]).toBe(10);
@@ -336,7 +330,7 @@ test("`renderOffline` .at(0) on an empty payload returns 0, not stale memory (§
   }));
   const result = await renderOffline(emptyPayloadReader, {
     sampleRate: 48000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    duration: (2 * QUANTUM) / 48000,
     messages: [
       ...fill42,
       { name: "upload", atQuantum: 1, payload: { x: new Float32Array([]) } }, // empty = wraps to chunk 0
@@ -345,7 +339,7 @@ test("`renderOffline` .at(0) on an empty payload returns 0, not stale memory (§
   // block 0 = result of non-empty [42] processing (= path sanity check).
   expect(result.outputs.main![0]![0]).toBe(42);
   // block 1 = empty payload. A stale read would leak chunk 0's [42]; after the fix it must be 0.
-  expect(result.outputs.main![0]![SAMPLES_PER_BLOCK]).toBe(0);
+  expect(result.outputs.main![0]![QUANTUM]).toBe(0);
 });
 
 // Processor that updates state via message<T> (= validates scalar message injection).
@@ -369,7 +363,7 @@ const messageMul = defineProcessor(() => {
 test("`renderOffline` delivers a scheduled scalar message to the worklet handler", async () => {
   const result = await renderOffline(messageMul, {
     sampleRate: 48000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    duration: (2 * QUANTUM) / 48000,
     messages: [
       { name: "setMul", payload: { mul: 3 }, atQuantum: 0 },
       { name: "setMul", payload: { mul: 7 }, atQuantum: 1 },
@@ -378,13 +372,13 @@ test("`renderOffline` delivers a scheduled scalar message to the worklet handler
   const ch = result.outputs.main![0]!;
   // quantum 0: mul=3, quantum 1: mul=7 — each value is applied to state via the handler.
   expect(ch[0]).toBe(3);
-  expect(ch[SAMPLES_PER_BLOCK]).toBe(7);
+  expect(ch[QUANTUM]).toBe(7);
 });
 
 test("`renderOffline` defaults message delivery to quantum 0 when atQuantum is omitted", async () => {
   const result = await renderOffline(messageMul, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages: [{ name: "setMul", payload: { mul: 5 } }],
   });
   expect(result.outputs.main![0]![0]).toBe(5);
@@ -413,7 +407,7 @@ const messageGain = defineProcessor(() => {
 test("`renderOffline` preserves a fractional inbound number field (no i32 truncation)", async () => {
   const result = await renderOffline(messageGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     messages: [{ name: "setGain", payload: { gain: 0.8 } }],
   });
   expect(result.outputs.main![0]![0]).toBeCloseTo(0.8, 6);
@@ -443,7 +437,7 @@ const messageFlag = defineProcessor(() => {
 test("`renderOffline` delivers a boolean-valued message field (true then false)", async () => {
   const result = await renderOffline(messageFlag, {
     sampleRate: 48000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    duration: (2 * QUANTUM) / 48000,
     messages: [
       { name: "setOn", payload: { on: true }, atQuantum: 0 },
       { name: "setOn", payload: { on: false }, atQuantum: 1 },
@@ -451,14 +445,14 @@ test("`renderOffline` delivers a boolean-valued message field (true then false)"
   });
   const ch = result.outputs.main![0]!;
   expect(ch[0]).toBe(1); // quantum 0: on=true
-  expect(ch[SAMPLES_PER_BLOCK]).toBe(0); // quantum 1: on=false
+  expect(ch[QUANTUM]).toBe(0); // quantum 1: on=false
 });
 
 test("`renderOffline` throws on a message whose name has no matching declaration", async () => {
   await expect(
     renderOffline(messageMul, {
       sampleRate: 48000,
-      duration: SAMPLES_PER_BLOCK / 48000,
+      duration: QUANTUM / 48000,
       messages: [{ name: "ghost", payload: {} }],
     }),
   ).rejects.toThrow(/no matching message/);
@@ -479,7 +473,7 @@ const stereoGain = defineProcessor(() => {
 });
 
 const oneBlockInput = (value: number): Float32Array => {
-  const data = new Float32Array(SAMPLES_PER_BLOCK);
+  const data = new Float32Array(QUANTUM);
   data.fill(value);
   return data;
 };
@@ -487,7 +481,7 @@ const oneBlockInput = (value: number): Float32Array => {
 test("`renderOffline` returns the result shape (= outputs / events / state)", async () => {
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     inputs: { main: [oneBlockInput(1), oneBlockInput(0.25)] },
     params: { gain: [0.5] },
   });
@@ -500,24 +494,24 @@ test("`renderOffline` returns the result shape (= outputs / events / state)", as
 });
 
 test("`renderOffline` reproduces input × gain on each sample (= 1 block)", async () => {
-  const inputCh0 = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) inputCh0[i] = i / SAMPLES_PER_BLOCK;
+  const inputCh0 = new Float32Array(QUANTUM);
+  for (let i = 0; i < QUANTUM; i++) inputCh0[i] = i / QUANTUM;
   const inputCh1 = oneBlockInput(0);
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     inputs: { main: [inputCh0, inputCh1] },
     params: { gain: [2] }, // k-rate broadcast
   });
-  const expectedCh0 = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) expectedCh0[i] = (i / SAMPLES_PER_BLOCK) * 2;
+  const expectedCh0 = new Float32Array(QUANTUM);
+  for (let i = 0; i < QUANTUM; i++) expectedCh0[i] = (i / QUANTUM) * 2;
   expect(result.outputs).toEqual({ main: [expectedCh0, oneBlockInput(0)] });
   expect(result.events).toEqual([]);
   expect(result.sampleRate).toBe(48000);
 });
 
-test("`renderOffline` runs multiple blocks (= duration = 2 × SAMPLES_PER_BLOCK / sampleRate)", async () => {
-  const totalSamples = SAMPLES_PER_BLOCK * 2;
+test("`renderOffline` runs multiple blocks (= duration = 2 × QUANTUM / sampleRate)", async () => {
+  const totalSamples = QUANTUM * 2;
   const inputCh = new Float32Array(totalSamples);
   inputCh.fill(1);
   const expectedCh = new Float32Array(totalSamples);
@@ -533,7 +527,7 @@ test("`renderOffline` runs multiple blocks (= duration = 2 × SAMPLES_PER_BLOCK 
   expect(result.sampleRate).toBe(48000);
 });
 
-test("`renderOffline` rounds up duration × sampleRate to the next SAMPLES_PER_BLOCK boundary", async () => {
+test("`renderOffline` rounds up duration × sampleRate to the next QUANTUM boundary", async () => {
   // requesting 48 samples (= 0.001 sec @ 48kHz) rounds up to 1 block (= 128 samples)
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
@@ -541,14 +535,14 @@ test("`renderOffline` rounds up duration × sampleRate to the next SAMPLES_PER_B
     inputs: { main: [oneBlockInput(1), oneBlockInput(1)] },
     params: { gain: [0.5] },
   });
-  expect(result.outputs["main"]![0]!.length).toBe(SAMPLES_PER_BLOCK);
-  expect(result.outputs["main"]![1]!.length).toBe(SAMPLES_PER_BLOCK);
+  expect(result.outputs["main"]![0]!.length).toBe(QUANTUM);
+  expect(result.outputs["main"]![1]!.length).toBe(QUANTUM);
 });
 
 test("`renderOffline` uses param default when `params[name]` is omitted (= length 0 normalize)", async () => {
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     inputs: { main: [oneBlockInput(1), oneBlockInput(1)] },
   });
   // gain default = 1 = passthrough
@@ -560,7 +554,7 @@ test("`renderOffline` uses param default when `params[name]` is omitted (= lengt
 test("`renderOffline` fills zero when `inputs[name]` is omitted", async () => {
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     params: { gain: [1] },
   });
   expect(result.outputs).toEqual({
@@ -575,44 +569,44 @@ test("`renderOffline` zero-pads input channel when input array is shorter than t
   shortInput.fill(1);
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     inputs: { main: [shortInput, shortInput] },
     params: { gain: [0.5] },
   });
-  const expectedCh = new Float32Array(SAMPLES_PER_BLOCK);
+  const expectedCh = new Float32Array(QUANTUM);
   for (let i = 0; i < 64; i++) expectedCh[i] = 0.5;
   // index 64 and beyond = 0 (= zero-padded input × gain = 0)
   expect(result.outputs).toEqual({ main: [expectedCh, expectedCh] });
 });
 
 test("`renderOffline` holds the last param sample when param array is shorter than the render", async () => {
-  // gain = [0.25, 0.75], 2 samples (1 < length < SAMPLES_PER_BLOCK):
+  // gain = [0.25, 0.75], 2 samples (1 < length < QUANTUM):
   // sample 0 → 0.25, sample 1 → 0.75, samples 2..127 → 0.75 (= last-value hold).
   const inputCh = oneBlockInput(1);
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     inputs: { main: [inputCh, inputCh] },
     params: { gain: [0.25, 0.75] },
   });
-  const expectedCh = new Float32Array(SAMPLES_PER_BLOCK);
+  const expectedCh = new Float32Array(QUANTUM);
   expectedCh[0] = 0.25;
-  for (let i = 1; i < SAMPLES_PER_BLOCK; i++) expectedCh[i] = 0.75;
+  for (let i = 1; i < QUANTUM; i++) expectedCh[i] = 0.75;
   expect(result.outputs).toEqual({ main: [expectedCh, expectedCh] });
 });
 
 test("`renderOffline` per-sample param array (= length 128 a-rate) is applied per-sample", async () => {
   const inputCh = oneBlockInput(1);
-  const gainData = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) gainData[i] = i / SAMPLES_PER_BLOCK;
+  const gainData = new Float32Array(QUANTUM);
+  for (let i = 0; i < QUANTUM; i++) gainData[i] = i / QUANTUM;
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
     inputs: { main: [inputCh, inputCh] },
     params: { gain: Array.from(gainData) },
   });
-  const expectedCh = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) expectedCh[i] = gainData[i]!;
+  const expectedCh = new Float32Array(QUANTUM);
+  for (let i = 0; i < QUANTUM; i++) expectedCh[i] = gainData[i]!;
   expect(result.outputs).toEqual({ main: [expectedCh, expectedCh] });
 });
 
@@ -644,15 +638,15 @@ test("`renderOffline` preserves state across render quanta (= literal store cros
 
   const result = await renderOffline(stateSet, {
     sampleRate: 48000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    duration: (2 * QUANTUM) / 48000,
   });
   const ch = result.outputs["main"]![0]!;
   // block 1 (= sample 0..127): initial stored value = WASM memory 0 = output 0
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < QUANTUM; i++) {
     expect(ch[i]).toBe(0);
   }
   // block 2 (= sample 128..255): loads the 0.6 stored at the end of block 1 = output 0.6
-  for (let i = SAMPLES_PER_BLOCK; i < 2 * SAMPLES_PER_BLOCK; i++) {
+  for (let i = QUANTUM; i < 2 * QUANTUM; i++) {
     expect(ch[i]).toBeCloseTo(0.6, 6);
   }
 });
@@ -679,14 +673,14 @@ test("`renderOffline` state f32 chained mul across blocks (= counter × 0.5 deca
   const totalBlocks = 3;
   const result = await renderOffline(stateDecay, {
     sampleRate: 48000,
-    duration: (totalBlocks * SAMPLES_PER_BLOCK) / 48000,
+    duration: (totalBlocks * QUANTUM) / 48000,
   });
   const ch = result.outputs["main"]![0]!;
   // block b outputs 1 × 0.5^b (the counter value at block start) for every sample.
   for (let b = 0; b < totalBlocks; b++) {
     const expected = 0.5 ** b;
-    for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
-      expect(ch[b * SAMPLES_PER_BLOCK + i]).toBeCloseTo(expected, 6);
+    for (let i = 0; i < QUANTUM; i++) {
+      expect(ch[b * QUANTUM + i]).toBeCloseTo(expected, 6);
     }
   }
 });
@@ -710,17 +704,17 @@ test("`renderOffline` state declaration is excluded from driver (= regression: s
       },
     };
   });
-  const inputData = new Float32Array(2 * SAMPLES_PER_BLOCK);
+  const inputData = new Float32Array(2 * QUANTUM);
   inputData.fill(0.3);
   const result = await renderOffline(accumulator, {
     sampleRate: 48000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    duration: (2 * QUANTUM) / 48000,
     inputs: { main: [inputData] },
   });
   const ch = result.outputs["main"]![0]!;
   // block 1: stateLoad = 0.6 (= no NaN), the value stored at the end of block 0 persists
-  expect(Number.isNaN(ch[SAMPLES_PER_BLOCK]!)).toBe(false);
-  expect(ch[SAMPLES_PER_BLOCK]).toBeCloseTo(0.6, 6);
+  expect(Number.isNaN(ch[QUANTUM]!)).toBe(false);
+  expect(ch[QUANTUM]).toBeCloseTo(0.6, 6);
 });
 
 test("`renderOffline` state f32 cross-block via input-driven store + load (= accumulation path)", async () => {
@@ -742,23 +736,23 @@ test("`renderOffline` state f32 cross-block via input-driven store + load (= acc
   });
 
   // input block 1 = 0.3 for all samples, block 2 = 0.7 for all samples
-  const inputData = new Float32Array(2 * SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) inputData[i] = 0.3;
-  for (let i = SAMPLES_PER_BLOCK; i < 2 * SAMPLES_PER_BLOCK; i++) inputData[i] = 0.7;
+  const inputData = new Float32Array(2 * QUANTUM);
+  for (let i = 0; i < QUANTUM; i++) inputData[i] = 0.3;
+  for (let i = QUANTUM; i < 2 * QUANTUM; i++) inputData[i] = 0.7;
 
   const result = await renderOffline(accumulator, {
     sampleRate: 48000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    duration: (2 * QUANTUM) / 48000,
     inputs: { main: [inputData] },
   });
   const ch = result.outputs["main"]![0]!;
 
   // block 1 (= sample 0..127): initial stored value = WASM memory 0 = output 0
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < QUANTUM; i++) {
     expect(ch[i]).toBe(0);
   }
   // block 2 (= sample 128..255): 0.3 × 2 = 0.6 stored at the end of block 1 = output 0.6
-  for (let i = SAMPLES_PER_BLOCK; i < 2 * SAMPLES_PER_BLOCK; i++) {
+  for (let i = QUANTUM; i < 2 * QUANTUM; i++) {
     expect(ch[i]).toBeCloseTo(0.6, 6);
   }
 });
@@ -794,7 +788,7 @@ test("`renderOffline` publish scheduler integration (= sampleRate option is refl
       publishCounters: { slots: Record<string, number> };
     };
   };
-  const inputBlock = new Float32Array(SAMPLES_PER_BLOCK);
+  const inputBlock = new Float32Array(QUANTUM);
   inputBlock.fill(0.7);
   for (let b = 0; b < 13; b++) {
     instance.writeInput("main", 0, inputBlock);
@@ -840,18 +834,18 @@ test("`renderOffline` sampleRate option propagates through compile into the emit
   // passes through compile (= compile succeeds + output path is maintained).
   const r48 = await renderOffline(meterProc, {
     sampleRate: 48000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    duration: (2 * QUANTUM) / 48000,
   });
   // block 0 = 0, block 1 = 0.5 (= state path confirmed; independent of the publish path)
   expect(r48.outputs["main"]![0]![0]).toBe(0);
-  expect(r48.outputs["main"]![0]![SAMPLES_PER_BLOCK]).toBeCloseTo(Math.fround(0.5), 6);
+  expect(r48.outputs["main"]![0]![QUANTUM]).toBeCloseTo(Math.fround(0.5), 6);
 
   // same graph at sampleRate 96000: compile succeeds and output path is maintained
   const r96 = await renderOffline(meterProc, {
     sampleRate: 96000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 96000,
+    duration: (2 * QUANTUM) / 96000,
   });
-  expect(r96.outputs["main"]![0]![SAMPLES_PER_BLOCK]).toBeCloseTo(Math.fround(0.5), 6);
+  expect(r96.outputs["main"]![0]![QUANTUM]).toBeCloseTo(Math.fround(0.5), 6);
 });
 
 test("`renderOffline` subnormal flush integration (= state.f32 store 1e-40 → 0)", async () => {
@@ -875,13 +869,13 @@ test("`renderOffline` subnormal flush integration (= state.f32 store 1e-40 → 0
 
   const result = await renderOffline(subnormalProc, {
     sampleRate: 48000,
-    duration: (2 * SAMPLES_PER_BLOCK) / 48000,
+    duration: (2 * QUANTUM) / 48000,
     // input = 1 for all samples → store value = 1 × 1e-40 = subnormal → flushed to 0 by guard
     inputs: { main: [oneBlockInput(1)] },
   });
   const ch = result.outputs["main"]![0]!;
   // all samples in blocks 1 and 2 = 0 (= z stays 0 after subnormal flush)
-  for (let i = 0; i < 2 * SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < 2 * QUANTUM; i++) {
     expect(ch[i]).toBe(0);
   }
 });
@@ -910,14 +904,14 @@ test("`renderOffline` captures emitted events from event ring (= sub-phase 7.8c)
   });
   const result = await renderOffline(eventProc, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000, // 1 block = 128 emits; capacity 16 drops 112
+    duration: QUANTUM / 48000, // 1 block = 128 emits; capacity 16 drops 112
   });
   expect(result.events.length).toBeGreaterThan(0);
   // every event: name = "peak", atSample in [0, 127], level = 0.5
   for (const evt of result.events) {
     expect(evt.name).toBe("peak");
     expect(evt.atSample).toBeGreaterThanOrEqual(0);
-    expect(evt.atSample).toBeLessThan(SAMPLES_PER_BLOCK);
+    expect(evt.atSample).toBeLessThan(QUANTUM);
     expect((evt.payload as { level: number }).level).toBe(0.5);
   }
 });
@@ -940,7 +934,7 @@ test("worklet→main event atSample is block-local across blocks (B7: offline ma
   });
   const result = await renderOffline(proc, {
     sampleRate: 48000,
-    duration: (3 * SAMPLES_PER_BLOCK) / 48000, // 3 blocks
+    duration: (3 * QUANTUM) / 48000, // 3 blocks
   });
   const fires = result.events.filter((e) => e.name === "fired");
   expect(fires.length).toBe(3);
@@ -974,7 +968,7 @@ test("`renderOffline` captures a typed-array event payload as a Float32Array", a
   });
   const result = await renderOffline(arrayEmitter, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
   });
   expect(result.events.length).toBe(1);
   const ev = result.events[0]!;
@@ -1007,7 +1001,7 @@ test("`renderOffline` typed-array event clamps to buffer boundary when length ex
   });
   const result = await renderOffline(overEmitter, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
   });
   expect(result.events.length).toBe(1);
   const data = (result.events[0]!.payload as { data: Float32Array }).data;
@@ -1033,7 +1027,7 @@ test("`renderOffline` captures bool wireType event field as JS boolean", async (
   });
   const result = await renderOffline(boolEvtProc, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
   });
   expect(result.events.length).toBeGreaterThan(0);
   expect((result.events[0]!.payload as { flag: boolean }).flag).toBe(true);
@@ -1042,8 +1036,8 @@ test("`renderOffline` captures bool wireType event field as JS boolean", async (
 test("`renderOffline` returns empty events when no event declarations exist", async () => {
   const result = await renderOffline(stereoGain, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
-    inputs: { main: [new Float32Array(SAMPLES_PER_BLOCK), new Float32Array(SAMPLES_PER_BLOCK)] },
+    duration: QUANTUM / 48000,
+    inputs: { main: [new Float32Array(QUANTUM), new Float32Array(QUANTUM)] },
   });
   expect(result.events).toEqual([]);
 });
@@ -1067,7 +1061,7 @@ const noiseStereo = defineProcessor(() => {
 });
 
 test("`renderOffline` noiseSource().next() samples are all finite and within [-1, 1)", async () => {
-  const durationSamples = 4 * SAMPLES_PER_BLOCK; // 4 quanta = 512 samples
+  const durationSamples = 4 * QUANTUM; // 4 quanta = 512 samples
   const result = await renderOffline(noiseStereo, {
     sampleRate: 48000,
     duration: durationSamples / 48000,
@@ -1082,7 +1076,7 @@ test("`renderOffline` noiseSource().next() samples are all finite and within [-1
 });
 
 test("`renderOffline` two noiseSource declarations produce decorrelated output", async () => {
-  const durationSamples = 4 * SAMPLES_PER_BLOCK;
+  const durationSamples = 4 * QUANTUM;
   const result = await renderOffline(noiseStereo, {
     sampleRate: 48000,
     duration: durationSamples / 48000,
@@ -1093,7 +1087,7 @@ test("`renderOffline` two noiseSource declarations produce decorrelated output",
 });
 
 test("`renderOffline` noiseSource is reproducible: same processor rendered twice yields identical output", async () => {
-  const cfg = { sampleRate: 48000, duration: (2 * SAMPLES_PER_BLOCK) / 48000 };
+  const cfg = { sampleRate: 48000, duration: (2 * QUANTUM) / 48000 };
   const a = await renderOffline(noiseStereo, cfg);
   const b = await renderOffline(noiseStereo, cfg);
   expect([...a.outputs.main[0]!]).toEqual([...b.outputs.main[0]!]);
@@ -1104,14 +1098,14 @@ test("`renderOffline` noiseSource output crosses forSample block boundaries with
   // Regression pin for the block-local `i` bug: if noise re-derived from `i` per
   // block, samples [0..127] and [128..255] would be bit-exact identical. The
   // declared PRNG state advances continuously across blocks.
-  const durationSamples = 2 * SAMPLES_PER_BLOCK;
+  const durationSamples = 2 * QUANTUM;
   const result = await renderOffline(noiseStereo, {
     sampleRate: 48000,
     duration: durationSamples / 48000,
   });
   const left = result.outputs.main[0]!;
-  const firstBlock = [...left].slice(0, SAMPLES_PER_BLOCK);
-  const secondBlock = [...left].slice(SAMPLES_PER_BLOCK, 2 * SAMPLES_PER_BLOCK);
+  const firstBlock = [...left].slice(0, QUANTUM);
+  const secondBlock = [...left].slice(QUANTUM, 2 * QUANTUM);
   expect(firstBlock).not.toEqual(secondBlock);
 });
 
@@ -1129,7 +1123,7 @@ test("`renderOffline` noiseSource with omitted seed still produces valid noise (
   });
   const result = await renderOffline(proc, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
   });
   const samples = [...result.outputs.main[0]!];
   for (const v of samples) {
@@ -1159,7 +1153,7 @@ test("`renderOffline` noiseSource with explicit seed 0 works (sentinel substitut
   });
   const result = await renderOffline(proc, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
   });
   const samples = [...result.outputs.main[0]!];
   const anyNonZero = samples.some((v) => v !== 0);
@@ -1184,7 +1178,7 @@ test("`renderOffline` noiseSource `.next()` twice per iteration consumes two sam
   });
   const result = await renderOffline(proc, {
     sampleRate: 48000,
-    duration: SAMPLES_PER_BLOCK / 48000,
+    duration: QUANTUM / 48000,
   });
   const left = [...result.outputs.main[0]!];
   const right = [...result.outputs.main[1]!];

@@ -86,11 +86,11 @@ Source: [cite: packages/lang/src/ambient.ts :: `export const AMBIENT_DTS =`] (= 
 
 - Decl helpers: `state` `param` `event` `defineSubgraph` `instantiate`
   `audioInput` `audioOutput` `noiseSource`
-- Loop / control: `forSample` `select`
+- Loop / control: `forSample` `forIndex` `select`
 - Scalar constructors: `f32` `f64` `i32` `i64` `bool`
 - Free fns: `add sub mul div mod neg eq lt gt lte gte not and or sin cos tan tanh exp
 log pow sqrt floor ceil frac abs min max clamp pipe`
-- Constants: `SAMPLES_PER_BLOCK`, `CAPACITY_16` … `CAPACITY_16384`
+- Constants: `CAPACITY_16` … `CAPACITY_16384`
 - `.uwk.ts`-only ambients: `process` `migrations` `options` `input` `out` `ctx`
   `$prev`
 - Type aliases (for annotating helper / subgraph params): `Node<T>` `State<T>`
@@ -443,7 +443,8 @@ event<T>({ to:   "main"; name; capacity?: Capacity; payloadCapacity?: number }) 
   [cite: packages/core/src/dsl/declarations.ts :: `function eventToMain<`]
 - Main-thread side is `node.events.<name>` (§5). — [cite: packages/core/src/types.ts :: `export type EventSurface<`]
 - Outbound `atSample` is optional. Omission uses the innermost active `forSample`
-  index, including inside `everyNSamples`, or zero outside a sample loop.
+  index, including inside `everyNSamples` or a `forIndex` body, or zero outside a
+  sample loop.
   A block-level `onReceive` or MIDI `onEvent` handler uses zero, even after a
   sample loop has completed. Set it explicitly with
   `port.emitIf(cond, { atSample: i, ...userFields })` when another offset is
@@ -542,14 +543,20 @@ process(() => {
 });
 ```
 
-### Per-sample loop — `forSample` / `.byN` / `everyNSamples`
+### Loops — `forSample` / `.byN` / `everyNSamples` / `forIndex`
 
 `packages/core/src/dsl/loop.ts`:
 
 ```ts
 forSample((i: Node<"i32">, everyNSamples) => { … });           // every sample of the quantum
 forSample.byN(stride, (i, everyNSamples) => { … });            // once per `stride` samples
+forIndex(count, (index: Node<"i32">) => { … });                // exactly `count` times per call
 ```
+
+- One call of `process()` covers `ctx.renderQuantumSize` samples — 128 unless the
+  processor is compiled for another render quantum (§3 compile-time context).
+  `forSample` runs that many iterations, so a loop that must keep a fixed length
+  (FFT bins, a table, voices) belongs in `forIndex`, not `forSample`.
 
 - `everyNSamples` is delivered as the **second callback parameter** (not a free
   import): `everyNSamples(n: number, body: () => void)` runs `body` once per `n`
@@ -560,13 +567,22 @@ forSample.byN(stride, (i, everyNSamples) => { … });            // once per `st
   including periods larger than 32 bits. Scheduler phase is internal and is not
   included in snapshots; restoring named values leaves a running scheduler's
   phase intact. — [cite: packages/core/src/dsl/loop.ts :: `export type EveryNSamples =`] [cite: packages/core/src/dsl/loop.ts :: `export const forSample:`]
-- `stride` must be a power of two that divides the render quantum 128: one of
-  `1, 2, 4, 8, 16, 32, 64, 128`. `everyNSamples`'s `n` must be a compile-time
-  positive integer. These compile-time checks apply to loops in `process`,
-  `event(...).onReceive`, and `event.midi(...).onEvent`, including nested loops.
-  Invalid values fail with `illegal-stride` or `illegal-everyn-divisor` before
-  WASM emission. — `packages/core/src/compile/analyze.ts`
-- `forSample` nests; each level gets its own loop counter.
+- `stride` must be a power of two that divides the render quantum: one of
+  `1, 2, 4, 8, 16, 32, 64, 128` at 128, `1 … 32` at 32, only `1` at an odd quantum
+  such as 441. The error lists the strides allowed for the quantum. —
+  [cite: packages/core/src/compile/analyze.ts :: `export function allowedStrides(`]
+  `everyNSamples`'s `n` must be a compile-time positive integer. These
+  compile-time checks apply to loops in `process`, `event(...).onReceive`, and
+  `event.midi(...).onEvent`, including nested loops. Invalid values fail with
+  `illegal-stride` or `illegal-everyn-divisor` before WASM emission.
+- `forIndex(count, cb)` runs `cb` exactly `count` times per call with `index`
+  `0 … count - 1`, whatever the render quantum. `count` must be a compile-time
+  integer from 1 to 2^31 − 1 (`illegal-forindex-count`). `index` is not a sample
+  offset: an emit without `atSample` inside it stamps the enclosing `forSample`'s
+  sample (0 outside every `forSample`), and calling `everyNSamples` inside a
+  `forIndex` body throws `scope-violation`. — [cite: packages/core/src/dsl/loop.ts :: `export function forIndex(`]
+- `forSample` and `forIndex` nest in each other; each level gets its own loop
+  counter.
 
 ```ts
 forSample((i, everyNSamples) => {
@@ -738,19 +754,24 @@ process(() => {
 - Each `.next()` call advances the internal state; hold a sample in a local (`const s = n.next()`) if you need to reuse it in multiple places within one iteration.
 - The internal seed is framework-managed (private slot allocated at graph capture); no user-visible state.
 
-### Compile-time context — `ctx.sampleRate`
+### Compile-time context — `ctx.sampleRate` / `ctx.renderQuantumSize`
 
 `ctx` is the `defineProcessor((ctx) => …)` parameter (ambient in `.uwk.ts`):
 
 ```ts
-type ProcessorContext = { readonly sampleRate: number };
+type ProcessorContext = { readonly sampleRate: number; readonly renderQuantumSize: number };
 ```
 
 [cite: packages/core/src/types.ts :: `export type ProcessorContext =`]
 
-`ctx.sampleRate` is a build-time-known number, so rate-dependent coefficients
-(`440 / ctx.sampleRate`, etc.) const-fold into the WASM. The processor recompiles
-per host rate from this value.
+Both are the compile target, known at build time: `compile(processor, { sampleRate,
+renderQuantumSize })` re-runs the body with them (defaults 48000 and 128), so
+rate-dependent coefficients (`440 / ctx.sampleRate`, etc.) and values derived from
+the quantum const-fold into that target's WASM. One WASM serves one
+(rate, quantum) pair. `renderQuantumSize` is the `AudioContext`'s
+`renderQuantumSize` (a context created with a `renderSizeHint` renders that many
+samples per call); it must be a positive integer, else `compile` throws
+`TypeError`. A JS-literal `.at(k)` offset must lie in `[0, renderQuantumSize - 1]`.
 
 ---
 
@@ -874,6 +895,11 @@ the baked rate. — [cite: packages/core/src/client.ts :: `contextSampleRate !==
 new AudioContext({ sampleRate: 48000 });
 new OfflineAudioContext({ numberOfChannels: 2, length, sampleRate: 48000 });
 ```
+
+The WASM is also sized for one render quantum (`bakedRenderQuantumSize`, 128 for a
+`?worklet` import), so `createNode` throws when the context's `renderQuantumSize`
+differs — a context created with a `renderSizeHint`. A context without
+`renderQuantumSize` counts as 128. — [cite: packages/core/src/client.ts :: `contextRenderQuantumSize !== bakedRenderQuantumSize`]
 
 ### `UnworkletNode<C>` surface
 

@@ -343,6 +343,7 @@ const makeMockProcessor = (overrides?: {
   }>;
   migrations?: CompiledProcessor<unknown>["migrations"];
   bakedSampleRate?: number;
+  bakedRenderQuantumSize?: number;
   id?: string;
 }): CompiledProcessor<unknown> =>
   ({
@@ -370,6 +371,9 @@ const makeMockProcessor = (overrides?: {
       ...(overrides && "displayName" in overrides ? { displayName: overrides.displayName } : {}),
       ...(overrides && "bakedSampleRate" in overrides
         ? { bakedSampleRate: overrides.bakedSampleRate }
+        : {}),
+      ...(overrides && "bakedRenderQuantumSize" in overrides
+        ? { bakedRenderQuantumSize: overrides.bakedRenderQuantumSize }
         : {}),
     },
     __compiledProcessor: undefined,
@@ -480,6 +484,68 @@ test("createNode does not guard the rate when the processor carries no baked sam
   try {
     const node = await startCreate(
       () => createNode({ ...h.context, sampleRate: 44100 } as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode throws when the context's render quantum differs from the processor's", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    await expect(
+      createNode(
+        { ...h.context, renderQuantumSize: 256 } as never,
+        makeMockProcessor({ bakedRenderQuantumSize: 128 }),
+        undefined,
+      ),
+    ).rejects.toThrow(/compiled for 128-sample render quanta.*renders 256 samples/);
+    expect(h.addModuleCalls).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode treats a context without renderQuantumSize as rendering 128 samples", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ bakedRenderQuantumSize: 128 })),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
+    await expect(
+      createNode(h.context as never, makeMockProcessor({ bakedRenderQuantumSize: 64 })),
+    ).rejects.toThrow(/compiled for 64-sample render quanta.*renders 128 samples/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode proceeds when the context's render quantum matches the processor's", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          { ...h.context, renderQuantumSize: 32 } as never,
+          makeMockProcessor({ bakedRenderQuantumSize: 32 }),
+        ),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode does not guard the render quantum when the processor carries none", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode({ ...h.context, renderQuantumSize: 256 } as never, makeMockProcessor()),
       h.fireReady,
     );
     expect(node).toBeTruthy();
@@ -3072,6 +3138,29 @@ test("node.midi.<in>.send: postMessage transport encodes to wire bytes and deliv
     expect(posted).toEqual([
       { kind: "midi", ringIndex: 0, item: { status: 0x93, data1: 60, data2: 100, atSample: 0 } },
     ]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<in>.send clamps a future atTime to the last sample of the node's render quantum", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const context = { ...h.context, renderQuantumSize: 32, sampleRate: 48000, currentTime: 0 };
+    const node = await startCreate(
+      () =>
+        createNode(
+          context as never,
+          makeMockProcessor({ midiRings: [midiInFixture], bakedRenderQuantumSize: 32 }),
+        ),
+      h.fireReady,
+    );
+    const posted: Array<{ item: { atSample: number } }> = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m as { item: { atSample: number } });
+    const noteOn = { type: "noteOn" as const, channel: 0, note: 60, velocity: 100 };
+    node.midi["in"]!.send(noteOn, 10 / 48000);
+    node.midi["in"]!.send(noteOn, 1);
+    expect(posted.map((m) => m.item.atSample)).toEqual([10, 31]);
   } finally {
     h.cleanup();
   }

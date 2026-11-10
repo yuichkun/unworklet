@@ -361,6 +361,14 @@ export const soundChecks: SoundCheck[] = [
     drive: { kind: "none" },
   },
   {
+    slug: "for-index",
+    group: "operation",
+    exercises: "forIndex (an 8-partial additive tone summed per sample)",
+    source:
+      'const out   = audioOutput({ channels: 1, name: "main" });\nconst phase = state.f32(0).named();\nconst sum   = state.f32(0).named();\n\nprocess(() => {\n  forSample((i) => {\n    phase.write((phase + 110 / ctx.sampleRate) % 1);\n    sum.write(0);\n    forIndex(8, (k) => {\n      const n = f32(k) + 1;\n      sum.write(sum + sin(frac(phase * n) * (Math.PI * 2)) / n);\n    });\n    out.ch(0)[i] = sum * 0.3;\n  });\n});\n',
+    drive: { kind: "none" },
+  },
+  {
     slug: "event-from-main",
     group: "operation",
     exercises: "event from main changing pitch (rendered with three events)",

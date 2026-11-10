@@ -11,6 +11,21 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 
 ### Breaking
 
+- **`SAMPLES_PER_BLOCK` is removed from `@unworklet/core` and the `.uwk.ts`
+  ambient names.** The samples per `process()` call are now part of the compile
+  target: `compile(processor, { renderQuantumSize })` (default 128) builds the
+  WASM for one render quantum, matching an `AudioContext` created with a
+  `renderSizeHint`. Migrate each use:
+  - A loop that must run a fixed number of times per call (FFT bins, a table,
+    voices) — often written as `forSample` because it ran 128 times — becomes
+    `forIndex(count, (index) => …)`, which keeps its length at every quantum.
+    `forSample` runs `ctx.renderQuantumSize` iterations.
+  - Arithmetic on the quantum inside a processor body uses
+    `ctx.renderQuantumSize` (ambient `ctx` in `.uwk.ts`).
+  - Host code that sized blocks for `compile(...).driver` or `renderOffline`
+    reads `renderQuantumSize` from the compile or render result, or uses `128`
+    for the default target.
+
 - **Unary numeric functions fix number-only results to `Node<"f32">`.**
   `neg`, `abs`, `sin`, `cos`, `tan`, `tanh`, `exp`, `log`, `sqrt`, `floor`,
   `ceil`, and `frac` reject contextual assignments or explicit generic claims
@@ -30,7 +45,29 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   their inferred binding name. This restored validation requires the next minor
   release under the pre-1.0 compatibility policy.
 
+### Added
+
+- **Render quanta other than 128.** `ProcessorContext.renderQuantumSize`,
+  `CompileOptions.renderQuantumSize`, and `CompileResult.renderQuantumSize`
+  select and report the compile target's samples per call. `forSample` loops,
+  audio and parameter I/O, sample-offset checks, and the publish cadence follow
+  it; `forSample.byN` accepts the powers of two that divide it, and the
+  `illegal-stride` error lists them. `renderOffline` takes
+  `renderQuantumSize` and reports it on the result. Namespaces built from
+  compile metadata carry `bakedRenderQuantumSize`, and `createNode` rejects a
+  context whose `renderQuantumSize` differs instead of silencing the node at
+  run time.
+- **`forIndex(count, (index) => …)`** runs a loop exactly `count` times per
+  call, whatever the render quantum. `count` is a compile-time integer from 1 to
+  2^31 − 1 (`illegal-forindex-count`); emits inside it keep the enclosing
+  `forSample`'s sample as their default `atSample`.
+
 ### Fixed
+
+- A published state whose `rateFps` asks for more than one update per render
+  quantum publishes on every call indefinitely. Its sample counter no longer
+  grows on each call until it overflows after long continuous rendering and
+  publishing stops.
 
 - `.uwk.ts` preserves variable and helper-call `.expose(options)` names,
   snapshot policies, and scalar publishing. Nameless options retain the binding

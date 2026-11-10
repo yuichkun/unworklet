@@ -18,7 +18,6 @@ export {
   CAPACITY_4096,
   CAPACITY_8192,
   CAPACITY_16384,
-  SAMPLES_PER_BLOCK,
 } from "./dsl/constants.ts";
 
 // Scalar constructors.
@@ -78,8 +77,13 @@ export type {
 } from "./dsl/declarations.ts";
 
 // Loop primitive.
-export { forSample } from "./dsl/loop.ts";
-export type { EveryNSamples, ForSampleCallback, ForSampleFn } from "./dsl/loop.ts";
+export { forIndex, forSample } from "./dsl/loop.ts";
+export type {
+  EveryNSamples,
+  ForIndexCallback,
+  ForSampleCallback,
+  ForSampleFn,
+} from "./dsl/loop.ts";
 
 // Processor / subgraph constructors.
 export { instantiate, defineProcessor, defineSubgraph } from "./processor.ts";

@@ -10,7 +10,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 import { audioOutput, state } from "../../dsl/declarations.ts";
 import { f32 } from "../../dsl/constructors.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { instantiate, defineProcessor, defineSubgraph } from "../../processor.ts";
 import type { Node } from "../../types.ts";
@@ -138,7 +138,7 @@ test("L1 helper: pure TS function over Node is inlined inside forSample", async 
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(5);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(outputs.main![0]![k]).toBe(5);
 });
 
 // §5.6.4 / Q34: instantiate(...) and declarations (state.* / buffer.* / ...) are

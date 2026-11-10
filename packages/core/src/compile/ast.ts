@@ -102,6 +102,10 @@ export type AstNode =
   // omitted ⇒ top level (0), so a hand-built single-loop fixture stays valid.
   | { kind: "loopCounter"; depth?: number }
   | { kind: "forSample"; stride: number; depth?: number; body: AstNode[] }
+  // `forIndex(count, cb)`: runs `body` exactly `count` times per call (not tied to
+  // the render quantum). `depth` shares the forSample nesting numbering, so its
+  // counter is read through `loopCounter` like a forSample's.
+  | { kind: "forIndex"; count: number; depth: number; body: AstNode[] }
   | { kind: "stateLoad"; type: ScalarType; name: string }
   | { kind: "stateStore"; type: ScalarType; name: string; value: AstNode }
   // sub-rate sub-block inside a `forSample` callback (`01-dsl.md` §9, Q43). Runs
@@ -433,6 +437,11 @@ export type Declaration =
 export type CapturedGraph = {
   declarations: Declaration[];
   statements: AstNode[];
+  /**
+   * Samples per `process()` call this graph was captured for. Absent means the
+   * default quantum (128), so default graphs serialize as they always have.
+   */
+  renderQuantumSize?: number;
 };
 
 /**
@@ -525,6 +534,7 @@ export function inferAstType(ast: AstNode): ScalarType {
       throw new Error(`statement node '${ast.kind}' cannot appear in expression position`);
     case "audioOutWrite":
     case "forSample":
+    case "forIndex":
     case "stateStore":
     case "eventEmitIf":
     case "messageOnReceive":

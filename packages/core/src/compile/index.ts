@@ -8,8 +8,9 @@
  *
  * Orchestrates the 4 per-stage internal modules (= plan Q-D):
  *
- *   capturedGraph = processor.__capture(sampleRate)  ← re-capture at the host rate
- *                   (= ctx.sampleRate coefficient precomputation at the real rate)
+ *   capturedGraph = processor.__capture(sampleRate,   ← re-capture for the target
+ *                     renderQuantumSize)               (= ctx.sampleRate coefficients,
+ *                                                         ctx.renderQuantumSize loops)
  *   diagnostics   = analyze(graph)        ← Layer 3 check (memory-budget, etc.)
  *   memory        = layout(graph)         ← sub-region partitioning + ioScratch
  *   wasm          = await emit(graph,     ← binaryen lower (dynamic import)
@@ -22,7 +23,7 @@
  * restores the internal types to emit a JSON artifact).
  */
 
-import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../dsl/constants.ts";
 import type {
   CompiledProcessor,
   CompileDriver,
@@ -38,12 +39,11 @@ import type {
 import { analyze, checkMemoryBudget } from "./analyze.ts";
 import type { AudioPortDecl, CapturedGraph, ParamDecl } from "./ast.ts";
 import { emit } from "./emit.ts";
-import { layout } from "./layout.ts";
+import { layout, renderQuantumOf } from "./layout.ts";
 import type { Layout } from "./layout.ts";
 import { schemaHash } from "./schemaHash.ts";
 
 const BYTES_PER_F32 = 4;
-const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
 /**
  * Default sampleRate = 48000 (= matches the host default and existing test fixtures).
@@ -58,12 +58,28 @@ export async function compile<C>(
   options: CompileOptions = {},
 ): Promise<CompileResult<C>> {
   const sampleRate = options.sampleRate ?? DEFAULT_SAMPLE_RATE;
-  // Re-capture with the host rate so `ctx.sampleRate` coefficient precomputation
-  // (`440 / ctx.sampleRate`, etc.) uses the real rate — the eager `graph` is the
-  // rate-independent metadata view. Falls back to `graph` for hand-built fixtures.
+  const renderQuantumSize = options.renderQuantumSize ?? DEFAULT_RENDER_QUANTUM_SIZE;
+  if (!Number.isInteger(renderQuantumSize) || renderQuantumSize < 1) {
+    throw new TypeError(
+      `unworklet: compile renderQuantumSize must be a positive integer (the AudioContext's ` +
+        `renderQuantumSize), got ${renderQuantumSize}`,
+    );
+  }
+  // Re-capture for the target so `ctx.sampleRate` coefficient precomputation
+  // (`440 / ctx.sampleRate`, etc.) and `ctx.renderQuantumSize` use the real
+  // values. Falls back to `graph` for hand-built fixtures.
   const graph = (processor.__capture
-    ? processor.__capture(sampleRate)
+    ? processor.__capture(sampleRate, renderQuantumSize)
     : processor.graph) as unknown as CapturedGraph;
+  // Layout and emit size every per-call region from the quantum recorded on the
+  // graph, so a graph captured for another quantum (a hand-built fixture) would
+  // silently run the wrong number of samples per call.
+  if (renderQuantumOf(graph) !== renderQuantumSize) {
+    throw new Error(
+      `unworklet: compile was asked for renderQuantumSize ${renderQuantumSize}, but the ` +
+        `processor graph was captured for ${renderQuantumOf(graph)}`,
+    );
+  }
   const diagnostics = analyze(graph);
   // `layout` is pure sizing that packs the memory sub-regions and fixes `totalBytes`.
   // The memory-budget (Q30) can only be judged once `totalBytes` is known, so we run
@@ -87,6 +103,7 @@ export async function compile<C>(
     diagnostics: diagnostics as unknown as DiagnosticsJson,
     schemaHash: hash,
     sampleRate,
+    renderQuantumSize,
     driver: makeDriver(graph, memory, wasm),
     __compiledProcessor: undefined as unknown as C,
   };
@@ -122,6 +139,9 @@ export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array):
     // state / buffer / event / message / midi = excluded from the driver (= not on the white list above)
   }
 
+  // Every I/O view spans one call's worth of samples of the compiled quantum.
+  const quantum = renderQuantumOf(graph);
+  const channelStrideBytes = quantum * BYTES_PER_F32;
   let modulePromise: Promise<WebAssembly.Module> | null = null;
 
   return {
@@ -138,9 +158,9 @@ export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array):
       const sysexDropGlobal = instance.exports["droppedSysexMessages"] as WebAssembly.Global;
 
       const inputBase = (portName: string, channel: number): number =>
-        lay.regions.ioScratch.inputs[portName]! + channel * CHANNEL_STRIDE_BYTES;
+        lay.regions.ioScratch.inputs[portName]! + channel * channelStrideBytes;
       const outputBase = (portName: string, channel: number): number =>
-        lay.regions.ioScratch.outputs[portName]! + channel * CHANNEL_STRIDE_BYTES;
+        lay.regions.ioScratch.outputs[portName]! + channel * channelStrideBytes;
       const paramBase = (paramName: string): number => lay.regions.ioScratch.params[paramName]!;
 
       return {
@@ -148,28 +168,20 @@ export function makeDriver(graph: CapturedGraph, lay: Layout, wasm: Uint8Array):
         process: proc,
         declarations,
         writeInput(portName, channel, blockData) {
-          const view = new Float32Array(
-            memory.buffer,
-            inputBase(portName, channel),
-            SAMPLES_PER_BLOCK,
-          );
-          for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+          const view = new Float32Array(memory.buffer, inputBase(portName, channel), quantum);
+          for (let s = 0; s < quantum; s++) {
             view[s] = blockData[s]!;
           }
         },
         writeParam(paramName, blockData) {
-          const view = new Float32Array(memory.buffer, paramBase(paramName), SAMPLES_PER_BLOCK);
-          for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+          const view = new Float32Array(memory.buffer, paramBase(paramName), quantum);
+          for (let s = 0; s < quantum; s++) {
             view[s] = blockData[s]!;
           }
         },
         readOutput(portName, channel, dest) {
-          const view = new Float32Array(
-            memory.buffer,
-            outputBase(portName, channel),
-            SAMPLES_PER_BLOCK,
-          );
-          for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+          const view = new Float32Array(memory.buffer, outputBase(portName, channel), quantum);
+          for (let s = 0; s < quantum; s++) {
             dest[s] = view[s]!;
           }
         },

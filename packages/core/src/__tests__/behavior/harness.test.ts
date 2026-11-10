@@ -11,7 +11,7 @@ import { expect, test } from "vite-plus/test";
 
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms (.mul / .add / …)
 import { audioInput, audioOutput, param, state } from "../../dsl/declarations.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 
@@ -34,13 +34,13 @@ test("f32 gain reproduces input × gain on every sample (= harness drives WASM I
     };
   });
 
-  const input = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) input[k] = k / SAMPLES_PER_BLOCK;
+  const input = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) input[k] = k / DEFAULT_RENDER_QUANTUM_SIZE;
 
   const { outputs } = await render(gain, { inputs: { main: [input] }, params: { g: 0.5 } });
 
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
-    expect(outputs.main![0]![k]).toBeCloseTo((k / SAMPLES_PER_BLOCK) * 0.5, 6);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
+    expect(outputs.main![0]![k]).toBeCloseTo((k / DEFAULT_RENDER_QUANTUM_SIZE) * 0.5, 6);
   }
 });
 
@@ -66,12 +66,12 @@ test("multi-block render carries f32 state across quanta (= harness loops proces
   });
 
   const blocks = 2;
-  const input = new Float32Array(blocks * SAMPLES_PER_BLOCK).fill(1);
+  const input = new Float32Array(blocks * DEFAULT_RENDER_QUANTUM_SIZE).fill(1);
 
   const { outputs } = await render(accumulator, { blocks, inputs: { main: [input] } });
 
   const ch = outputs.main![0]!;
-  for (let k = 0; k < blocks * SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < blocks * DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(ch[k]).toBeCloseTo(k + 1, 4);
   }
 });

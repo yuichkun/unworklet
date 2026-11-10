@@ -77,7 +77,7 @@ they do not prove the surrounding behavior claim.
 
 ## Read more (siblings)
 
-- **dsl.md** — authoring the processor AND loading it: the `.uwk.ts` sugar (operators, index, bare-state read, `if`/`?:`, `$prev`, auto-name, subgraphs), the underlying `@unworklet/core` declaration API (`audioInput`/`audioOutput`, `param`, `state`, `state.buffer`, `event`/`event.midi`, `forSample`, `defineSubgraph`/`instantiate`, math ops), the `?worklet` import + `createNode` + the `UnworkletNode` surface (§5), and the `.processor.ts` alternative.
+- **dsl.md** — authoring the processor AND loading it: the `.uwk.ts` sugar (operators, index, bare-state read, `if`/`?:`, `$prev`, auto-name, subgraphs), the underlying `@unworklet/core` declaration API (`audioInput`/`audioOutput`, `param`, `state`, `state.buffer`, `event`/`event.midi`, `forSample`/`forIndex`, `defineSubgraph`/`instantiate`, math ops), the `?worklet` import + `createNode` + the `UnworkletNode` surface (§5), and the `.processor.ts` alternative.
 - **setup.md** — scaffolding & wiring: which `@unworklet/*` packages to install, `vite.config.ts`, the generated `.unworklet/` dir + tsconfig, file conventions, and the 48 kHz rate gate.
 - **ide-and-typecheck.md** — editor types & CI: the `@unworklet/lang/typescript-plugin` editor plugin and the `unworklet-tsc` drop-in typecheck CLI.
 - **testing.md** — headless tests: `renderOffline` (the Node oracle) plus `@unworklet/test` plain matchers, the chain form (`@unworklet/test/extend`), signal generators, and MIDI builders.

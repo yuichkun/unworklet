@@ -11,7 +11,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 import { audioOutput, state } from "../../dsl/declarations.ts";
 import { f32 } from "../../dsl/constructors.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { compile } from "../../compile/index.ts";
 import { defineProcessor } from "../../processor.ts";
@@ -33,7 +33,7 @@ test("forSample.byN(4) executes body every 4 samples (comb pattern)", async () =
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBe(k % 4 === 0 ? 1 : 0);
   }
 });
@@ -50,7 +50,7 @@ test("forSample.byN(1) executes body on every sample (equivalent to stride 1)", 
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBeCloseTo(k * 0.01, 5);
   }
 });

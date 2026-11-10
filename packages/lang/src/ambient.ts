@@ -36,6 +36,7 @@ declare global {
 
   // ── Loop + control ──
   const forSample: typeof import("@unworklet/core").forSample;
+  const forIndex: typeof import("@unworklet/core").forIndex;
   const select: typeof import("@unworklet/core").select;
 
   // ── Scalar constructors ──
@@ -78,7 +79,6 @@ declare global {
   const pipe: typeof import("@unworklet/core").pipe;
 
   // ── Constants ──
-  const SAMPLES_PER_BLOCK: typeof import("@unworklet/core").SAMPLES_PER_BLOCK;
   const CAPACITY_16: typeof import("@unworklet/core").CAPACITY_16;
   const CAPACITY_32: typeof import("@unworklet/core").CAPACITY_32;
   const CAPACITY_64: typeof import("@unworklet/core").CAPACITY_64;

@@ -33,8 +33,7 @@ import type {
   ParamDecl,
   StateDecl,
 } from "./compile/ast.ts";
-import { layout, type Layout } from "./compile/layout.ts";
-import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { layout, layoutRenderQuantum, type Layout } from "./compile/layout.ts";
 import { EGRESS_HEADER_BYTES, EGRESS_SECTION_HEADER_BYTES, alignUp4 } from "./egressFrame.ts";
 import { atomicMonotoneMax, ringCount, ringLeads, ringSlotIndex } from "./ringIndex.ts";
 import { bindSabIngress, consumeSabIngress, type SabIngressRing } from "./sabIngress.ts";
@@ -135,7 +134,6 @@ export function extractWorkletMeta(graph: CapturedGraph): WorkletMeta {
 }
 
 const BYTES_PER_F32 = 4;
-const CHANNEL_STRIDE_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 /** Fixed MIDI wire slot = `[status, data1, data2, _pad, atSample:u32]` (`11-midi.md` §4.1). */
 const MIDI_SLOT_BYTES = 8;
 
@@ -694,6 +692,10 @@ export function makeWorkletNamespace(graph: CapturedGraph): WorkletNamespace {
 
 export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespace {
   const lay = meta.layout;
+  // Samples per `process()` call the WASM was compiled for: every I/O view spans
+  // this many f32 values and the host's block must match it.
+  const quantum = layoutRenderQuantum(lay);
+  const channelStrideBytes = quantum * BYTES_PER_F32;
   const audioInputs = meta.audioInputs;
   const audioOutputs = meta.audioOutputs;
   const params = meta.params;
@@ -842,8 +844,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const portBase = lay.regions.ioScratch.inputs[decl.name]!;
         const channels: Float32Array[] = [];
         for (let c = 0; c < decl.channels; c++) {
-          const channelBase = portBase + c * CHANNEL_STRIDE_BYTES;
-          channels.push(new Float32Array(memory.buffer, channelBase, SAMPLES_PER_BLOCK));
+          const channelBase = portBase + c * channelStrideBytes;
+          channels.push(new Float32Array(memory.buffer, channelBase, quantum));
         }
         inputViews.push(channels);
       }
@@ -853,8 +855,8 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         const portBase = lay.regions.ioScratch.outputs[decl.name]!;
         const channels: Float32Array[] = [];
         for (let c = 0; c < decl.channels; c++) {
-          const channelBase = portBase + c * CHANNEL_STRIDE_BYTES;
-          channels.push(new Float32Array(memory.buffer, channelBase, SAMPLES_PER_BLOCK));
+          const channelBase = portBase + c * channelStrideBytes;
+          channels.push(new Float32Array(memory.buffer, channelBase, quantum));
         }
         outputViews.push(channels);
       }
@@ -862,7 +864,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
       const paramViews: Float32Array[] = [];
       for (const decl of params) {
         const paramBase = lay.regions.ioScratch.params[decl.name]!;
-        paramViews.push(new Float32Array(memory.buffer, paramBase, SAMPLES_PER_BLOCK));
+        paramViews.push(new Float32Array(memory.buffer, paramBase, quantum));
       }
 
       // Pull the publish-related meta + buffer out of opts (sub-phase 7.4).
@@ -1243,7 +1245,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             name: p.name,
             kind: "param",
             type: "f32",
-            data: encodeScalar("f32", paramViews[pi]![SAMPLES_PER_BLOCK - 1]!),
+            data: encodeScalar("f32", paramViews[pi]![quantum - 1]!),
           });
         }
         return out;
@@ -1282,7 +1284,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
             name: p.name,
             kind: "param",
             type: "f32",
-            data: encodeScalar("f32", paramViews[pi]![SAMPLES_PER_BLOCK - 1]!),
+            data: encodeScalar("f32", paramViews[pi]![quantum - 1]!),
           });
         }
         return out;
@@ -1641,13 +1643,13 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     // expected length. The single mismatch event is posted once; later
     // quanta short-circuit on `state.failed` above before reaching here.
     const firstOut = outputs[0]?.[0];
-    if (firstOut && firstOut.length !== SAMPLES_PER_BLOCK) {
+    if (firstOut && firstOut.length !== quantum) {
       state.failed = true;
       fillOutputsSilent(outputs);
       self.port.postMessage({
         kind: "error",
         code: "block-length-mismatch",
-        expected: SAMPLES_PER_BLOCK,
+        expected: quantum,
         received: firstOut.length,
       });
       return true;
@@ -1669,7 +1671,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
         // declared channel carries signal — otherwise the right output is silent
         // ("left-only"). A fully disconnected port (no channel 0) stays silence.
         const src = portInput[c] ?? portInput[0];
-        if (src && src.length === SAMPLES_PER_BLOCK) {
+        if (src && src.length === quantum) {
           view.set(src);
         } else {
           view.fill(0);
@@ -1679,7 +1681,7 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
 
     // Marshal parameters into linear memory ioScratch.params[name].
     // AudioWorklet hands us length 0 (= no automation, use declared default),
-    // 1 (= k-rate or unchanged a-rate, broadcast), or SAMPLES_PER_BLOCK
+    // 1 (= k-rate or unchanged a-rate, broadcast), or the render quantum
     // (= per-sample a-rate). 08-deployment.md §2 A3 unifies them at this seam.
     const paramViews = state.paramViews;
     for (let i = 0; i < state.params.length; i++) {
@@ -2016,5 +2018,6 @@ export function makeWorkletNamespaceFromMeta(meta: WorkletMeta): WorkletNamespac
     eventRings,
     messageRings,
     midiRings,
+    bakedRenderQuantumSize: quantum,
   };
 }

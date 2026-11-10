@@ -522,9 +522,20 @@ export type MidiOutputHandle = {
 // Processor lifecycle (`01-dsl.md` §1 / §8 + `05-client.md` §1)
 // ─────────────────────────────────────────────────────────────────────────
 
-/** Compile-time context passed to `defineProcessor` / `defineSubgraph` bodies. */
+/**
+ * Compile-time context passed to `defineProcessor` bodies. Both values are the
+ * compile target: `compile` re-runs the body for each (rate, quantum) pair, so
+ * code derived from them const-folds into that target's WASM.
+ */
 export type ProcessorContext = {
+  /** Sample rate of the compile target, in Hz. */
   readonly sampleRate: number;
+  /**
+   * Samples per `process()` call of the compile target — the `AudioContext`'s
+   * `renderQuantumSize` (128 unless the context was created with a
+   * `renderSizeHint`). `forSample` runs this many iterations per call.
+   */
+  readonly renderQuantumSize: number;
 };
 
 /** Strict shape returned by `defineProcessor` / `defineSubgraph` bodies. */
@@ -726,6 +737,14 @@ export type WorkletNamespace = {
    * recompile-at-rate path (recompile at the context rate instead of throwing).
    */
   bakedSampleRate?: number;
+  /**
+   * Samples per `process()` call the namespace's WASM layout is sized for (the
+   * compile target's `renderQuantumSize`). The worklet runtime only accepts
+   * blocks of this length (`block-length-mismatch` otherwise), so `createNode`
+   * compares it against the context's `renderQuantumSize`. Set by every
+   * namespace built from compile metadata; `undefined` skips the check.
+   */
+  bakedRenderQuantumSize?: number;
 };
 
 export type CompiledProcessor<C> = {
@@ -742,11 +761,12 @@ export type CompiledProcessor<C> = {
    */
   readonly migrations?: readonly Migration[];
   /**
-   * Internal re-capture thunk: re-runs the `defineProcessor` body with the host
-   * `ctx.sampleRate` so `compile` emits rate-specific coefficients. The public
-   * `graph` is the rate-independent eager capture (declarations / layout / meta).
+   * Internal re-capture thunk: re-runs the `defineProcessor` body for a compile
+   * target (`ctx.sampleRate`, `ctx.renderQuantumSize`; quantum default 128) so
+   * `compile` emits target-specific coefficients and loop lengths. The public
+   * `graph` is the eager capture at 48000 Hz / 128 samples.
    */
-  readonly __capture?: (sampleRate: number) => ProcessorGraph;
+  readonly __capture?: (sampleRate: number, renderQuantumSize?: number) => ProcessorGraph;
   readonly __compiledProcessor: C;
 };
 
@@ -833,20 +853,27 @@ export type CompileResult<C> = {
   schemaHash: string;
   /** The sampleRate this artifact was compiled at (the rate baked into its coefficients). */
   sampleRate: number;
+  /** Samples per `process()` call this artifact was compiled for. */
+  renderQuantumSize: number;
   driver: CompileDriver;
   __compiledProcessor: C;
 };
 
 /**
- * Second argument to `compile(processor, options)` (= added in sub-phase 7.3).
+ * Second argument to `compile(processor, options)`: the compile target.
  *
- * - `sampleRate`: handed to emit as a build-time-known value (= const-folds the
- *   publish scheduler's threshold `Math.round(sampleRate / rateFps)`). default
- *   = 48000 (= zips with existing test fixtures / host defaults). One wasm = one
- *   sampleRate; a different sampleRate emits a different wasm.
+ * - `sampleRate`: bound to `ctx.sampleRate` and const-folded into the WASM
+ *   (coefficients, the publish scheduler's threshold). Default 48000.
+ * - `renderQuantumSize`: samples per `process()` call, bound to
+ *   `ctx.renderQuantumSize`. It sizes the I/O scratch and bounds every
+ *   `forSample` loop. Match the `AudioContext`'s `renderQuantumSize`. Default
+ *   128; must be a positive integer.
+ *
+ * One WASM serves one (sampleRate, renderQuantumSize) pair.
  */
 export type CompileOptions = {
   sampleRate?: number;
+  renderQuantumSize?: number;
 };
 
 /**
@@ -864,11 +891,11 @@ export type CompileInstance = {
   readonly memory: WebAssembly.Memory;
   process(): void;
   readonly declarations: ReadonlyArray<CompileInstanceDeclaration>;
-  /** Caller invariant: `blockData.length === SAMPLES_PER_BLOCK`. */
+  /** Caller invariant: `blockData.length` is the compiled `renderQuantumSize`. */
   writeInput(portName: string, channel: number, blockData: Float32Array): void;
-  /** Caller invariant: `blockData.length === SAMPLES_PER_BLOCK`. */
+  /** Caller invariant: `blockData.length` is the compiled `renderQuantumSize`. */
   writeParam(paramName: string, blockData: Float32Array): void;
-  /** Caller invariant: `dest.length === SAMPLES_PER_BLOCK`. */
+  /** Caller invariant: `dest.length` is the compiled `renderQuantumSize`. */
   readOutput(portName: string, channel: number, dest: Float32Array): void;
   /**
    * Lifetime count of output samples the non-finite scrub replaced with 0

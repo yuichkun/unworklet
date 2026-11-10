@@ -28,7 +28,7 @@ import type {
   UnworkletNode,
 } from "./types.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
-import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "./dsl/constants.ts";
 import {
   EGRESS_HEADER_BYTES,
   EGRESS_POOL_COUNT,
@@ -325,6 +325,16 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
   });
 
 /**
+ * Samples per render quantum of a context: `renderQuantumSize` where the engine
+ * exposes it (a context created with `renderSizeHint`), else the Web Audio
+ * default of 128.
+ */
+const contextRenderQuantumOf = (context: BaseAudioContext): number => {
+  const size = (context as unknown as { renderQuantumSize?: unknown }).renderQuantumSize;
+  return typeof size === "number" ? size : DEFAULT_RENDER_QUANTUM_SIZE;
+};
+
+/**
  * Contexts already warned about an unavailable SharedArrayBuffer, so the dev
  * notice fires once per AudioContext instead of once per node.
  */
@@ -376,6 +386,23 @@ export async function createNode<C>(
         `Recompiling at the context rate is not yet supported.`,
     );
   }
+
+  // The WASM's I/O scratch and loops are sized for one render quantum, and the
+  // worklet runtime silences the node on any other block length. A context
+  // created with a `renderSizeHint` renders `renderQuantumSize` samples per call
+  // (absent on engines without the hint = the Web Audio default of 128).
+  const bakedRenderQuantumSize = ns.bakedRenderQuantumSize;
+  const contextRenderQuantumSize = contextRenderQuantumOf(context);
+  if (bakedRenderQuantumSize !== undefined && contextRenderQuantumSize !== bakedRenderQuantumSize) {
+    throw new Error(
+      `unworklet: createNode() — this processor was compiled for ${bakedRenderQuantumSize}-sample ` +
+        `render quanta but the AudioContext renders ${contextRenderQuantumSize} samples per ` +
+        `quantum. Create the node on a context with that render quantum, or compile the processor ` +
+        `for the context (\`compile(processor, { sampleRate, renderQuantumSize })\`).`,
+    );
+  }
+  // Samples per process() call of this node (bounds scheduled atSample offsets).
+  const nodeRenderQuantumSize = bakedRenderQuantumSize ?? contextRenderQuantumSize;
 
   await addModuleOnce(
     context as unknown as { audioWorklet: { addModule: (url: string) => Promise<void> } },
@@ -856,7 +883,7 @@ export async function createNode<C>(
     if (atTime === undefined) return 0;
     const offset = Math.round((atTime - ctxTimeOf()) * sampleRateOf());
     if (offset <= 0) return 0;
-    return offset >= SAMPLES_PER_BLOCK ? SAMPLES_PER_BLOCK - 1 : offset;
+    return offset >= nodeRenderQuantumSize ? nodeRenderQuantumSize - 1 : offset;
   };
 
   // Decode a single 8-byte wire slot (= status/data1/data2 + atSample). For

@@ -12,7 +12,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 import { audioOutput } from "../../dsl/declarations.ts";
 import { f32 } from "../../dsl/constructors.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 
@@ -33,7 +33,7 @@ test("nested forSample: an empty inner loop does not truncate the outer loop", a
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBe(k);
   }
 });
@@ -45,7 +45,7 @@ test("nested forSample: inner counter is independent; outer i still resolves ins
       process: () => {
         forSample((i) => {
           // Inner runs exactly once per outer sample (stride == block size, j == 0).
-          forSample.byN(SAMPLES_PER_BLOCK, (j) => {
+          forSample.byN(DEFAULT_RENDER_QUANTUM_SIZE, (j) => {
             out
               .ch(0)
               .at(i)
@@ -56,7 +56,7 @@ test("nested forSample: inner counter is independent; outer i still resolves ins
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBe(k);
   }
 });

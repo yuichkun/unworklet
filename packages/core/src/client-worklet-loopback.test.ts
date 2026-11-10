@@ -25,7 +25,7 @@ import { expect, test, vi } from "vite-plus/test";
 
 import { createNode } from "./client.ts";
 import { compile } from "./compile/index.ts";
-import { CAPACITY_16, CAPACITY_32, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { CAPACITY_16, CAPACITY_32, DEFAULT_RENDER_QUANTUM_SIZE } from "./dsl/constants.ts";
 import { f32 } from "./dsl/constructors.ts";
 import { audioOutput, event, param, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
@@ -309,7 +309,7 @@ const bootLoopback = async (
     processorOptions: harness.capturedProcessorOptions(),
   });
   const node = await nodePromise;
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   return {
     node,
     harness,
@@ -856,7 +856,7 @@ test("SAB ingress snapshots input while a producer sends across the copy", async
   const session = await bootLoopback(processor, { crossOriginIsolated: true });
   const incoming = session.node.events.incoming!;
   const shared = session.harness.capturedProcessorOptions().messageRingsBuffer;
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   // oxlint-disable-next-line typescript/unbound-method -- restored in finally
   const realSet = Uint8Array.prototype.set;
   let injected = false;
@@ -954,7 +954,7 @@ test("SAB ingress retries without subscribers, snapshots caller bytes and cancel
   const options = session.harness.capturedProcessorOptions();
   const access = new Int32Array(options.ingressAccessBuffer as SharedArrayBuffer);
   const shared = new Int32Array(options.messageRingsBuffer as SharedArrayBuffer, 0, 3);
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   vi.useFakeTimers();
   try {
     access[0] = 1;
@@ -1175,7 +1175,7 @@ for (const crossOriginIsolated of [true, false]) {
           processor.worklet.initialize(harness.workletSelf as never, {
             processorOptions: harness.capturedProcessorOptions(),
           });
-        const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+        const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
         const process = () =>
           processor.worklet.process(harness.workletSelf as never, [], outputs, {});
         if (phase !== "late-initialize") {
@@ -1250,7 +1250,7 @@ for (const crossOriginIsolated of [true, false]) {
         for (const task of queues.tasks.splice(0)) task();
         for (const reply of queues.replies.splice(0)) reply();
         for (let quantum = 0; quantum < 3; quantum++) {
-          const output = new Float32Array(SAMPLES_PER_BLOCK).fill(7);
+          const output = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(7);
           expect(processor.worklet.process(harness.workletSelf as never, [], [[output]], {})).toBe(
             false,
           );

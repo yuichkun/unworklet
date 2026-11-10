@@ -11,7 +11,7 @@ import "../../dsl/primitives.ts";
 import "../../dsl/pipe.ts";
 import { audioInput, audioOutput } from "../../dsl/declarations.ts";
 import { pipe } from "../../index.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 import type { Node } from "../../types.ts";
@@ -36,7 +36,7 @@ test("pipe(x, abs, double) renders identically to double(abs(x))", async () => {
         },
       };
     });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   x[0] = -1.5;
   x[1] = 2;
   x[2] = -0.25;
@@ -63,7 +63,7 @@ test("pipe(x) with no functions returns x unchanged", async () => {
       },
     };
   });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   x[0] = 0.7;
   const { outputs } = await render(proc, { inputs: { main: [x] } });
   expect(outputs.main![0]![0]).toBeCloseTo(0.7, 6);
@@ -81,7 +81,7 @@ test("x.pipe(double) method form matches double(x)", async () => {
       },
     };
   });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   x[0] = 1.5;
   const { outputs } = await render(proc, { inputs: { main: [x] } });
   expect(outputs.main![0]![0]).toBeCloseTo(3, 6);
