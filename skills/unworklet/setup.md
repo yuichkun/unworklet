@@ -266,6 +266,13 @@ the context in a Web Worker, then loads the result:
   the same headers as the page.
 - **The worker evaluates the processor module.** Keep a processor file free of
   DOM side effects at module level (`document`, `window`): the worker has none.
+- **Snapshots follow the compiled slot schema.** A declaration sized from
+  `ctx.sampleRate` or `ctx.renderQuantumSize` (a delay buffer of
+  `ctx.sampleRate * seconds` elements) gives each target its own `schemaHash`.
+  A node compiled for the context stamps that target's hash into its snapshots
+  and uses it as `restore`'s migration target, as `renderOffline` does, so a
+  blob saved at another rate needs a migration — or keep persistent slots
+  rate-independent. [cite: packages/core/src/client.ts :: `nodeSchemaHash = compiled.schemaHash;`]
 - **A target the processor cannot meet fails `createNode`.** `forSample.byN`
   strides must divide the quantum and literal `.at(k)` offsets must lie inside
   it, so a processor valid at 128 can fail at 32; the rejection names the

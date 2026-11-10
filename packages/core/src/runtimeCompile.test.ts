@@ -101,6 +101,7 @@ async function reply(request: Record<string, unknown>): Promise<Reply> {
     wasm: result.wasm,
     meta: extractWorkletMeta(result.graph as unknown as CapturedGraph),
     moduleSource: `registerProcessor(${JSON.stringify(request.processorName)}, class {});`,
+    schemaHash: result.schemaHash,
   };
 }
 
@@ -169,6 +170,8 @@ test("the worker is started as a module, asked once ready, and terminated after 
   ]);
   expect(workers[0]!.terminated).toBe(true);
   expect(compiled.wasmModule).toBeInstanceOf(WebAssembly.Module);
+  // The node's snapshots are labelled with the compiled declarations' hash.
+  expect(compiled.schemaHash).toBe((await compile(tone, { sampleRate: 44100 })).schemaHash);
 });
 
 test("the namespace describes the compiled target and keeps the display name and worker", async () => {

@@ -11,7 +11,7 @@
  * Protocol (one request per worker in `createNode`, but any number is served):
  *   page → worker  { type: "compile", id, sampleRate, renderQuantumSize, processorName }
  *   worker → page  { type: "ready" }
- *                  { type: "result", id, wasm, meta, moduleSource }   (wasm transferred)
+ *                  { type: "result", id, wasm, meta, moduleSource, schemaHash }   (wasm transferred)
  *                  { type: "error", id, message }                     (compile diagnostics' IDs in message)
  */
 
@@ -41,6 +41,12 @@ export type CompileWorkerReply =
       readonly meta: WorkletMeta;
       /** A self-contained AudioWorklet module (runtime inlined) registering `processorName`. */
       readonly moduleSource: string;
+      /**
+       * Schema hash of the compiled declarations. A declaration sized from
+       * `ctx.sampleRate` or `ctx.renderQuantumSize` makes it differ from the
+       * processor's own (48000 Hz / 128) hash; the node's snapshots carry this one.
+       */
+      readonly schemaHash: string;
     }
   | { readonly type: "error"; readonly id: number; readonly message: string };
 
@@ -85,7 +91,14 @@ export function serveCompileRequests(
         processorName,
         runtime: { kind: "inline", code: options.workletRuntime },
       });
-      reply = { type: "result", id, wasm: result.wasm, meta, moduleSource };
+      reply = {
+        type: "result",
+        id,
+        wasm: result.wasm,
+        meta,
+        moduleSource,
+        schemaHash: result.schemaHash,
+      };
     } catch (error) {
       scope.postMessage({
         type: "error",

@@ -12,7 +12,7 @@ import { afterEach, expect, test } from "vite-plus/test";
 import "./dsl/primitives.ts";
 import { compile } from "./compile/index.ts";
 import { f32 } from "./dsl/constructors.ts";
-import { audioOutput } from "./dsl/declarations.ts";
+import { audioOutput, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
 import { makeWorkletNamespaceFromMeta, type WorkletMeta } from "./worklet.ts";
@@ -106,12 +106,14 @@ test("a compile request is answered with the target's WASM, metadata and worklet
     wasm: Uint8Array;
     meta: WorkletMeta;
     moduleSource: string;
+    schemaHash: string;
   };
   expect(reply.type).toBe("result");
   expect(reply.id).toBe(7);
   // The bytes are those compile() builds for the same target, handed over without a copy.
   const expected = await compile(rateProbe, { sampleRate: 44100, renderQuantumSize: 64 });
   expect(Array.from(reply.wasm)).toEqual(Array.from(expected.wasm));
+  expect(reply.schemaHash).toBe(expected.schemaHash);
   expect(posted[1]!.transfer).toEqual([reply.wasm.buffer]);
   // The metadata crosses postMessage (structured clone) and describes the 64-sample layout.
   const meta = structuredClone(reply.meta);
@@ -130,6 +132,22 @@ test("a compile request is answered with the target's WASM, metadata and worklet
   const output = new Float32Array(64);
   ns.process(self, [], [[output]], {});
   expect(Array.from(output)).toEqual(Array.from({ length: 64 }, () => Math.fround(1000 / 44100)));
+});
+
+test("the reply carries the schema hash of the target's declarations", async () => {
+  // A buffer sized from the rate makes the slot schema, and its hash, rate-specific.
+  const delay = defineProcessor((ctx) => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    state.buffer.f32({ size: Math.round(ctx.sampleRate / 100) }).named("line");
+    return { process: () => forSample((i) => out.ch(0).at(i).write(f32(0))) };
+  });
+  const { posted, send } = fakeWorkerScope();
+  serveCompileRequests(delay, { workletRuntime: RUNTIME });
+  send({ type: "compile", id: 2, sampleRate: 44100, renderQuantumSize: 128, processorName: "d" });
+  await settle(posted, 2);
+  const reply = posted[1]!.message as { schemaHash: string };
+  expect(reply.schemaHash).toBe((await compile(delay, { sampleRate: 44100 })).schemaHash);
+  expect(reply.schemaHash).not.toBe(delay.schemaHash);
 });
 
 test("a compile the target rejects is answered with an error carrying the diagnostic ID", async () => {

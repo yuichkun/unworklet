@@ -35,11 +35,18 @@ type Compiled = {
   readonly meta: WorkletMeta;
   readonly moduleSource: string;
   readonly processorName: string;
+  readonly schemaHash: string;
 };
 
 type WorkerReply =
   | { type: "ready" }
-  | { type: "result"; wasm: Uint8Array; meta: WorkletMeta; moduleSource: string }
+  | {
+      type: "result";
+      wasm: Uint8Array;
+      meta: WorkletMeta;
+      moduleSource: string;
+      schemaHash: string;
+    }
   | { type: "error"; message: string };
 
 type WorkerLike = {
@@ -83,7 +90,7 @@ function compileInWorker(
   url: string,
   target: CompileTarget,
   processorName: string,
-): Promise<{ wasm: Uint8Array; meta: WorkletMeta; moduleSource: string }> {
+): Promise<{ wasm: Uint8Array; meta: WorkletMeta; moduleSource: string; schemaHash: string }> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(url, { type: "module" });
     const finish = (settle: () => void): void => {
@@ -126,7 +133,13 @@ function compileOnce(
       try {
         const reply = await compileInWorker(Worker, url, target, processorName);
         const wasmModule = await WebAssembly.compile(reply.wasm as BufferSource);
-        return { wasmModule, meta: reply.meta, moduleSource: reply.moduleSource, processorName };
+        return {
+          wasmModule,
+          meta: reply.meta,
+          moduleSource: reply.moduleSource,
+          processorName,
+          schemaHash: reply.schemaHash,
+        };
       } finally {
         release();
       }
@@ -157,13 +170,14 @@ function registerOnce(context: ContextLike, key: string, moduleSource: string): 
 /**
  * Compile `ns`'s processor for `target` in its compile worker and register the
  * result on `context`. Returns the namespace and WASM module to construct the
- * node with. Requires `ns.compileWorkerUrl` and `ns.processorName`.
+ * node with, and the schema hash of the compiled declarations (the node's
+ * snapshots carry it). Requires `ns.compileWorkerUrl` and `ns.processorName`.
  */
 export async function compileForContext(
   context: BaseAudioContext,
   ns: WorkletNamespace,
   target: CompileTarget,
-): Promise<{ ns: WorkletNamespace; wasmModule: WebAssembly.Module }> {
+): Promise<{ ns: WorkletNamespace; wasmModule: WebAssembly.Module; schemaHash: string }> {
   const url = ns.compileWorkerUrl!;
   const { sampleRate, renderQuantumSize } = target;
   const label = `${ns.displayName ?? ns.processorName}`;
@@ -204,5 +218,6 @@ export async function compileForContext(
       compileWorkerUrl: url,
     },
     wasmModule: compiled.wasmModule,
+    schemaHash: compiled.schemaHash,
   };
 }

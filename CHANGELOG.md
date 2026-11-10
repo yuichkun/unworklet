@@ -51,7 +51,8 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   each processor for 48000 Hz and 128-sample render quanta. When the context's
   sample rate or `renderQuantumSize` differs, `createNode` compiles the
   processor for the context in a page Web Worker and loads the result from a
-  Blob URL; the node plays what a build for that target would. `@unworklet/unplugin`
+  Blob URL; the node plays what a build for that target would, and snapshots and
+  restores against the compiled declarations' schema hash. `@unworklet/unplugin`
   emits a compile worker per processor (`<name>.compile-worker-<hash>.js`); the
   compiler is one chunk they share (about 12.6 MB, 2.7 MB gzipped), fetched only
   by a worker. A page with a Content-Security-Policy must allow `blob:` scripts

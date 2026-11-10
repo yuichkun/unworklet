@@ -394,6 +394,10 @@ export async function createNode<C>(
 
   let ns = built;
   let wasmModule: WebAssembly.Module;
+  // The slot schema this node's snapshots and restores are keyed to: the
+  // processor's own, or that of the declarations compiled for this context (a
+  // declaration sized from the rate or quantum changes it).
+  let nodeSchemaHash = processor.schemaHash;
   if (rateDiffers || quantumDiffers) {
     const target = {
       sampleRate: contextSampleRate ?? bakedSampleRate ?? DEFAULT_COMPILE_SAMPLE_RATE,
@@ -420,6 +424,7 @@ export async function createNode<C>(
     const compiled = await compileForContext(context, built, target);
     ns = compiled.ns;
     wasmModule = compiled.wasmModule;
+    nodeSchemaHash = compiled.schemaHash;
   } else {
     await addModuleOnce(
       context as unknown as { audioWorklet: { addModule: (url: string) => Promise<void> } },
@@ -1889,7 +1894,7 @@ export async function createNode<C>(
         resolve: (slots) =>
           resolve(
             encodeSnapshot(
-              processor.schemaHash,
+              nodeSchemaHash,
               profile ?? null,
               currentSnapshotSlots(slots, settings),
               processor.id ?? null,
@@ -1954,7 +1959,7 @@ export async function createNode<C>(
     }
     // Migrate the blob to the current schema first (`01-dsl.md` §8.3). A throwing
     // migrate step fails the whole restore = the live node keeps its current state.
-    const migrated = runMigrations(blob, processor.migrations ?? [], processor.schemaHash);
+    const migrated = runMigrations(blob, processor.migrations ?? [], nodeSchemaHash);
     if (!migrated.ok) {
       return {
         ok: false,
@@ -2137,7 +2142,7 @@ export async function createNode<C>(
       node: unworkletNode as UnworkletNode<unknown>,
       processorName,
       displayName: displayName ?? processorName,
-      schemaHash: processor.schemaHash,
+      schemaHash: nodeSchemaHash,
       midiPorts: midiRings.map((r) => ({ name: r.name, direction: r.direction })),
       devDump,
     };
