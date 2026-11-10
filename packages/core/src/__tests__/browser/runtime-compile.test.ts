@@ -47,16 +47,25 @@ function frequency(samples: Float32Array, sampleRate: number): number {
   return ((crossings - 1) * sampleRate) / (last - first);
 }
 
+// Every target below starts a fresh compile worker that loads binaryen cold. On a
+// CI runner that comes close to Vitest's 15 s browser default, so these tests get
+// more room.
+const COMPILE_TEST_TIMEOUT_MS = 30_000;
+
 test("the build's own rate plays 440 Hz without a compile worker (reference)", async () => {
   const rendered = await render(48_000);
   expect(frequency(rendered.samples, 48_000)).toBeCloseTo(440, 0);
 });
 
-test.each([44_100, 96_000])("a %i Hz context plays 440 Hz", async (sampleRate) => {
-  const rendered = await render(sampleRate);
-  expect(frequency(rendered.samples, sampleRate)).toBeCloseTo(440, 0);
-  expect(Math.max(...rendered.samples)).toBeCloseTo(0.5, 2);
-});
+test.each([44_100, 96_000])(
+  "a %i Hz context plays 440 Hz",
+  async (sampleRate) => {
+    const rendered = await render(sampleRate);
+    expect(frequency(rendered.samples, sampleRate)).toBeCloseTo(440, 0);
+    expect(Math.max(...rendered.samples)).toBeCloseTo(0.5, 2);
+  },
+  COMPILE_TEST_TIMEOUT_MS,
+);
 
 test.each([32, 64, 256])(
   "a context rendering %i-sample quanta plays the same samples as 128",
@@ -67,4 +76,5 @@ test.each([32, 64, 256])(
     expect(rendered.renderQuantumSize).toBe(hint);
     expect(Array.from(rendered.samples)).toEqual(Array.from(reference.samples));
   },
+  COMPILE_TEST_TIMEOUT_MS,
 );

@@ -26,12 +26,13 @@ import { useUnworkletDemo } from "./composables/useUnworkletDemo.ts";
 
 // Warm up the module-level cost (binaryen.js, the TypeScript transpiler) once,
 // outside the per-test timeout, so a test failure points at the compile output,
-// not at first-compile latency.
+// not at first-compile latency. On a cold CI runner this first compile can take
+// longer than the per-test limit, so the hook gets more room.
 beforeAll(async () => {
   await compileSource(`
 const out = audioOutput({ channels: 1, name: "main" });
 process(() => { forSample((i) => { out.ch(0)[i] = f32(0); }); });`);
-}, 20_000);
+}, 60_000);
 
 const DISTORTION = `
 const input = audioInput({ channels: 2, name: "main" });
