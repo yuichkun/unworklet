@@ -18,12 +18,15 @@ jobs:
           - vite: 6.4.3
             boundary: dev
             tests: serve.*packed
+            compileWorkerTests: dev server
           - vite: 7.3.5
             boundary: dev+production
             tests: packed
+            compileWorkerTests: dev server|production build
           - vite: 8.0.16
             boundary: dev+production
             tests: packed
+            compileWorkerTests: dev server|production build
     steps:
       - uses: actions/checkout@v4
       - uses: voidzero-dev/setup-vp@v1
@@ -54,3 +57,8 @@ jobs:
         env:
           SELF_CHECK_TESTS: ${{ matrix.tests }}
         run: vp test run --config vite.integration.config.ts selfcheck.browser -t "$SELF_CHECK_TESTS"
+      - name: Exercise the packed compile worker
+        working-directory: packages/unplugin
+        env:
+          COMPILE_WORKER_TESTS: ${{ matrix.compileWorkerTests }}
+        run: vp test run --config vite.integration.config.ts compile-worker.browser -t "$COMPILE_WORKER_TESTS"
