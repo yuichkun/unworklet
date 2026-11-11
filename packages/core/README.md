@@ -37,7 +37,7 @@ export const stereoGain = defineProcessor(() => {
   const meterL = state.f32(0).expose({ name: "meterL", publish: { rateFps: 30 } });
   const meterR = state.f32(0).expose({ name: "meterR", publish: { rateFps: 30 } });
 
-  // 2) process — runs every 128-sample render block.
+  // 2) process — runs every render quantum (ctx.renderQuantumSize samples, 128 by default).
   return {
     process: () => {
       forSample((i) => {
@@ -175,23 +175,29 @@ Each also **casts a `Node`**: `f32(node)` reinterprets any scalar `Node` to
 
 ```ts
 forSample((i) => {
-  /* per sample, i = 0..127 */
+  /* per sample, i = 0 .. ctx.renderQuantumSize - 1 */
 });
 forSample.byN(4, (i) => {
-  /* SIMD stride; 4 | 128 */
+  /* SIMD stride; must divide the render quantum */
+});
+forIndex(64, (k) => {
+  /* exactly 64 times per call, whatever the render quantum (bins, tables, voices) */
 });
 ```
 
 ## Public API (beyond the DSL)
 
 - `defineProcessor(body)` / `defineSubgraph(body)` / `instantiate(decl, ...args)` — compose graphs. `defineProcessor` already returns a ready `CompiledProcessor` — hand it straight to `createNode` or `renderOffline` (`@unworklet/offline`).
-- `compile(processor, opts?)` — graph → `{ wasm, driver, graph, memory, diagnostics, schemaHash }` (`driver` instantiates the WASM; the offline renderer uses it). You rarely call this yourself; the Vite plugin and the offline renderer compile for you.
+- `compile(processor, opts?)` — graph → `{ wasm, driver, graph, memory, diagnostics, schemaHash, sampleRate, renderQuantumSize }` (`driver` instantiates the WASM; the offline renderer uses it). `opts` is the compile target, `{ sampleRate?, renderQuantumSize? }` (defaults 48000 and 128), bound to `ctx`. You rarely call this yourself; the Vite plugin and the offline renderer compile for you.
 - `createNode(context, processor, options?)` — main-thread `UnworkletNode<C>` (`node`, `inputs`, `outputs`, `params`, `state`, `events`, `midi`, `snapshot`, `restore`, `onError`, `diagnostics`, `dispose`). To name the handle's type up front — a class field or `let` you assign later — write `UnworkletNode<typeof import("./x.processor.ts?worklet")>`: it takes the `?worklet` import directly, so every surface stays typed without a `createNode` round-trip.
+  On a context whose sample rate or `renderQuantumSize` differs from the processor's compile target (`worklet.bakedSampleRate` / `bakedRenderQuantumSize`), it compiles the processor for the context in `worklet.compileWorkerUrl` (every `?worklet` import has one) and loads the result from a Blob URL; without a compile worker it rejects.
 - `replaceProcessor(oldNode, newProcessor)` — hot-swap a running processor.
 - `inspect(blob)` — decode a snapshot without an `AudioContext`.
 - Snapshot codec: `encodeSnapshot` / `decodeSnapshot` / `inspectSnapshot` / `runMigrations` / `SNAPSHOT_VERSION`.
 - MIDI wire codec: `midiEventToWire` / `wireToMidiEvent`.
-- Capacity constants: `CAPACITY_16` … `CAPACITY_16384`, `SAMPLES_PER_BLOCK` (= 128).
+- `@unworklet/core/compile-worker` — `serveCompileRequests(processor, { workletRuntime })`, the body of a processor's compile worker (`@unworklet/unplugin` generates one per processor).
+- `@unworklet/core/worklet-runtime` — the worklet runtime as one self-contained script (a string), for a worklet module that cannot import: `emitWorkletModuleSource(meta, { processorName, runtime: { kind: "inline", code: workletRuntime } })`.
+- Capacity constants: `CAPACITY_16` … `CAPACITY_16384`.
 
 ## Realtime safety
 

@@ -210,7 +210,8 @@ declare module "@vitejs/devtools-kit" {
 }
 
 import { emitWorkletTemplate } from "./worklet-template.ts";
-import { defineDevSelfcheck, selfcheckOptimizerOptions } from "./selfcheck-define.ts";
+import { defineDevSelfcheck } from "./selfcheck-define.ts";
+import { devOptimizeDeps } from "./compile-worker-optimizer.ts";
 
 /**
  * Suffix appended to the processor export name to derive the
@@ -480,6 +481,26 @@ export type SchemaHashArtifact = {
 
 const VIRTUAL_ID_PREFIX = "\0unworklet:";
 const WORKLET_ENTRY_PREFIX = "\0unworklet-worklet:";
+/**
+ * Virtual id of a processor's compile worker: a module Web Worker that compiles
+ * the processor for an AudioContext whose sample rate or render quantum differs
+ * from the build's (`createNode` starts it from `worklet.compileWorkerUrl`).
+ */
+const COMPILE_WORKER_PREFIX = "\0unworklet-compile-worker:";
+
+/**
+ * The compile worker's module: it serves compile requests for the processor the
+ * `?worklet` import names, with the inline worklet runtime of the installed core.
+ */
+const emitCompileWorkerModule = (sourcePath: string, exportName: string): string =>
+  [
+    `import { ${exportName} as __unworkletProcessor } from ${JSON.stringify(sourcePath)};`,
+    `import workletRuntime from "@unworklet/core/worklet-runtime";`,
+    `import { serveCompileRequests } from "@unworklet/core/compile-worker";`,
+    ``,
+    `serveCompileRequests(__unworkletProcessor, { workletRuntime });`,
+    ``,
+  ].join("\n");
 const WORKLET_QUERY_PARAM = "worklet";
 
 /**
@@ -622,8 +643,9 @@ const compileBuildProcessor = async (sourcePath: string) => {
   const sourceModule = await loadProcessorModuleFresh(sourcePath);
   const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
   const result = await compile(processor);
+  // The worklet must run on the metadata of the graph that produced the bytes.
   const meta = extractWorkletMeta(
-    processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+    result.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
   );
   const processorName = computeProcessorName(
     exportName,
@@ -773,6 +795,9 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
   // encodes into the URL = arbitrary local file import via a crafted dev-
   // server request.
   const allowedSources = new Set<string>();
+  // Export name of each `?worklet` source's processor, recorded by its load: the
+  // compile worker module imports that binding (and serves only recorded sources).
+  const compileWorkerExports = new Map<string, string>();
   // Vite dev server reference for `ssrLoadModule` + transitive watch fan-out.
   // Captured during `configureServer` and consulted by the dev paths inside
   // `load` and the middleware = transitive helper-module edits flow through
@@ -860,10 +885,11 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
         // `false` in build so production tree-shakes every self-check call.
         __UNWORKLET_SELFCHECK__: env.command === "serve" ? "true" : "false",
       };
-      // Optimized dependencies bypass transform hooks and do not inherit define.
+      // Optimized dependencies bypass transform hooks and do not inherit define;
+      // the compile worker's dependencies join the first optimizer scan.
       const gates =
         env.command === "serve"
-          ? { define, optimizeDeps: selfcheckOptimizerOptions(viteVersion) }
+          ? { define, optimizeDeps: devOptimizeDeps(viteVersion) }
           : { define };
       if (!crossOriginIsolation) return gates;
       // `SharedArrayBuffer` needs a cross-origin-isolated page. `credentialless`
@@ -1075,7 +1101,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
             const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
             const result = await compile(processor);
             const freshMeta = extractWorkletMeta(
-              processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+              result.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
             );
             const freshHash = computeRevisionHash(result.wasm, freshMeta, exportName);
             recordSnapshot(sourcePath, {
@@ -1141,6 +1167,7 @@ function buildVitePlugin(options?: UnworkletPluginOptions): Plugin {
     resolveId(source, importer) {
       if (source === DEVBRIDGE_ID) return source;
       if (source.startsWith(WORKLET_ENTRY_PREFIX)) return source;
+      if (source.startsWith(COMPILE_WORKER_PREFIX)) return source;
       const detect = detectWorkletQuery(source);
       if (!detect) return undefined;
       const resolved = resolveAgainstImporter(detect.basePath, importer);
@@ -1685,6 +1712,20 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
 ensureClient();
 `;
       }
+      if (id.startsWith(COMPILE_WORKER_PREFIX)) {
+        // The dev URL carries a `?v=<hash>` revision query so a new revision gets a
+        // new URL (createNode caches compiles by URL); the module itself only names
+        // the source. Trust boundary as for the worklet entry: only a source the
+        // plugin accepted via `?worklet`, whose export the `?worklet` load recorded.
+        const rest = id.slice(COMPILE_WORKER_PREFIX.length);
+        const queryIdx = rest.indexOf("?");
+        const sourcePath = queryIdx < 0 ? rest : rest.slice(0, queryIdx);
+        const exportName = compileWorkerExports.get(sourcePath);
+        if (exportName === undefined || (isServe && !allowedSources.has(sourcePath))) {
+          return null;
+        }
+        return emitCompileWorkerModule(sourcePath, exportName);
+      }
       if (id.startsWith(WORKLET_ENTRY_PREFIX)) {
         // The id can arrive with a `?v=<hash>` revision query in dev (=
         // Vite passes the full request id including query into `load`).
@@ -1755,6 +1796,7 @@ ensureClient();
         }
       }
       const { exportName, processor } = pickCompiledProcessor(sourceModule, sourcePath);
+      compileWorkerExports.set(sourcePath, exportName);
 
       // Record this processor's compiled namespace and (re-)emit the aggregate
       // witness so the consumer's `node.params.<name>` (and friends) is typed.
@@ -1765,6 +1807,7 @@ ensureClient();
 
       let moduleUrlExpr: string;
       let wasmUrlExpr: string;
+      let compileWorkerUrlExpr: string;
       let processorName: string;
       let bakedSampleRate: number;
 
@@ -1783,7 +1826,7 @@ ensureClient();
         // worklet realm would choke on the bare specifier.
         const result = await compile(processor);
         const devMeta = extractWorkletMeta(
-          processor.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+          result.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
         );
         const hash = computeRevisionHash(result.wasm, devMeta, exportName);
         const devProcessorName = computeProcessorName(exportName, sourcePath, hash);
@@ -1807,6 +1850,9 @@ ensureClient();
         const virtualWorkletUrlPath = `${basePath}@id/__x00__${virtualWorkletId.slice(1)}`;
         moduleUrlExpr = JSON.stringify(`${virtualWorkletUrlPath}?v=${hash}`);
         wasmUrlExpr = JSON.stringify(`${basePath}${DEV_URL_PREFIX}/${encoded}/${hash}/wasm`);
+        compileWorkerUrlExpr = JSON.stringify(
+          `${basePath}@id/__x00__${COMPILE_WORKER_PREFIX.slice(1)}${sourcePath}?v=${hash}`,
+        );
         processorName = devProcessorName;
         bakedSampleRate = result.sampleRate;
       } else {
@@ -1824,8 +1870,14 @@ ensureClient();
           id: `${WORKLET_ENTRY_PREFIX}${sourcePath}`,
           name: `${baseName}.worklet`,
         });
+        const compileWorkerRefId = this.emitFile({
+          type: "chunk",
+          id: `${COMPILE_WORKER_PREFIX}${sourcePath}`,
+          name: `${baseName}.compile-worker`,
+        });
         moduleUrlExpr = `import.meta.ROLLUP_FILE_URL_${workletRefId}`;
         wasmUrlExpr = `import.meta.ROLLUP_FILE_URL_${wasmRefId}`;
+        compileWorkerUrlExpr = `import.meta.ROLLUP_FILE_URL_${compileWorkerRefId}`;
         processorName = buildProcessorName;
         bakedSampleRate = result.sampleRate;
 
@@ -1872,6 +1924,7 @@ ensureClient();
         `    processorName: ${JSON.stringify(processorName)},`,
         `    displayName: ${JSON.stringify(exportName)},`,
         `    bakedSampleRate: ${bakedSampleRate},`,
+        `    compileWorkerUrl: ${compileWorkerUrlExpr},`,
         `  },`,
         `};`,
         ``,

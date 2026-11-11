@@ -10,7 +10,7 @@ import { unwrapAst, wrapAst } from "../compile/capture.ts";
 import { render } from "../__tests__/behavior/render.ts";
 import { defineProcessor } from "../processor.ts";
 import { vec4 } from "../simd.ts";
-import { SAMPLES_PER_BLOCK } from "./constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "./constants.ts";
 import { f32, i32 } from "./constructors.ts";
 import { audioOutput, state } from "./declarations.ts";
 import { forSample } from "./loop.ts";
@@ -900,7 +900,7 @@ test.each([
     const { outputs } = await render(proc, { blocks: 2 });
     for (const [channel, expected] of [...row.number, ...row.vector].entries()) {
       expect(Array.from(outputs.main![channel]!)).toEqual(
-        Array(2 * SAMPLES_PER_BLOCK).fill(expected),
+        Array(2 * DEFAULT_RENDER_QUANTUM_SIZE).fill(expected),
       );
     }
   },
@@ -930,6 +930,8 @@ test("literal unary results use float division while explicitly typed integer op
   });
   const { outputs } = await render(proc);
   for (const [channel, expected] of [3.5, -3.5, 3, -3].entries()) {
-    expect(Array.from(outputs.main![channel]!)).toEqual(Array(SAMPLES_PER_BLOCK).fill(expected));
+    expect(Array.from(outputs.main![channel]!)).toEqual(
+      Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(expected),
+    );
   }
 });

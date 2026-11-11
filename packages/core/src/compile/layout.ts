@@ -16,12 +16,11 @@
  * (filled in by later sub-phases).
  */
 
-import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../dsl/constants.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
 import type { AstNode, CapturedGraph } from "./ast.ts";
 
 const BYTES_PER_F32 = 4;
-const PARAM_SLOT_BYTES = SAMPLES_PER_BLOCK * BYTES_PER_F32;
 
 /**
  * Byte size of a scalar state slot (`01-dsl.md` §3.1 + Q42).
@@ -117,9 +116,9 @@ const PUBLISH_SHARED_BYTES = 4;
 /**
  * Byte size of a publishCounters slot (`04-worklet-runtime.md` §7).
  * sample counter (4-byte i32) + version counter (4-byte i32) = 8 bytes per slot.
- * In sub-phase 7.3 the per-block scheduler advances the sample counter by
- * SAMPLES_PER_BLOCK and, when it crosses the threshold, copies the value and
- * increments the version.
+ * The per-call scheduler advances the sample counter by the render quantum
+ * and, when it crosses the threshold, copies the value and increments the
+ * version.
  */
 const PUBLISH_COUNTERS_BYTES = 8;
 
@@ -239,7 +238,27 @@ export type Layout = {
     snapshotRegion: { base: number; size: number };
   };
   totalBytes: number;
+  /**
+   * Samples per `process()` call the I/O scratch is sized for (each audio
+   * channel and param slot holds this many f32 values). Absent means 128 — it
+   * is recorded only off the default, so a 128-sample layout serializes as before.
+   */
+  renderQuantumSize?: number;
 };
+
+/** Samples per `process()` call a layout was built for (absent = 128). */
+export function layoutRenderQuantum(lay: Layout): number {
+  return lay.renderQuantumSize ?? DEFAULT_RENDER_QUANTUM_SIZE;
+}
+
+/**
+ * The render quantum a captured graph targets (absent = 128). Lives here rather
+ * than in `ast.ts` so the worklet runtime, which imports `layout`, does not
+ * import the AST module's values.
+ */
+export function renderQuantumOf(graph: CapturedGraph): number {
+  return graph.renderQuantumSize ?? DEFAULT_RENDER_QUANTUM_SIZE;
+}
 
 /**
  * Round a byte offset up to the next 4-byte boundary. A `u8` buffer (1
@@ -261,19 +280,22 @@ export function layout(graph: CapturedGraph): Layout {
 
   const ioBase = 0;
   let cursor = ioBase;
+  const quantum = renderQuantumOf(graph);
+  const channelBytes = quantum * BYTES_PER_F32;
 
   // ioScratch packing: lay out audioInput / audioOutput / param in declaration
-  // order. state is skipped here and packed into the states region later.
+  // order, one call's worth of samples per channel / param. state is skipped
+  // here and packed into the states region later.
   for (const decl of graph.declarations) {
     if (decl.kind === "audioInput") {
       inputs[decl.name] = cursor;
-      cursor += decl.channels * SAMPLES_PER_BLOCK * BYTES_PER_F32;
+      cursor += decl.channels * channelBytes;
     } else if (decl.kind === "audioOutput") {
       outputs[decl.name] = cursor;
-      cursor += decl.channels * SAMPLES_PER_BLOCK * BYTES_PER_F32;
+      cursor += decl.channels * channelBytes;
     } else if (decl.kind === "param") {
       params[decl.name] = cursor;
-      cursor += PARAM_SLOT_BYTES;
+      cursor += channelBytes;
     }
   }
 
@@ -475,6 +497,7 @@ export function layout(graph: CapturedGraph): Layout {
       }
       if (
         node.kind === "forSample" ||
+        node.kind === "forIndex" ||
         node.kind === "everyNSamples" ||
         node.kind === "messageOnReceive" ||
         node.kind === "midiOnEvent"
@@ -538,6 +561,7 @@ export function layout(graph: CapturedGraph): Layout {
       }
       if (
         node.kind === "forSample" ||
+        node.kind === "forIndex" ||
         node.kind === "everyNSamples" ||
         node.kind === "messageOnReceive" ||
         node.kind === "midiOnEvent"
@@ -599,6 +623,7 @@ export function layout(graph: CapturedGraph): Layout {
       snapshotRegion: { base: totalBytes, size: 0 },
     },
     totalBytes,
+    ...(quantum === DEFAULT_RENDER_QUANTUM_SIZE ? {} : { renderQuantumSize: quantum }),
   };
 }
 

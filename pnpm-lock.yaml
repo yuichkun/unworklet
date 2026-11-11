@@ -73,8 +73,8 @@ catalogs:
       specifier: ^0.55.1
       version: 0.55.1
     playwright:
-      specifier: ^1.60.0
-      version: 1.60.0
+      specifier: 1.63.0
+      version: 1.63.0
     typescript:
       specifier: ^5
       version: 5.9.3
@@ -182,7 +182,7 @@ importers:
         version: 6.0.7(vite@8.0.14)(vue@3.5.34(typescript@5.9.3))
       playwright:
         specifier: 'catalog:'
-        version: 1.60.0
+        version: 1.63.0
 
   packages/core:
     dependencies:
@@ -202,12 +202,15 @@ importers:
       bumpp:
         specifier: ^11.1.0
         version: 11.1.0
+      esbuild:
+        specifier: 'catalog:'
+        version: 0.28.0
       fast-check:
         specifier: 'catalog:'
         version: 4.8.0
       playwright:
         specifier: 'catalog:'
-        version: 1.60.0
+        version: 1.63.0
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
@@ -336,7 +339,7 @@ importers:
         version: 11.1.0
       playwright:
         specifier: 'catalog:'
-        version: 1.60.0
+        version: 1.63.0
 
   packages/unplugin/devtools-ui:
     dependencies:
@@ -1722,11 +1725,6 @@ packages:
       picomatch:
         optional: true
 
-  fsevents@2.3.2:
-    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
-    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
-    os: [darwin]
-
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -2032,14 +2030,14 @@ packages:
   pkg-types@2.3.1:
     resolution: {integrity: sha512-y+ichcgc2LrADuhLNAx8DFjVfgz91pRxfZdI3UDhxHvcVEZsenLO+7XaU5vOp0u/7V/wZ+plyuQxtrDlZJ+yeg==}
 
-  playwright-core@1.60.0:
-    resolution: {integrity: sha512-9bW6zvX/m0lEbgTKJ6YppOKx8H3VOPBMOCFh2irXFOT4BbHgrx5hPjwJYLT40Lu+4qtD36qKc/Hn56StUW57IA==}
-    engines: {node: '>=18'}
+  playwright-core@1.63.0:
+    resolution: {integrity: sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg==}
+    engines: {node: '>=20'}
     hasBin: true
 
-  playwright@1.60.0:
-    resolution: {integrity: sha512-hheHdokM8cdqCb0lcE3s+zT4t4W+vvjpGxsZlDnikarzx8tSzMebh3UiFtgqwFwnTnjYQcsyMF8ei2mCO/tpeA==}
-    engines: {node: '>=18'}
+  playwright@1.63.0:
+    resolution: {integrity: sha512-+7ziBLidS4NaNCdt57SUDT+wYmmd5fmiQejUic/kb+YsYSCPyOOE9sebzMjNmQrsnNpDJqd4WHvV/8lfKfUDUg==}
+    engines: {node: '>=20'}
     hasBin: true
 
   pngjs@7.0.0:
@@ -3553,9 +3551,6 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.4
 
-  fsevents@2.3.2:
-    optional: true
-
   fsevents@2.3.3:
     optional: true
 
@@ -3853,13 +3848,11 @@ snapshots:
       exsolve: 1.1.1
       pathe: 2.0.3
 
-  playwright-core@1.60.0: {}
+  playwright-core@1.63.0: {}
 
-  playwright@1.60.0:
+  playwright@1.63.0:
     dependencies:
-      playwright-core: 1.60.0
-    optionalDependencies:
-      fsevents: 2.3.2
+      playwright-core: 1.63.0
 
   pngjs@7.0.0: {}
 

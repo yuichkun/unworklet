@@ -20,7 +20,7 @@ import { myProcessor } from "./processor.ts"; // a defineProcessor(...) export
 
 const result = await renderOffline(myProcessor, {
   sampleRate: 48000,
-  duration: 2.0, // seconds (rounded up to a 128-sample block boundary)
+  duration: 2.0, // seconds (rounded up to a whole render quantum, 128 samples by default)
   inputs: { main: [leftChannel, rightChannel] }, // per audioInput({ name }) port
   params: { gain: [0.5, 0.5, 0.8] }, // per param.named() slot (automation curve)
 });
@@ -85,16 +85,17 @@ any working directory once both packages are installed.
 
 ## `RenderOfflineConfig`
 
-| field        | meaning                                                                      |
-| ------------ | ---------------------------------------------------------------------------- |
-| `sampleRate` | render sample rate                                                           |
-| `duration`   | seconds; rounded up to the next 128-sample block                             |
-| `inputs?`    | `{ [audioInputName]: Float32Array[] }` per-channel input                     |
-| `params?`    | `{ [paramName]: number[] }` automation (1 value = constant)                  |
-| `messages?`  | `[{ name, payload, atQuantum? }]` — main→worklet `event({from:'main'})`      |
-| `events?`    | `[{ name, payload, atSample }]` — inbound MIDI (`event.midi({from:'main'})`) |
-| `profile?`   | snapshot profile to capture (default: union of all persistent)               |
-| `restore?`   | initial state blob (migrated to the current schema before rendering)         |
+| field                | meaning                                                                           |
+| -------------------- | --------------------------------------------------------------------------------- |
+| `sampleRate`         | render sample rate                                                                |
+| `duration`           | seconds; rounded up to a whole number of render quanta                            |
+| `renderQuantumSize?` | samples per `process()` call (default 128), as a `renderSizeHint` context renders |
+| `inputs?`            | `{ [audioInputName]: Float32Array[] }` per-channel input                          |
+| `params?`            | `{ [paramName]: number[] }` automation (1 value = constant)                       |
+| `messages?`          | `[{ name, payload, atQuantum? }]` — main→worklet `event({from:'main'})`           |
+| `events?`            | `[{ name, payload, atSample }]` — inbound MIDI (`event.midi({from:'main'})`)      |
+| `profile?`           | snapshot profile to capture (default: union of all persistent)                    |
+| `restore?`           | initial state blob (migrated to the current schema before rendering)              |
 
 ## Also exported
 

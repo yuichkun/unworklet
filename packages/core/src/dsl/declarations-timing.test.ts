@@ -4,7 +4,7 @@ import "./primitives.ts";
 import { compile } from "../compile/index.ts";
 import type { Layout } from "../compile/layout.ts";
 import { event } from "./declarations.ts";
-import { forSample } from "./loop.ts";
+import { forIndex, forSample } from "./loop.ts";
 import { defineProcessor } from "../processor.ts";
 import type { CompiledProcessor, Node } from "../types.ts";
 
@@ -73,6 +73,39 @@ test("nested event and MIDI emissions use the inner sample and restore the outer
   const runtime = await timingInstance(processor);
   runtime.instance.process();
   expect(runtime.offsets()).toEqual({ event: [7, 9], midi: [7, 9] });
+});
+
+test("emissions inside forIndex stamp the enclosing forSample's sample, not the index", async () => {
+  const processor = defineProcessor(() => {
+    const emit = timingOutputs();
+    return {
+      process: () => {
+        forSample((i) => {
+          forIndex(3, (k) => emit(i.eq(5).and(k.eq(2))));
+        });
+        forIndex(2, (k) => {
+          forSample((i) => emit(k.eq(1).and(i.eq(4))));
+        });
+      },
+    };
+  });
+  const runtime = await timingInstance(processor);
+  runtime.instance.process();
+  expect(runtime.offsets()).toEqual({ event: [5, 4], midi: [5, 4] });
+});
+
+test("emissions inside a forIndex outside every forSample stamp block start", async () => {
+  const processor = defineProcessor(() => {
+    const emit = timingOutputs();
+    return {
+      process: () => {
+        forIndex(3, (k) => emit(k.eq(2)));
+      },
+    };
+  });
+  const runtime = await timingInstance(processor);
+  runtime.instance.process();
+  expect(runtime.offsets()).toEqual({ event: [0], midi: [0] });
 });
 
 for (const handler of ["message", "MIDI"] as const) {

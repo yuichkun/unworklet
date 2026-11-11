@@ -12,6 +12,7 @@
  * surface stays unchanged.
  */
 
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../dsl/constants.ts";
 import type { AstNode, CapturedGraph, Declaration } from "./ast.ts";
 import type { Node, ScalarType } from "../types.ts";
 
@@ -56,6 +57,15 @@ export type CaptureContext = {
    */
   loopDepth: number;
   /**
+   * Loop depth of the innermost enclosing `forSample`, or `null` outside every
+   * `forSample`. A `forIndex` loop nests like `forSample` but does not advance
+   * sample time, so an emission without an explicit `atSample` stamps this
+   * loop's counter rather than the innermost loop's.
+   */
+  sampleLoopDepth: number | null;
+  /** Samples per `process()` call of the compile target (`ctx.renderQuantumSize`). */
+  renderQuantumSize: number;
+  /**
    * Running count of `noiseSource(...)` declarations in graph capture order.
    * Used to (a) generate synthetic slot names (`__noise_<idx>`) and (b) assign
    * auto seeds when the user omits `seed` (auto seed = ++counter, starting from
@@ -68,7 +78,9 @@ export type CaptureContext = {
 
 let currentCapture: CaptureContext | null = null;
 
-export function newCaptureContext(): CaptureContext {
+export function newCaptureContext(
+  renderQuantumSize: number = DEFAULT_RENDER_QUANTUM_SIZE,
+): CaptureContext {
   return {
     declarations: [],
     statements: [],
@@ -78,6 +90,8 @@ export function newCaptureContext(): CaptureContext {
     subgraphCount: 0,
     tempCount: 0,
     loopDepth: 0,
+    sampleLoopDepth: null,
+    renderQuantumSize,
     noiseSourceCount: 0,
   };
 }
@@ -158,7 +172,14 @@ export function addDeclaration(decl: Declaration): void {
 }
 
 export function finalize(ctx: CaptureContext): CapturedGraph {
-  return { declarations: ctx.declarations, statements: ctx.statements };
+  return {
+    declarations: ctx.declarations,
+    statements: ctx.statements,
+    // Recorded only off the default, so a default-quantum graph serializes as before.
+    ...(ctx.renderQuantumSize === DEFAULT_RENDER_QUANTUM_SIZE
+      ? {}
+      : { renderQuantumSize: ctx.renderQuantumSize }),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ import {
   newCaptureContext,
   runCapture,
 } from "./compile/capture.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "./dsl/constants.ts";
 import { makeWorkletNamespace } from "./worklet.ts";
 import { schemaHash } from "./compile/schemaHash.ts";
 
@@ -49,16 +50,17 @@ export const DEFAULT_CAPTURE_RATE = 48000;
 
 /**
  * Run a `defineProcessor` body through a fresh capture context with the given
- * host sample rate bound to `ctx.sampleRate`, returning the captured AST DAG.
- * Re-runnable: every call uses an isolated context, so `compile` can re-capture
- * at the real rate without mutating the eager graph.
+ * compile target bound to `ctx` (`sampleRate`, `renderQuantumSize`), returning
+ * the captured AST DAG. Re-runnable: every call uses an isolated context, so
+ * `compile` can re-capture for the real target without mutating the eager graph.
  */
 export function captureProcessor(
   body: (ctx: ProcessorContext) => ProcessorBody,
   sampleRate: number,
+  renderQuantumSize: number = DEFAULT_RENDER_QUANTUM_SIZE,
 ): CapturedGraph {
-  const captureCtx = newCaptureContext();
-  const compiledBody = runCapture(captureCtx, () => body({ sampleRate }));
+  const captureCtx = newCaptureContext(renderQuantumSize);
+  const compiledBody = runCapture(captureCtx, () => body({ sampleRate, renderQuantumSize }));
   runCapture(captureCtx, () => {
     compiledBody.process();
   });
@@ -69,9 +71,9 @@ export function defineProcessor<C = unknown>(
   body: (ctx: ProcessorContext) => ProcessorBody,
   options?: ProcessorOptions,
 ): CompiledProcessor<C> {
-  // Eager capture at the default rate: declarations / layout / worklet namespace
-  // / schema hash are all rate-independent, so this view is correct regardless
-  // of the host rate. `compile` re-captures at the real rate for emission.
+  // Eager capture at the default target (48000 Hz, 128 samples): declarations /
+  // worklet namespace / schema hash do not depend on the target. `compile`
+  // re-captures for the real target before layout and emission.
   const captured = captureProcessor(body, DEFAULT_CAPTURE_RATE);
 
   return {
@@ -83,9 +85,10 @@ export function defineProcessor<C = unknown>(
     worklet: makeWorkletNamespace(captured),
     migrations: options?.migrations,
     ...(options?.id !== undefined ? { id: options.id } : {}),
-    // Re-capture thunk: `compile` binds the real `ctx.sampleRate` here so
-    // coefficient precomputation (`440 / ctx.sampleRate`, etc.) uses the host rate.
-    __capture: (sampleRate: number) => brandGraph(captureProcessor(body, sampleRate)),
+    // Re-capture thunk: `compile` binds the real target here so coefficient
+    // precomputation (`440 / ctx.sampleRate`, etc.) and per-call loop lengths use it.
+    __capture: (sampleRate: number, renderQuantumSize?: number) =>
+      brandGraph(captureProcessor(body, sampleRate, renderQuantumSize)),
     __compiledProcessor: undefined as unknown as C,
   };
 }

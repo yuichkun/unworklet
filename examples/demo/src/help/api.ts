@@ -433,10 +433,24 @@ process(() => {
   entry(
     "forSample",
     "Loop / subgraph",
-    "Build sample-by-sample DSP across a 128-sample render quantum.",
+    "Build sample-by-sample DSP across one render quantum (ctx.renderQuantumSize samples).",
     sample("input.left[i]"),
     [
       "Call inside process. The first callback parameter is an i32 sample index. The second is everyNSamples; it is not a global.",
+    ],
+  ),
+  entry(
+    "forIndex",
+    "Loop / subgraph",
+    "Run a loop a fixed number of times per call, whatever the render quantum.",
+    `const out = audioOutput({ channels: 1, name: "main" });
+const bins = state.buffer.f32({ size: 16 });
+process(() => {
+  forIndex(16, (k) => { bins.write(k, f32(k).mul(0.01)); });
+  forSample((i) => { out.ch(0)[i] = bins.read(3); });
+});`,
+    [
+      "Call inside process. The callback parameter is an i32 index from 0 to count - 1; count must be a compile-time positive integer. Use it for bins, tables, or voices: an omitted atSample still stamps the enclosing forSample, and everyNSamples is not available inside it.",
     ],
   ),
   entry(
@@ -446,7 +460,7 @@ process(() => {
     `const out = audioOutput({ channels: 1, name: "main" });
 process(() => { forSample.byN(2, (i) => { out.ch(0)[i] = f32(0.25); }); });`,
     [
-      "Member of forSample. Stride must be a power of two dividing 128: 1, 2, 4, 8, 16, 32, 64, 128. Skipped output samples are not written by this loop.",
+      "Member of forSample. Stride must be a power of two dividing the render quantum (1, 2, 4, … 128 at the default 128). Skipped output samples are not written by this loop.",
     ],
     "Member",
   ),
@@ -530,6 +544,16 @@ process(() => { forSample.byN(2, (i) => { out.ch(0)[i] = f32(0.25); }); });`,
     "Ambient binding",
   ),
   entry(
+    "ctx.renderQuantumSize",
+    "I/O",
+    "Read the compile-time render quantum (samples per process call) as a JavaScript number.",
+    sample("f32(32 / ctx.renderQuantumSize)"),
+    [
+      "ctx is an ambient ProcessorContext. It is the AudioContext's renderQuantumSize (128 unless the context was created with a renderSizeHint); forSample runs this many iterations per call.",
+    ],
+    "Ambient binding",
+  ),
+  entry(
     "options",
     "Loop / subgraph",
     "Set processor options, including stable snapshot identity.",
@@ -549,14 +573,14 @@ process(() => { forSample.byN(2, (i) => { out.ch(0)[i] = f32(0.25); }); });`,
   ),
   {
     ...entry(
-      "SAMPLES_PER_BLOCK",
-      "Loop / subgraph",
-      "Render-quantum size (128) and bounded event ring capacities.",
-      sample("f32(1 / SAMPLES_PER_BLOCK)"),
+      "CAPACITY_16",
+      "Event / MIDI",
+      "Bounded event and MIDI ring capacities, CAPACITY_16 through CAPACITY_16384.",
+      sample("f32(1 / CAPACITY_128)"),
       [
         "Global compile-time constants. CAPACITY_16 through CAPACITY_16384 are powers of two for event/MIDI capacity options; buffer size is a separate option.",
       ],
     ),
-    aliases: Array.from({ length: 11 }, (_, index) => `CAPACITY_${16 * 2 ** index}`),
+    aliases: Array.from({ length: 10 }, (_, index) => `CAPACITY_${32 * 2 ** index}`),
   },
 ];

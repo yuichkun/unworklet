@@ -16,7 +16,7 @@
 import { expect, test } from "vite-plus/test";
 
 import "../dsl/primitives.ts"; // side-effect: registers `.mul` and other method forms on Node prototype
-import { SAMPLES_PER_BLOCK } from "../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../dsl/constants.ts";
 import { audioInput, audioOutput, param } from "../dsl/declarations.ts";
 import { forSample } from "../dsl/loop.ts";
 import { defineProcessor } from "../processor.ts";
@@ -127,12 +127,12 @@ test("`instance.writeInput(port, channel, block)` writes into `inputs[port] + ch
   const wasm = await emit(graph, lay);
   const instance = await makeDriver(graph, lay, wasm).instantiate();
 
-  const block = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) block[i] = i / SAMPLES_PER_BLOCK;
+  const block = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) block[i] = i / DEFAULT_RENDER_QUANTUM_SIZE;
   instance.writeInput("main", 1, block);
 
   // channel 1 base offset = inputs.main (= 0) + 1 * 512 = 512
-  const view = new Float32Array(instance.memory.buffer, 512, SAMPLES_PER_BLOCK);
+  const view = new Float32Array(instance.memory.buffer, 512, DEFAULT_RENDER_QUANTUM_SIZE);
   expect(view).toEqual(block);
 });
 
@@ -141,12 +141,12 @@ test("`instance.writeParam(name, block)` writes into `params[name]` offset", asy
   const wasm = await emit(stereoGainGraph, lay);
   const instance = await makeDriver(stereoGainGraph, lay, wasm).instantiate();
 
-  const block = new Float32Array(SAMPLES_PER_BLOCK);
+  const block = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   block.fill(0.75);
   instance.writeParam("gain", block);
 
   // params.gain offset = 2048 (per stereoGainGraph layout)
-  const view = new Float32Array(instance.memory.buffer, 2048, SAMPLES_PER_BLOCK);
+  const view = new Float32Array(instance.memory.buffer, 2048, DEFAULT_RENDER_QUANTUM_SIZE);
   expect(view).toEqual(block);
 });
 
@@ -160,10 +160,10 @@ test("`instance.readOutput(port, channel, dest)` reads from `outputs[port] + cha
   const instance = await makeDriver(graph, lay, wasm).instantiate();
 
   // write directly into memory (outputs.main = 0, channel 1 base = 512)
-  const memoryView = new Float32Array(instance.memory.buffer, 512, SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) memoryView[i] = i * 0.01;
+  const memoryView = new Float32Array(instance.memory.buffer, 512, DEFAULT_RENDER_QUANTUM_SIZE);
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) memoryView[i] = i * 0.01;
 
-  const dest = new Float32Array(SAMPLES_PER_BLOCK);
+  const dest = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   instance.readOutput("main", 1, dest);
   expect(dest).toEqual(memoryView);
 });

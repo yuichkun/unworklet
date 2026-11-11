@@ -1,11 +1,13 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 
-import { SAMPLES_PER_BLOCK } from "@unworklet/core";
 import { lowerToProcessor } from "@unworklet/lang/browser";
 import { encodeWav, renderOffline } from "@unworklet/offline";
 import { expectAudioMatchesSnapshot } from "@unworklet/test";
 import { expect, test } from "vite-plus/test";
+
+/** Samples per call of every sound-check render (renderOffline's default). */
+const RENDER_QUANTUM_SIZE = 128;
 
 import {
   SOUND_CHECK_FRAMES,
@@ -53,7 +55,7 @@ function drive(d: SoundCheckDrive): Record<string, unknown> {
         messages: d.events.map(({ name, payload, atSample }) => ({
           name,
           payload,
-          atQuantum: Math.floor(atSample / SAMPLES_PER_BLOCK),
+          atQuantum: Math.floor(atSample / RENDER_QUANTUM_SIZE),
         })),
       };
   }

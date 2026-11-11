@@ -20,7 +20,7 @@ import "./dsl/primitives.ts"; // method form registration side-effect
 import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
-import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "./dsl/constants.ts";
 import { bool, f32, f64, i32, i64 } from "./dsl/constructors.ts";
 import { audioOutput, state } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
@@ -69,7 +69,7 @@ const lastOfKind = (self: MockSelf, kind: string): Record<string, unknown> | und
 
 const quantum = () => ({
   inputs: [] as Float32Array[][],
-  outputs: [[new Float32Array(SAMPLES_PER_BLOCK)]] as Float32Array[][],
+  outputs: [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]] as Float32Array[][],
   parameters: {} as Record<string, Float32Array>,
 });
 
@@ -230,7 +230,7 @@ test("dev-dump carries the scrubbedSamples render-health counter (0 healthy, cou
   ) as { scrubbedSamples?: number };
   expect(before.scrubbedSamples).toBe(0);
 
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   nanProc.worklet.process(self, [], outputs, {});
   expect(Array.from(outputs[0]![0]!).every((v) => v === 0)).toBe(true);
 
@@ -238,5 +238,5 @@ test("dev-dump carries the scrubbedSamples render-health counter (0 healthy, cou
   const after = self.messages
     .filter((m) => (m as { kind?: string }).kind === "dev-dump-response")
     .at(-1) as { scrubbedSamples?: number };
-  expect(after.scrubbedSamples).toBe(SAMPLES_PER_BLOCK);
+  expect(after.scrubbedSamples).toBe(DEFAULT_RENDER_QUANTUM_SIZE);
 });

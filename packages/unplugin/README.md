@@ -69,6 +69,16 @@ node.outputs.main.connect(ctx.destination);
 A `.uwk.ts` processor is imported the same way (`./processor.uwk.ts?worklet`);
 the plugin lowers the sugar before compiling.
 
+The build compiles each processor for 48000 Hz and 128-sample render quanta and
+also emits its **compile worker** (`<name>.compile-worker-<hash>.js`). When the
+`AudioContext`'s sample rate or `renderQuantumSize` differs, `createNode` starts
+that worker, compiles the processor for the context, and loads the result from a
+Blob URL. The worker's compiler is a chunk shared by every processor (about
+12.6 MB, 2.7 MB gzipped) that only the worker fetches. A page with a
+Content-Security-Policy must allow `blob:` scripts and same-origin workers, and a
+cross-origin-isolated page must serve the worker with its COEP header (the dev
+and preview servers do).
+
 That snippet is the unworklet wiring; the rest is a normal Vite app — an
 `index.html` that loads your entry module, and a user gesture (a click) that calls
 `ctx.resume()`, since an `AudioContext` starts suspended and otherwise stays

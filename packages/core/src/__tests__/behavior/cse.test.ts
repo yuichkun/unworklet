@@ -14,7 +14,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 import { audioInput, audioOutput, state } from "../../dsl/declarations.ts";
 import { f32, mul, select, type Node, type State } from "../../index.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 
@@ -40,9 +40,9 @@ test("§2.7: a Node bound before store() keeps its pre-store value (single refer
   const { outputs } = await render(proc, { blocks: 2 });
   // Block 0 = 10 everywhere (the bug would yield 110 here).
   expect(outputs.main![0]![0]).toBeCloseTo(10, 5);
-  expect(outputs.main![0]![SAMPLES_PER_BLOCK - 1]).toBeCloseTo(10, 5);
+  expect(outputs.main![0]![DEFAULT_RENDER_QUANTUM_SIZE - 1]).toBeCloseTo(10, 5);
   // Block 1 = 110 (s is now 100).
-  expect(outputs.main![0]![SAMPLES_PER_BLOCK]).toBeCloseTo(110, 5);
+  expect(outputs.main![0]![DEFAULT_RENDER_QUANTUM_SIZE]).toBeCloseTo(110, 5);
 });
 
 test("biquad Direct Form II Transposed impulse response matches a JS reference", async () => {
@@ -117,10 +117,10 @@ test("a shared pure subtree evaluates consistently at every reference", async ()
       },
     };
   });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) x[k] = k * 0.01;
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) x[k] = k * 0.01;
   const { outputs } = await render(proc, { inputs: { main: [x] } });
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     const expected = (k * 0.01 + 1) ** 2;
     expect(outputs.main![0]![k]).toBeCloseTo(expected, 4);
   }
@@ -145,8 +145,8 @@ test("a per-block load used inside forSample reflects the block-start value", as
   const { outputs } = await render(proc, { blocks: 3 });
   // Block 0 start = 7, block 1 = 8, block 2 = 9.
   expect(outputs.main![0]![0]).toBeCloseTo(7, 5);
-  expect(outputs.main![0]![SAMPLES_PER_BLOCK]).toBeCloseTo(8, 5);
-  expect(outputs.main![0]![2 * SAMPLES_PER_BLOCK]).toBeCloseTo(9, 5);
+  expect(outputs.main![0]![DEFAULT_RENDER_QUANTUM_SIZE]).toBeCloseTo(8, 5);
+  expect(outputs.main![0]![2 * DEFAULT_RENDER_QUANTUM_SIZE]).toBeCloseTo(9, 5);
 });
 
 test("state slots are seeded with their declared initial value (every scalar type)", async () => {
@@ -182,7 +182,7 @@ test("buffer read bound before a write to the same index keeps the pre-write val
   // v = buf.read(i) (= 0 initial); buf.write(i, 5); out = v  → 0, not 5.
   const proc = defineProcessor(() => {
     const out = audioOutput({ channels: 1, name: "main" });
-    const buf = state.buffer.f32({ size: SAMPLES_PER_BLOCK });
+    const buf = state.buffer.f32({ size: DEFAULT_RENDER_QUANTUM_SIZE });
     return {
       process: () => {
         forSample((i) => {
@@ -194,7 +194,7 @@ test("buffer read bound before a write to the same index keeps the pre-write val
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBeCloseTo(0, 5);
   }
 });

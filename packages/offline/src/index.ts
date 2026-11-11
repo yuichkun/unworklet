@@ -15,8 +15,8 @@
  * injection / outbound `result.events` capture) + snapshot capture
  * (`result.state` = persistent slots) + restore (`config.restore` = initial state
  * injection + migration chain). Renders up to the sample count obtained by
- * rounding duration × sampleRate up to a `SAMPLES_PER_BLOCK` boundary
- * (= `13-offline-render.md` §2.1).
+ * rounding duration × sampleRate up to a whole number of render quanta
+ * (`config.renderQuantumSize`, default 128; `13-offline-render.md` §2.1).
  */
 
 import type { CompiledProcessor, MidiEvent, SnapshotSlot } from "@unworklet/core";
@@ -30,9 +30,11 @@ import {
   ringCount,
   ringSlotIndex,
   runMigrations,
-  SAMPLES_PER_BLOCK,
   wireToMidiEvent,
 } from "@unworklet/core";
+
+/** Samples per call when `config.renderQuantumSize` is omitted (the Web Audio default). */
+const DEFAULT_RENDER_QUANTUM_SIZE = 128;
 
 export { encodeWav } from "./encodeWav.ts";
 export type { EncodeWavBitDepth, EncodeWavOptions } from "./encodeWav.ts";
@@ -44,7 +46,10 @@ export type { DecodeWavResult } from "./decodeWav.ts";
 export type OfflineMessage = {
   name: string;
   payload: unknown;
-  /** Delivery quantum (block index, 0-based). Omitted = 0 (= render start). */
+  /**
+   * Delivery quantum (0-based index of the `renderQuantumSize`-sample call it is
+   * delivered at). Omitted = 0 (= render start).
+   */
   atQuantum?: number;
 };
 
@@ -64,8 +69,14 @@ export type OfflineEmittedEvent = {
 
 export type RenderOfflineConfig = {
   sampleRate: number;
-  /** Render duration in seconds; rounded up to the next `SAMPLES_PER_BLOCK` boundary. */
+  /** Render duration in seconds; rounded up to a whole number of render quanta. */
   duration: number;
+  /**
+   * Samples per `process()` call, as an `AudioContext` created with a
+   * `renderSizeHint` renders. The processor is compiled for this quantum
+   * (`ctx.renderQuantumSize`). Default 128; must be a positive integer.
+   */
+  renderQuantumSize?: number;
   /** Audio input per declared `audioInput({ name })` port. Key = port name, value = per-channel `Float32Array`. */
   inputs?: Record<string, Float32Array[]>;
   /** Param automation per declared `param.named(...)` slot. Key = param name. */
@@ -117,6 +128,8 @@ export type RenderOfflineResult = {
   state: Uint8Array;
   /** Sample rate used for the render (= `config.sampleRate` carried through, self-describing for wav export / re-render / consumer automation). */
   sampleRate: number;
+  /** Samples per `process()` call the render ran at (`config.renderQuantumSize` or 128). */
+  renderQuantumSize: number;
   /** Render-health counters. */
   diagnostics: {
     /**
@@ -140,7 +153,7 @@ export type RenderOfflineResult = {
 const MESSAGE_HEADER_BYTES = 12;
 
 /**
- * Per-(processor, sampleRate) compile memo. The compile pipeline (graph
+ * Per-(processor, sampleRate, renderQuantumSize) compile memo. The compile pipeline (graph
  * re-capture → analysis → binaryen emit) dominates render wall time by an
  * order of magnitude on a mid-size processor, so a naturally-written suite —
  * one render per test — pays it once per test and times out (issue #39).
@@ -155,25 +168,27 @@ const MESSAGE_HEADER_BYTES = 12;
  */
 const compileCache = new WeakMap<
   object,
-  Map<number, Promise<Awaited<ReturnType<typeof compile>>>>
+  Map<string, Promise<Awaited<ReturnType<typeof compile>>>>
 >();
 
 function compileMemo<C>(
   processor: CompiledProcessor<C>,
   sampleRate: number,
+  renderQuantumSize: number,
 ): Promise<Awaited<ReturnType<typeof compile>>> {
-  let byRate = compileCache.get(processor);
-  if (byRate === undefined) {
-    byRate = new Map();
-    compileCache.set(processor, byRate);
+  let byTarget = compileCache.get(processor);
+  if (byTarget === undefined) {
+    byTarget = new Map();
+    compileCache.set(processor, byTarget);
   }
-  let pending = byRate.get(sampleRate);
+  const key = `${sampleRate}x${renderQuantumSize}`;
+  let pending = byTarget.get(key);
   if (pending === undefined) {
-    // Hand sampleRate to compile so the publish scheduler's threshold,
-    // `Math.round(sampleRate / rateFps)`, is folded into a build-time constant.
-    pending = compile(processor, { sampleRate });
-    pending.catch(() => byRate.delete(sampleRate));
-    byRate.set(sampleRate, pending);
+    // Compile for the render's target: the rate folds into coefficients and the
+    // publish threshold, the quantum sizes every per-call loop and I/O region.
+    pending = compile(processor, { sampleRate, renderQuantumSize });
+    pending.catch(() => byTarget.delete(key));
+    byTarget.set(key, pending);
   }
   return pending;
 }
@@ -182,18 +197,20 @@ export async function renderOffline<C>(
   processor: CompiledProcessor<C>,
   config: RenderOfflineConfig,
 ): Promise<RenderOfflineResult> {
-  const result = await compileMemo(processor, config.sampleRate);
+  const quantum = config.renderQuantumSize ?? DEFAULT_RENDER_QUANTUM_SIZE;
+  const result = await compileMemo(processor, config.sampleRate, quantum);
   const instance = await result.driver.instantiate();
 
   // Obtain the event ring meta via WorkletMeta so renderOffline can walk the
   // ring directly in WASM memory: even without a SAB, it drains at the end of
   // each quantum and accumulates into the OfflineEmittedEvent array.
   //
-  // Derive every region offset from the graph `compile` re-captured at the host
-  // rate (`result.graph`), NOT the eager `processor.graph` (captured at the
-  // default 48000): a buffer whose size depends on `ctx.sampleRate` lays the
-  // buffers region out differently per rate, shifting the rings packed after it.
-  // The eager offsets would then poke the host-rate WASM at the wrong place.
+  // Derive every region offset from the graph `compile` re-captured for the
+  // render's target (`result.graph`), NOT the eager `processor.graph` (captured
+  // at 48000 Hz / 128 samples): the I/O scratch is sized by the quantum, and a
+  // buffer whose size depends on `ctx.sampleRate` lays the buffers region out
+  // differently per rate, shifting the rings packed after them. The eager
+  // offsets would then poke the target's WASM at the wrong place.
   const meta = extractWorkletMeta(result.graph as never);
   const eventRingMeta = meta.events.map((evt) => {
     const slot = meta.layout.regions.eventRings.slots[evt.name]!;
@@ -241,13 +258,13 @@ export async function renderOffline<C>(
     sysex: meta.layout.regions.sysexContent.slots[d.name],
   }));
 
-  const completeBlocks = Math.floor((config.duration * config.sampleRate) / SAMPLES_PER_BLOCK);
+  const completeBlocks = Math.floor((config.duration * config.sampleRate) / quantum);
   // Compare seconds to the canonical sample-count/rate boundary without an epsilon.
   const blocks =
-    config.duration > (completeBlocks * SAMPLES_PER_BLOCK) / config.sampleRate
+    config.duration > (completeBlocks * quantum) / config.sampleRate
       ? completeBlocks + 1
       : completeBlocks;
-  const totalSamples = blocks * SAMPLES_PER_BLOCK;
+  const totalSamples = blocks * quantum;
 
   const outputs: Record<string, Float32Array[]> = {};
   for (const decl of instance.declarations) {
@@ -259,9 +276,9 @@ export async function renderOffline<C>(
     }
   }
 
-  const blockBuffer = new Float32Array(SAMPLES_PER_BLOCK);
-  const inputScratch = new Float32Array(SAMPLES_PER_BLOCK);
-  const paramScratch = new Float32Array(SAMPLES_PER_BLOCK);
+  const blockBuffer = new Float32Array(quantum);
+  const inputScratch = new Float32Array(quantum);
+  const paramScratch = new Float32Array(quantum);
   // Last param value seen per param (= the snapshot's "current value" at end).
   const paramCurrent: Record<string, number> = {};
 
@@ -322,7 +339,7 @@ export async function renderOffline<C>(
   }
 
   for (let b = 0; b < blocks; b++) {
-    const blockStart = b * SAMPLES_PER_BLOCK;
+    const blockStart = b * quantum;
 
     for (const decl of instance.declarations) {
       if (decl.kind === "audioInput") {
@@ -330,7 +347,7 @@ export async function renderOffline<C>(
         for (let c = 0; c < decl.channels; c++) {
           const channelData = channels[c];
           if (channelData) {
-            for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+            for (let s = 0; s < quantum; s++) {
               const abs = blockStart + s;
               inputScratch[s] = abs < channelData.length ? channelData[abs]! : 0;
             }
@@ -346,13 +363,13 @@ export async function renderOffline<C>(
         } else if (data.length === 1) {
           paramScratch.fill(data[0]!);
         } else {
-          for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+          for (let s = 0; s < quantum; s++) {
             const abs = blockStart + s;
             paramScratch[s] = abs < data.length ? data[abs]! : data[data.length - 1]!;
           }
         }
         instance.writeParam(decl.name, paramScratch);
-        paramCurrent[decl.name] = paramScratch[SAMPLES_PER_BLOCK - 1]!;
+        paramCurrent[decl.name] = paramScratch[quantum - 1]!;
       }
     }
 
@@ -407,14 +424,14 @@ export async function renderOffline<C>(
     }
 
     // MIDI inbound injection (= push the events for this quantum onto the matching
-    // port ring). config.events.atSample is an absolute sample, so
-    // quantum = floor(atSample / 128); the wire's atSample is block-local
-    // (= atSample % 128). The worklet drain (= top of process, Q38-b) consumes
+    // port ring). config.events.atSample is an absolute sample, so the call index
+    // is floor(atSample / quantum); the wire's atSample is call-local
+    // (= atSample % quantum). The worklet drain (= top of process, Q38-b) consumes
     // tail→head.
     for (const ev of config.events ?? []) {
       const port = midiInPorts.find((p) => p.name === ev.name);
       if (port === undefined) continue;
-      if (Math.floor(ev.atSample / SAMPLES_PER_BLOCK) !== b) continue;
+      if (Math.floor(ev.atSample / quantum) !== b) continue;
       const memory = instance.memory.buffer;
       const headerView = new Int32Array(memory, port.base, 3);
       const head = headerView[0]!;
@@ -444,14 +461,14 @@ export async function renderOffline<C>(
         dv.setUint8(slotByteOffset, 0xf0);
         dv.setUint16(slotByteOffset + 1, chunkIdx, true);
         dv.setUint8(slotByteOffset + 3, 0);
-        dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
+        dv.setUint32(slotByteOffset + 4, ev.atSample % quantum, true);
       } else {
         const { status, data1, data2 } = midiEventToWire(payload);
         dv.setUint8(slotByteOffset, status);
         dv.setUint8(slotByteOffset + 1, data1);
         dv.setUint8(slotByteOffset + 2, data2);
         dv.setUint8(slotByteOffset + 3, 0);
-        dv.setUint32(slotByteOffset + 4, ev.atSample % SAMPLES_PER_BLOCK, true);
+        dv.setUint32(slotByteOffset + 4, ev.atSample % quantum, true);
       }
       if (ringCount(head, headerView[1]!) >= port.capacity) {
         headerView[1] = headerView[1]! + 1;
@@ -524,7 +541,7 @@ export async function renderOffline<C>(
             /* v8 ignore stop */
           }
           if (field.name === "atSample" && typeof value === "number") {
-            // Block-local (0..SAMPLES_PER_BLOCK-1), matching online (B7 / Q4-c-ii).
+            // Call-local (0..quantum-1), matching online (B7 / Q4-c-ii).
             atSample = value;
           } else {
             payload[field.name] = value;
@@ -581,7 +598,7 @@ export async function renderOffline<C>(
       for (let c = 0; c < decl.channels; c++) {
         instance.readOutput(decl.name, c, blockBuffer);
         const dest = outputs[decl.name]![c]!;
-        for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+        for (let s = 0; s < quantum; s++) {
           dest[blockStart + s] = blockBuffer[s]!;
         }
       }
@@ -636,6 +653,7 @@ export async function renderOffline<C>(
     events: emittedEvents,
     state,
     sampleRate: config.sampleRate,
+    renderQuantumSize: quantum,
     diagnostics: {
       scrubbedSamples: instance.scrubbedSamples(),
       droppedSysexMessages: instance.droppedSysexMessages(),

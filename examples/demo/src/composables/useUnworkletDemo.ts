@@ -27,6 +27,12 @@ export type ParamControl = {
   value: number;
 };
 
+/** The rate and render quantum a context plays at, which a source is compiled for. */
+const compileTarget = (c: BaseAudioContext) => ({
+  sampleRate: c.sampleRate,
+  renderQuantumSize: (c as { renderQuantumSize?: number }).renderQuantumSize ?? 128,
+});
+
 export function useUnworkletDemo() {
   const status = ref<string>("idle");
   const error = ref<string | null>(null);
@@ -49,8 +55,10 @@ export function useUnworkletDemo() {
   let playRequest = 0;
   const retiring = new Set<() => void>();
 
+  // The device's own rate and render quantum: each source is compiled for the
+  // context it plays on, so no resampling or fixed rate is needed.
   const ensureCtx = async (): Promise<AudioContext> => {
-    const c = (ctx ??= new AudioContext({ sampleRate: 48000 }));
+    const c = (ctx ??= new AudioContext());
     if (c.state === "suspended") await c.resume();
     return c;
   };
@@ -112,7 +120,7 @@ export function useUnworkletDemo() {
     try {
       const c = await ensureCtx();
       if (revision !== generation) return;
-      const compiled = await compileSource(ex.source);
+      const compiled = await compileSource(ex.source, compileTarget(c));
       if (revision !== generation) return;
       const prepared = await createNode(c, compiled);
       if (revision !== generation) {
@@ -225,7 +233,7 @@ export function useUnworkletDemo() {
     error.value = null;
     failure.value = null;
     try {
-      const compiled = await compileSource(newSource);
+      const compiled = await compileSource(newSource, compileTarget(c));
       if (revision !== generation) return;
       const r = await replaceProcessor(previous, compiled);
       if (revision !== generation) {

@@ -11,7 +11,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts";
 import { and, or, select } from "../../index.ts";
 import { audioInput, audioOutput } from "../../dsl/declarations.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 
@@ -37,8 +37,8 @@ test("and(a, b) — free-function form outputs 1 only when both true", async () 
       },
     };
   });
-  const l = new Float32Array(SAMPLES_PER_BLOCK);
-  const r = new Float32Array(SAMPLES_PER_BLOCK);
+  const l = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
+  const r = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   l[0] = 1;
   r[0] = 1; // T & T = T
   l[1] = 1;
@@ -68,8 +68,8 @@ test("or(a, b) — free-function form outputs 1 when either true", async () => {
       },
     };
   });
-  const l = new Float32Array(SAMPLES_PER_BLOCK);
-  const r = new Float32Array(SAMPLES_PER_BLOCK);
+  const l = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
+  const r = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   l[0] = 1;
   r[0] = 1; // T | T = T
   l[1] = 1;
@@ -99,8 +99,8 @@ test("a.and(b) method form matches and(a, b)", async () => {
       },
     };
   });
-  const l = new Float32Array(SAMPLES_PER_BLOCK);
-  const r = new Float32Array(SAMPLES_PER_BLOCK);
+  const l = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
+  const r = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   l[0] = 1;
   r[0] = 1;
   l[1] = 1;
@@ -126,8 +126,8 @@ test("a.or(b) method form matches or(a, b)", async () => {
       },
     };
   });
-  const l = new Float32Array(SAMPLES_PER_BLOCK);
-  const r = new Float32Array(SAMPLES_PER_BLOCK);
+  const l = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
+  const r = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   l[0] = 0;
   r[0] = 1;
   l[1] = 0;
@@ -152,7 +152,7 @@ test("and(a, boolean-literal true) accepts a JS boolean as the RHS", async () =>
       },
     };
   });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   x[0] = 1;
   x[1] = 0;
   const { outputs } = await render(proc, { inputs: { main: [x] } });

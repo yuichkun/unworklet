@@ -10,7 +10,7 @@ import { expect, test } from "vite-plus/test";
 
 import { render } from "../__tests__/behavior/render.ts";
 import { mulVec, splat, sumLanes, vec4 } from "../simd.ts";
-import { SAMPLES_PER_BLOCK } from "./constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "./constants.ts";
 
 import { newCaptureContext, runCapture, unwrapAst, wrapAst } from "../compile/capture.ts";
 import { audioInput, audioOutput, event, noiseSource, param, state } from "./declarations.ts";
@@ -2018,7 +2018,7 @@ test("SIMD: a loaded vector keeps its read-time lanes across later buffer writes
   const { outputs } = await render(proc, { blocks: 2 });
   for (const [channel, expected] of [8, 2, 24, 36].entries()) {
     expect(Array.from(outputs.main![channel]!)).toEqual(
-      Array(2 * SAMPLES_PER_BLOCK).fill(expected),
+      Array(2 * DEFAULT_RENDER_QUANTUM_SIZE).fill(expected),
     );
   }
 });
@@ -2050,7 +2050,7 @@ test("SIMD: block and dynamic-offset sample reads retain independent vector valu
     };
   });
   const { outputs } = await render(proc, { blocks: 2 });
-  for (let sample = 0; sample < 2 * SAMPLES_PER_BLOCK; sample++) {
+  for (let sample = 0; sample < 2 * DEFAULT_RENDER_QUANTUM_SIZE; sample++) {
     const value = sample + (sample % 2) * 10;
     expect(outputs.main!.map((channel) => channel[sample])).toEqual([
       4 * value,

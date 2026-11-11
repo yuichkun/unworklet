@@ -18,8 +18,8 @@
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
 import { inferAstType } from "./ast.ts";
-import { SIMD_LANE_COUNT } from "../dsl/constants.ts";
-import { SYSEX_PER_CHUNK_BYTES } from "./layout.ts";
+import { FOR_INDEX_MAX_COUNT, SIMD_LANE_COUNT } from "../dsl/constants.ts";
+import { SYSEX_PER_CHUNK_BYTES, renderQuantumOf } from "./layout.ts";
 
 export type DiagnosticEntry = {
   readonly id: string;
@@ -57,8 +57,25 @@ function walkForConstantTruthyEmitIf(
         message: `unworklet: midi port "${node.port}" emitIf has a constant-truthy cond inside forSample — unconditional emission at audio rate fills the ringbuffer in milliseconds. Use a state-edge gated cond, move the emission to a handler context, or wrap it in everyNSamples(N, ...) for sub-rate periodic emission (= Q32-c, stable ID 'constant-truthy-emitif')`,
       });
     }
+    // A loop nested in a forSample body repeats at audio rate too.
+    if (node.kind === "forSample" || node.kind === "forIndex") {
+      walkForConstantTruthyEmitIf(node.body, diagnostics);
+    }
+  }
+}
+
+/**
+ * Checks the per-block sample loops for constant-truthy emits. A forIndex loop
+ * runs its body once per index per call, so a forSample inside it still emits at
+ * sample rate (count times over) and is checked too; an emit directly in the
+ * forIndex body runs once per index, like the per-block top level, and is not.
+ */
+function walkSampleLoops(body: readonly AstNode[], diagnostics: DiagnosticEntry[]): void {
+  for (const node of body) {
     if (node.kind === "forSample") {
       walkForConstantTruthyEmitIf(node.body, diagnostics);
+    } else if (node.kind === "forIndex") {
+      walkSampleLoops(node.body, diagnostics);
     }
   }
 }
@@ -156,6 +173,7 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
       walkForTypeErrors(node.value, diagnostics);
       break;
     case "forSample":
+    case "forIndex":
     case "messageOnReceive":
     case "everyNSamples":
     case "midiOnEvent":
@@ -201,28 +219,49 @@ function walkForTypeErrors(node: AstNode, diagnostics: DiagnosticEntry[]): void 
 }
 
 // The strides allowed for forSample.byN(stride) = powers of two that evenly
-// divide one block (128). Cases like SIMD bulk (a 4-sample load at stride 4)
-// require 128 / stride to be an integer.
-const ALLOWED_STRIDES = new Set([1, 2, 4, 8, 16, 32, 64, 128]);
+// divide the render quantum. Cases like SIMD bulk (a 4-sample load at stride 4)
+// require quantum / stride to be an integer, so the last iteration's window
+// still ends inside the call.
+export function allowedStrides(renderQuantumSize: number): number[] {
+  const strides: number[] = [];
+  for (let stride = 1; renderQuantumSize % stride === 0; stride *= 2) {
+    strides.push(stride);
+  }
+  return strides;
+}
 
 // Compile-time static validation of the loop primitives (forSample.byN /
 // everyNSamples). The forSample.byN stride must be a power of two that divides
-// 128 (= ALLOWED_STRIDES); per §9.5 the everyNSamples divisor N must be a
-// "compile-time positive integer" (= because the counter free-runs across
-// blocks it need not divide 128, §9.1). Either violation is rejected before it
-// reaches the audio thread: with N=0, emit would emit i32.rem_u(counter, 0),
-// which traps on a divide-by-zero on the audio thread.
-function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntry[]): void {
+// the render quantum (= allowedStrides); per §9.5 the everyNSamples divisor N
+// must be a "compile-time positive integer" (= because the counter free-runs
+// across blocks it need not divide the quantum, §9.1). Either violation is
+// rejected before it reaches the audio thread: with N=0, emit would emit
+// i32.rem_u(counter, 0), which traps on a divide-by-zero on the audio thread.
+function walkForLoopErrors(
+  body: readonly AstNode[],
+  allowed: readonly number[],
+  renderQuantumSize: number,
+  diagnostics: DiagnosticEntry[],
+): void {
   for (const node of body) {
     if (node.kind === "forSample") {
-      if (!ALLOWED_STRIDES.has(node.stride)) {
+      if (!allowed.includes(node.stride)) {
         diagnostics.push({
           id: "illegal-stride",
           severity: "error",
-          message: `unworklet: forSample.byN stride ${node.stride} is not a power of two that evenly divides the render quantum (128). Allowed: 1, 2, 4, 8, 16, 32, 64, 128 (stable ID 'illegal-stride')`,
+          message: `unworklet: forSample.byN stride ${node.stride} is not a power of two that evenly divides the render quantum (${renderQuantumSize}). Allowed: ${allowed.join(", ")} (stable ID 'illegal-stride')`,
         });
       }
-      walkForLoopErrors(node.body, diagnostics);
+      walkForLoopErrors(node.body, allowed, renderQuantumSize, diagnostics);
+    } else if (node.kind === "forIndex") {
+      if (!Number.isInteger(node.count) || node.count < 1 || node.count > FOR_INDEX_MAX_COUNT) {
+        diagnostics.push({
+          id: "illegal-forindex-count",
+          severity: "error",
+          message: `unworklet: forIndex(count) requires count to be a compile-time integer from 1 to ${FOR_INDEX_MAX_COUNT} (got ${node.count}) (stable ID 'illegal-forindex-count')`,
+        });
+      }
+      walkForLoopErrors(node.body, allowed, renderQuantumSize, diagnostics);
     } else if (node.kind === "everyNSamples") {
       if (!Number.isInteger(node.divisor) || node.divisor < 1) {
         diagnostics.push({
@@ -231,9 +270,9 @@ function walkForLoopErrors(body: readonly AstNode[], diagnostics: DiagnosticEntr
           message: `unworklet: everyNSamples(N) requires N to be a compile-time positive integer (got ${node.divisor}). N=0 traps on a divide-by-zero on the audio thread; negative or non-integer values are invalid (stable ID 'illegal-everyn-divisor')`,
         });
       }
-      walkForLoopErrors(node.body, diagnostics);
+      walkForLoopErrors(node.body, allowed, renderQuantumSize, diagnostics);
     } else if (node.kind === "messageOnReceive" || node.kind === "midiOnEvent") {
-      walkForLoopErrors(node.body, diagnostics);
+      walkForLoopErrors(node.body, allowed, renderQuantumSize, diagnostics);
     }
   }
 }
@@ -420,7 +459,11 @@ function walkHandlerFieldEscape(
       walkHandlerFieldEscape(node.body, { kind: "message", name: node.name }, diagnostics);
     } else if (node.kind === "midiOnEvent") {
       walkHandlerFieldEscape(node.body, { kind: "midi", port: node.port }, diagnostics);
-    } else if (node.kind === "forSample" || node.kind === "everyNSamples") {
+    } else if (
+      node.kind === "forSample" ||
+      node.kind === "forIndex" ||
+      node.kind === "everyNSamples"
+    ) {
       walkHandlerFieldEscape(node.body, scope, diagnostics);
     }
   }
@@ -472,6 +515,7 @@ function walkSysexBufferFit(
     }
     if (
       node.kind === "forSample" ||
+      node.kind === "forIndex" ||
       node.kind === "everyNSamples" ||
       node.kind === "messageOnReceive" ||
       node.kind === "midiOnEvent"
@@ -518,6 +562,7 @@ function walkVecBufferFit(
     for (const child of exprChildren(node)) visit(child);
     if (
       node.kind === "forSample" ||
+      node.kind === "forIndex" ||
       node.kind === "everyNSamples" ||
       node.kind === "messageOnReceive" ||
       node.kind === "midiOnEvent"
@@ -543,15 +588,19 @@ export function analyze(graph: CapturedGraph): DiagnosticEntry[] {
       });
     }
   }
-  walkForLoopErrors(graph.statements, diagnostics);
+  const renderQuantumSize = renderQuantumOf(graph);
+  walkForLoopErrors(
+    graph.statements,
+    allowedStrides(renderQuantumSize),
+    renderQuantumSize,
+    diagnostics,
+  );
   checkPayloadFieldLimit(graph, diagnostics);
   walkSysexBufferFit(graph, graph.statements, diagnostics);
   walkVecBufferFit(graph, graph.statements, diagnostics);
   walkHandlerFieldEscape(graph.statements, null, diagnostics);
+  walkSampleLoops(graph.statements, diagnostics);
   for (const stmt of graph.statements) {
-    if (stmt.kind === "forSample") {
-      walkForConstantTruthyEmitIf(stmt.body, diagnostics);
-    }
     walkForTypeErrors(stmt, diagnostics);
   }
   return diagnostics;

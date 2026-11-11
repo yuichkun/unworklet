@@ -22,7 +22,7 @@ import { compile } from "./compile/index.ts";
 import { CAPACITY_16 } from "./dsl/constants.ts";
 import { event } from "./dsl/declarations.ts";
 import { egressPoolBufferBytes } from "./egressFrame.ts";
-import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "./dsl/constants.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
 import { defineProcessor } from "./processor.ts";
 import type { MidiEvent, MidiRingSlotDescriptor } from "./types.ts";
@@ -67,7 +67,7 @@ const emptyQuantum = (): {
   parameters: Record<string, Float32Array>;
 } => ({
   inputs: [],
-  outputs: [[new Float32Array(SAMPLES_PER_BLOCK)]],
+  outputs: [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]],
   parameters: {},
 });
 

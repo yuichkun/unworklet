@@ -13,7 +13,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method forms
 import { audioInput, audioOutput, state } from "../../dsl/declarations.ts";
 import { bool, f32, f64, i32, i64 } from "../../dsl/constructors.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { select } from "../../dsl/primitives.ts";
 import { defineProcessor } from "../../processor.ts";
@@ -34,7 +34,7 @@ test("buffer.f32 write then read at the same index round-trips the value", async
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBeCloseTo(k * 0.01, 5);
   }
 });
@@ -56,7 +56,7 @@ test("buffer.i32 round-trips an integer value (observed via f32)", async () => {
     };
   });
   const { outputs } = await render(proc);
-  expect([...outputs.main![0]!]).toEqual(Array<number>(SAMPLES_PER_BLOCK).fill(42));
+  expect([...outputs.main![0]!]).toEqual(Array<number>(DEFAULT_RENDER_QUANTUM_SIZE).fill(42));
 });
 
 test("buffer.i64 round-trips a 64-bit value (observed via i32 → f32)", async () => {
@@ -77,7 +77,7 @@ test("buffer.i64 round-trips a 64-bit value (observed via i32 → f32)", async (
   });
   const { outputs } = await render(proc);
   // 2^40 + 7 wrapped to i32 low 32 bits = 7.
-  expect([...outputs.main![0]!]).toEqual(Array<number>(SAMPLES_PER_BLOCK).fill(7));
+  expect([...outputs.main![0]!]).toEqual(Array<number>(DEFAULT_RENDER_QUANTUM_SIZE).fill(7));
 });
 
 test("buffer.f64 round-trips a double value (observed via f32)", async () => {
@@ -97,7 +97,7 @@ test("buffer.f64 round-trips a double value (observed via f32)", async () => {
     };
   });
   const { outputs } = await render(proc);
-  expect([...outputs.main![0]!]).toEqual(Array<number>(SAMPLES_PER_BLOCK).fill(0.5));
+  expect([...outputs.main![0]!]).toEqual(Array<number>(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5));
 });
 
 test("buffer.bool round-trips a boolean (observed via select)", async () => {
@@ -117,7 +117,7 @@ test("buffer.bool round-trips a boolean (observed via select)", async () => {
     };
   });
   const { outputs } = await render(proc);
-  expect([...outputs.main![0]!]).toEqual(Array<number>(SAMPLES_PER_BLOCK).fill(1));
+  expect([...outputs.main![0]!]).toEqual(Array<number>(DEFAULT_RENDER_QUANTUM_SIZE).fill(1));
 });
 
 test("buffer.u8 stores the low 8 bits and reads back through Node<i32>", async () => {
@@ -138,7 +138,7 @@ test("buffer.u8 stores the low 8 bits and reads back through Node<i32>", async (
     };
   });
   const { outputs } = await render(proc);
-  expect([...outputs.main![0]!]).toEqual(Array<number>(SAMPLES_PER_BLOCK).fill(66));
+  expect([...outputs.main![0]!]).toEqual(Array<number>(DEFAULT_RENDER_QUANTUM_SIZE).fill(66));
 });
 
 test("buffer.f32 readInterpolated linearly interpolates between two taps", async () => {
@@ -162,7 +162,7 @@ test("buffer.f32 readInterpolated linearly interpolates between two taps", async
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBeCloseTo(k * 0.5, 4);
   }
 });
@@ -184,7 +184,7 @@ test("buffer.f64 readInterpolated interpolates in the f64 domain", async () => {
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBeCloseTo(k * 0.5, 4);
   }
 });
@@ -207,7 +207,7 @@ test("buffer.i32 readInterpolated reads the integer tap (frac 0) and surfaces it
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBeCloseTo(k, 4);
   }
 });
@@ -229,7 +229,7 @@ test("buffer.i64 readInterpolated interpolates a constant-filled buffer to that 
     };
   });
   const { outputs } = await render(proc);
-  expect([...outputs.main![0]!]).toEqual(Array<number>(SAMPLES_PER_BLOCK).fill(100));
+  expect([...outputs.main![0]!]).toEqual(Array<number>(DEFAULT_RENDER_QUANTUM_SIZE).fill(100));
 });
 
 test("buffer ring delay: an impulse is delayed by 100 samples", async () => {
@@ -254,10 +254,10 @@ test("buffer ring delay: an impulse is delayed by 100 samples", async () => {
       },
     };
   });
-  const input = new Float32Array(SAMPLES_PER_BLOCK);
+  const input = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   input[0] = 1;
   const { outputs } = await render(proc, { inputs: { main: [input] } });
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) {
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) {
     expect(outputs.main![0]![k]).toBeCloseTo(k === DELAY ? 1 : 0, 6);
   }
 });

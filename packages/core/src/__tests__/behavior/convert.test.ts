@@ -9,7 +9,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts";
 import { audioInput, audioOutput, state } from "../../dsl/declarations.ts";
 import { bool, f32, i32, select } from "../../index.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 
@@ -32,7 +32,7 @@ test("bool(f32 node) is true exactly when the value is non-zero", async () => {
       },
     };
   });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   x[0] = 0;
   x[1] = 0.5;
   x[2] = -0.3;
