@@ -12,7 +12,7 @@ import "../../dsl/primitives.ts"; // side-effect: register `Node<T>` method form
 import "../../simd.ts"; // side-effect: register `.lane` method + SIMD types
 import { audioOutput, state } from "../../dsl/declarations.ts";
 import { f32, i32 } from "../../dsl/constructors.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { addVec, mulVec, splat, sumLanes, vec4 } from "../../simd.ts";
 import { defineProcessor } from "../../processor.ts";
@@ -55,7 +55,7 @@ test("SIMD: splat(2) × vec4(1,2,3,4) → sumLanes = 20", async () => {
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(20);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(outputs.main![0]![k]).toBe(20);
 });
 
 test("SIMD: extract each lane of addVec(vec4, vec4) via lane(i)", async () => {
@@ -75,7 +75,7 @@ test("SIMD: extract each lane of addVec(vec4, vec4) via lane(i)", async () => {
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(44);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(outputs.main![0]![k]).toBe(44);
 });
 
 test("SIMD: method-form splat(2).mul(vec4) works on f32x4 (type-safe and runtime-correct)", async () => {
@@ -91,7 +91,7 @@ test("SIMD: method-form splat(2).mul(vec4) works on f32x4 (type-safe and runtime
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(20);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(outputs.main![0]![k]).toBe(20);
 });
 
 test("SIMD: buf.loadVec / storeVec round-trips 4 lanes through a buffer", async () => {
@@ -118,7 +118,7 @@ test("SIMD: buf.loadVec / storeVec round-trips 4 lanes through a buffer", async 
     };
   });
   const { outputs } = await render(proc);
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(outputs.main![0]![k]).toBe(50);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(outputs.main![0]![k]).toBe(50);
 });
 
 test.each([
@@ -173,7 +173,7 @@ test.each([
     });
     const { outputs } = await render(proc, { blocks: 2 });
     const channels = outputs.main!;
-    for (let sample = 0; sample < 2 * SAMPLES_PER_BLOCK; sample++) {
+    for (let sample = 0; sample < 2 * DEFAULT_RENDER_QUANTUM_SIZE; sample++) {
       const lane = 4 * (sample + 1);
       expect(channels.slice(0, 4).map((channel) => channel[sample])).toEqual([
         lane,

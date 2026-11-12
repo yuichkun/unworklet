@@ -9,7 +9,7 @@ import { expect, test } from "vite-plus/test";
 import "../../dsl/primitives.ts";
 import { audioInput, audioOutput } from "../../dsl/declarations.ts";
 import { not, select } from "../../index.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { defineProcessor } from "../../processor.ts";
 
@@ -31,7 +31,7 @@ test("not(b) inverts a computed bool (free-function form)", async () => {
       },
     };
   });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   x[0] = 0; // gate F → not T → 1
   x[1] = 1; // gate T → not F → 0
   x[2] = 0.2; // gate F → not T → 1
@@ -56,7 +56,7 @@ test("b.not() method form matches not(b)", async () => {
       },
     };
   });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   x[0] = 0;
   x[1] = 1;
   const { outputs } = await render(proc, { inputs: { main: [x] } });
@@ -79,7 +79,7 @@ test("not(not(b)) round-trips to b", async () => {
       },
     };
   });
-  const x = new Float32Array(SAMPLES_PER_BLOCK);
+  const x = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
   x[0] = 0; // gate F → not not F = F → 0
   x[1] = 1; // gate T → not not T = T → 1
   const { outputs } = await render(proc, { inputs: { main: [x] } });

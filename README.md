@@ -118,9 +118,9 @@ process(() => {
 import { createNode } from "@unworklet/core";
 import distortion from "./distortion.uwk.ts?worklet"; // the ?worklet query is required
 
-// The ?worklet artifact bakes its rate-dependent coefficients at 48 kHz, so run
-// the context at 48 kHz too. The browser resamples to the device's native rate.
-const ctx = new AudioContext({ sampleRate: 48000 });
+// Any context works: the ?worklet build targets 48 kHz and 128-sample quanta, and
+// createNode compiles for any other rate or renderSizeHint in a Web Worker.
+const ctx = new AudioContext();
 const node = await createNode(ctx, distortion);
 
 // an unworklet node is a normal AudioNode — feed it anything, route it anywhere:
@@ -191,7 +191,7 @@ process(() => {
   keys.onEvent("noteOff", () => gate.write(0));
 
   forSample((i) => {
-    phase.write((phase + hz / 48000) % 1); // advance the oscillator
+    phase.write((phase + hz / ctx.sampleRate) % 1); // advance the oscillator
     out.ch(0)[i] = sin(phase * (Math.PI * 2)) * gate * 0.2;
   });
 });

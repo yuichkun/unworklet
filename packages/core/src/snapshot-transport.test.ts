@@ -17,7 +17,7 @@ import "./dsl/primitives.ts"; // method form registration side-effect
 import { expect, test } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
-import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "./dsl/constants.ts";
 import { audioOutput, event, noiseSource, state } from "./dsl/declarations.ts";
 import { f32 } from "./dsl/constructors.ts";
 import { forSample } from "./dsl/loop.ts";
@@ -66,7 +66,7 @@ const lastOfKind = (self: MockSelf, kind: string): Record<string, unknown> | und
 
 const quantum = () => ({
   inputs: [] as Float32Array[][],
-  outputs: [[new Float32Array(SAMPLES_PER_BLOCK)]] as Float32Array[][],
+  outputs: [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]] as Float32Array[][],
   parameters: {} as Record<string, Float32Array>,
 });
 

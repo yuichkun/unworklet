@@ -23,7 +23,7 @@ import type {
   StateDecl,
 } from "../compile/ast.ts";
 import { inferAstType } from "../compile/ast.ts";
-import { SAMPLES_PER_BLOCK, SIMD_LANE_COUNT } from "./constants.ts";
+import { SIMD_LANE_COUNT } from "./constants.ts";
 import {
   addDeclaration,
   addStatement,
@@ -107,15 +107,16 @@ function liftOffset(i: Node<"i32"> | number): AstNode {
 
 /**
  * Lift a sample offset for an audio I/O / `param` `.at(k)` access, range-checking
- * a JS-literal offset against `[0, SAMPLES_PER_BLOCK - 1]` (= 0..127, Q68). A
- * `Node<'i32'>` offset (= a `forSample` loop counter or computed index) is
- * unrestricted — only compile-time-literal offsets are bounded here. Stable ID
- * `audio-sample-offset-out-of-range`.
+ * a JS-literal offset against `[0, ctx.renderQuantumSize - 1]` (Q68) of the
+ * capture's compile target. A `Node<'i32'>` offset (= a `forSample` loop counter
+ * or computed index) is unrestricted — only compile-time-literal offsets are
+ * bounded here. Stable ID `audio-sample-offset-out-of-range`.
  */
 function liftSampleOffset(i: Node<"i32"> | number, ctx: string): AstNode {
-  if (typeof i === "number" && (!Number.isInteger(i) || i < 0 || i >= SAMPLES_PER_BLOCK)) {
+  const { renderQuantumSize } = getCurrentCapture();
+  if (typeof i === "number" && (!Number.isInteger(i) || i < 0 || i >= renderQuantumSize)) {
     throw new Error(
-      `unworklet: ${ctx} sample offset ${i} is out of range [0, ${SAMPLES_PER_BLOCK - 1}] ` +
+      `unworklet: ${ctx} sample offset ${i} is out of range [0, ${renderQuantumSize - 1}] ` +
         `(JS-literal offsets must be an integer within the render quantum; use a forSample ` +
         `loop counter for per-sample access). (stable ID 'audio-sample-offset-out-of-range')`,
     );
@@ -996,16 +997,17 @@ function eventToMain<T>(options: EventOptions): EventDecl<T> {
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
-      // Handler bodies also collect statements, so only active sample loops supply an offset.
-      const { loopDepth } = getCurrentCapture();
+      // Handler bodies also collect statements, so only an enclosing forSample
+      // supplies an offset — a forIndex loop counts something other than samples.
+      const { sampleLoopDepth } = getCurrentCapture();
       const atSampleRaw = payload.atSample;
       const atSampleAst: AstNode = isWrappedNode(atSampleRaw)
         ? unwrapAst(atSampleRaw)
         : typeof atSampleRaw === "number"
           ? { kind: "literal", type: "i32", value: atSampleRaw }
           : atSampleRaw === undefined
-            ? loopDepth > 0
-              ? { kind: "loopCounter", depth: loopDepth - 1 }
+            ? sampleLoopDepth !== null
+              ? { kind: "loopCounter", depth: sampleLoopDepth }
               : { kind: "literal", type: "i32", value: 0 }
             : (() => {
                 throw new Error(
@@ -1387,11 +1389,12 @@ function midiToMain(options: MidiPortOptions): MidiOutputHandle {
       const condAst: AstNode = isWrappedNode(cond)
         ? unwrapAst(cond)
         : { kind: "literal", type: "i32", value: cond ? 1 : 0 };
-      const { loopDepth } = getCurrentCapture();
+      // As for event emits: only an enclosing forSample supplies the offset.
+      const { sampleLoopDepth } = getCurrentCapture();
       const atSample: AstNode =
         event.atSample === undefined
-          ? loopDepth > 0
-            ? { kind: "loopCounter", depth: loopDepth - 1 }
+          ? sampleLoopDepth !== null
+            ? { kind: "loopCounter", depth: sampleLoopDepth }
             : I32_ZERO
           : liftI32(event.atSample);
       // Map MidiEventGraph → semantic args; emit computes the 8-byte wire slot

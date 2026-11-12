@@ -2048,9 +2048,73 @@ test("publish scheduler: threshold rounds to 0 — fires every block", async () 
   for (let b = 0; b < 5; b++) {
     proc();
   }
-  // Each block: 128 >= 0 = due -> counter -= 0 = 128 -> next block also fires; 5 dues total, counter 128
-  // version = 5
+  // The threshold is clamped to 1, so every block is due and the counter keeps
+  // only the remainder (0) instead of growing by 128 per block.
   expect(counterView[1]).toBe(5);
+  expect(counterView[0]).toBe(0);
+});
+
+/** Instantiate a hand-built graph and return its process fn + publish counter view. */
+async function publishCounterRig(
+  graph: CapturedGraph,
+  sampleRate: number,
+): Promise<{ proc: () => void; counter: Int32Array }> {
+  const lay = layout(graph);
+  const wasm = await emit(graph, lay, { sampleRate });
+  const instance = await WebAssembly.instantiate(
+    await WebAssembly.compile(wasm.buffer as ArrayBuffer),
+  );
+  const memory = instance.exports["memory"] as WebAssembly.Memory;
+  return {
+    proc: instance.exports["process"] as () => void,
+    counter: new Int32Array(memory.buffer, lay.regions.publishCounters.slots["x"]!, 2),
+  };
+}
+
+const publishedSlot = (rateFps: number): CapturedGraph["declarations"][number] => ({
+  kind: "state",
+  name: "x",
+  type: "f32",
+  initial: 0,
+  userNamed: true,
+  publish: { rateFps },
+});
+
+test("publish scheduler: the counter advances by the graph's render quantum", async () => {
+  // 48000 / 30 fps -> threshold 1600 = 50 calls of 32 samples.
+  const { proc, counter } = await publishCounterRig(
+    { declarations: [publishedSlot(30)], statements: [], renderQuantumSize: 32 },
+    48000,
+  );
+  for (let call = 0; call < 49; call++) proc();
+  expect([counter[0], counter[1]]).toEqual([49 * 32, 0]);
+  proc();
+  expect([counter[0], counter[1]]).toEqual([0, 1]);
+});
+
+test("publish scheduler: a call longer than the period publishes every call and keeps the counter below the threshold", async () => {
+  // 48000 / 240 fps -> threshold 200 < 256 samples per call. Subtracting the
+  // threshold would leave 56 more samples behind on every call.
+  const { proc, counter } = await publishCounterRig(
+    { declarations: [publishedSlot(240)], statements: [], renderQuantumSize: 256 },
+    48000,
+  );
+  for (let call = 1; call <= 1000; call++) {
+    proc();
+    expect(counter[1]).toBe(call);
+    expect(counter[0]).toBe((call * 256) % 200);
+  }
+});
+
+test("publish scheduler: at 128 samples, a threshold below 128 keeps the counter bounded", async () => {
+  // 48000 / 1000 fps -> threshold 48: every call is due.
+  const { proc, counter } = await publishCounterRig(
+    { declarations: [publishedSlot(1000)], statements: [] },
+    48000,
+  );
+  for (let call = 1; call <= 100; call++) proc();
+  expect(counter[1]).toBe(100);
+  expect(counter[0]).toBe((100 * 128) % 48);
 });
 
 test("publish scheduler: sampleRate option is reflected (threshold scales with sampleRate)", async () => {

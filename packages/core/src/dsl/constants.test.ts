@@ -1,6 +1,6 @@
 /**
- * Behavioral tests for build-time constants (= `01-dsl.md` §1.7 +
- * `02-messaging.md` §3 + `decisions-log.md` Q35 / Q44).
+ * Behavioral tests for build-time constants (= `02-messaging.md` §3 +
+ * `decisions-log.md` Q44).
  */
 
 import { expect, test } from "vite-plus/test";
@@ -17,11 +17,11 @@ import {
   CAPACITY_4096,
   CAPACITY_8192,
   CAPACITY_16384,
-  SAMPLES_PER_BLOCK,
+  DEFAULT_RENDER_QUANTUM_SIZE,
 } from "./constants.ts";
 
-test("`SAMPLES_PER_BLOCK` matches the Web Audio render quantum fixed at 128", () => {
-  expect(SAMPLES_PER_BLOCK).toBe(128);
+test("the default compile target quantum is the Web Audio default of 128 samples", () => {
+  expect(DEFAULT_RENDER_QUANTUM_SIZE).toBe(128);
 });
 
 test("`CAPACITY_*` tokens cover every power of two between 16 and 16384", () => {

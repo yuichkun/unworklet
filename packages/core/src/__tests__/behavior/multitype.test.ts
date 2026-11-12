@@ -15,7 +15,7 @@ import { expect, test } from "vite-plus/test";
 
 import { audioOutput, state } from "../../dsl/declarations.ts";
 import { bool, f32, f64, i32, i64 } from "../../dsl/constructors.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { forSample } from "../../dsl/loop.ts";
 import { clamp, select } from "../../dsl/primitives.ts";
 import { defineProcessor } from "../../processor.ts";
@@ -43,7 +43,7 @@ async function gen(build: (i: Node<"i32">) => Node<"f32">): Promise<Float32Array
 }
 
 const allEqual = (out: Float32Array, value: number): void => {
-  expect([...out]).toEqual(Array<number>(SAMPLES_PER_BLOCK).fill(value));
+  expect([...out]).toEqual(Array<number>(DEFAULT_RENDER_QUANTUM_SIZE).fill(value));
 };
 
 /** Assert the first output sample ≈ value (for non-exact / approximated results). */
@@ -53,7 +53,7 @@ const approx = (out: Float32Array, value: number, digits = 5): void => {
 
 test("convert: f32(i) turns the i32 loop counter into an f32 ramp 0..127", async () => {
   const out = await gen((i) => f32(i));
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(out[k]).toBe(k);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(out[k]).toBe(k);
 });
 
 test("i32 literal: f32(i32(5)) is the constant 5", async () => {
@@ -62,7 +62,7 @@ test("i32 literal: f32(i32(5)) is the constant 5", async () => {
 
 test("i32 add: f32(i.add(i32(10))) = k + 10 (integer arithmetic, not f32)", async () => {
   const out = await gen((i) => f32(i.add(i32(10))));
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(out[k]).toBe(k + 10);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(out[k]).toBe(k + 10);
 });
 
 test("i32 sub: 10 - 3 = 7", async () => {
@@ -184,32 +184,32 @@ test("i32 neg: -(5) = -5", async () => {
 
 test("i32 ring-buffer index pattern: (i + 10) % 8", async () => {
   const out = await gen((i) => f32(i.add(i32(10)).mod(i32(8))));
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(out[k]).toBe((k + 10) % 8);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(out[k]).toBe((k + 10) % 8);
 });
 
 test("i32 eq drives select: i.eq(i32(3)) ? 1 : 0", async () => {
   const out = await gen((i) => select(i.eq(i32(3)), f32(1), f32(0)));
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(out[k]).toBe(k === 3 ? 1 : 0);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(out[k]).toBe(k === 3 ? 1 : 0);
 });
 
 test("i32 lt drives select: i.lt(i32(64)) ? 1 : 0 (first half / second half)", async () => {
   const out = await gen((i) => select(i.lt(i32(64)), f32(1), f32(0)));
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(out[k]).toBe(k < 64 ? 1 : 0);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(out[k]).toBe(k < 64 ? 1 : 0);
 });
 
 test("i32 gt drives select: i.gt(i32(64)) ? 1 : 0", async () => {
   const out = await gen((i) => select(i.gt(i32(64)), f32(1), f32(0)));
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(out[k]).toBe(k > 64 ? 1 : 0);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(out[k]).toBe(k > 64 ? 1 : 0);
 });
 
 test("i32 lte drives select: i.lte(i32(64)) ? 1 : 0", async () => {
   const out = await gen((i) => select(i.lte(i32(64)), f32(1), f32(0)));
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(out[k]).toBe(k <= 64 ? 1 : 0);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(out[k]).toBe(k <= 64 ? 1 : 0);
 });
 
 test("i32 gte drives select: i.gte(i32(64)) ? 1 : 0", async () => {
   const out = await gen((i) => select(i.gte(i32(64)), f32(1), f32(0)));
-  for (let k = 0; k < SAMPLES_PER_BLOCK; k++) expect(out[k]).toBe(k >= 64 ? 1 : 0);
+  for (let k = 0; k < DEFAULT_RENDER_QUANTUM_SIZE; k++) expect(out[k]).toBe(k >= 64 ? 1 : 0);
 });
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -14,7 +14,14 @@
 
 import { afterEach, expect, test, vi } from "vite-plus/test";
 
+import "./dsl/primitives.ts";
 import { createNode, inspect } from "./client.ts";
+import { compile } from "./compile/index.ts";
+import { f32 } from "./dsl/constructors.ts";
+import { audioOutput, event, state } from "./dsl/declarations.ts";
+import { forSample } from "./dsl/loop.ts";
+import { defineProcessor } from "./processor.ts";
+import { extractWorkletMeta } from "./worklet.ts";
 import { getDevNodes } from "./devRegistry.ts";
 import { replaceProcessor } from "./replaceProcessor.ts";
 import { encodeScalar } from "./snapshot.ts";
@@ -343,6 +350,7 @@ const makeMockProcessor = (overrides?: {
   }>;
   migrations?: CompiledProcessor<unknown>["migrations"];
   bakedSampleRate?: number;
+  bakedRenderQuantumSize?: number;
   id?: string;
 }): CompiledProcessor<unknown> =>
   ({
@@ -370,6 +378,9 @@ const makeMockProcessor = (overrides?: {
       ...(overrides && "displayName" in overrides ? { displayName: overrides.displayName } : {}),
       ...(overrides && "bakedSampleRate" in overrides
         ? { bakedSampleRate: overrides.bakedSampleRate }
+        : {}),
+      ...(overrides && "bakedRenderQuantumSize" in overrides
+        ? { bakedRenderQuantumSize: overrides.bakedRenderQuantumSize }
         : {}),
     },
     __compiledProcessor: undefined,
@@ -484,6 +495,226 @@ test("createNode does not guard the rate when the processor carries no baked sam
     );
     expect(node).toBeTruthy();
   } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode throws when the context's render quantum differs from the processor's", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    await expect(
+      createNode(
+        { ...h.context, renderQuantumSize: 256 } as never,
+        makeMockProcessor({ bakedRenderQuantumSize: 128 }),
+        undefined,
+      ),
+    ).rejects.toThrow(
+      /with 128-sample render quanta, but the AudioContext runs at .* with 256-sample/,
+    );
+    expect(h.addModuleCalls).toEqual([]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode treats a context without renderQuantumSize as rendering 128 samples", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode(h.context as never, makeMockProcessor({ bakedRenderQuantumSize: 128 })),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
+    await expect(
+      createNode(h.context as never, makeMockProcessor({ bakedRenderQuantumSize: 64 })),
+    ).rejects.toThrow(
+      /with 64-sample render quanta, but the AudioContext runs at .* with 128-sample/,
+    );
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode proceeds when the context's render quantum matches the processor's", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () =>
+        createNode(
+          { ...h.context, renderQuantumSize: 32 } as never,
+          makeMockProcessor({ bakedRenderQuantumSize: 32 }),
+        ),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode does not guard the render quantum when the processor carries none", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  try {
+    const node = await startCreate(
+      () => createNode({ ...h.context, renderQuantumSize: 256 } as never, makeMockProcessor()),
+      h.fireReady,
+    );
+    expect(node).toBeTruthy();
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("createNode compiles for a context at another rate in the processor's compile worker", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  const tone = defineProcessor((ctx) => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    const meter = event<{ value: number }>({ to: "main", name: "meter", capacity: 16 });
+    return {
+      process: () => {
+        meter.emitIf(false, { value: 0 });
+        forSample((i) =>
+          out
+            .ch(0)
+            .at(i)
+            .write(f32(440 / ctx.sampleRate)),
+        );
+      },
+    };
+  });
+  const atContext = await compile(tone, { sampleRate: 44100 });
+  const meta = extractWorkletMeta(
+    atContext.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+  );
+  const requests: unknown[] = [];
+  class FakeWorker {
+    private listeners: Array<(event: { data: unknown }) => void> = [];
+    constructor(readonly url: string) {
+      setTimeout(() => this.emit({ type: "ready" }), 0);
+    }
+    addEventListener(type: string, listener: (event: { data: unknown }) => void): void {
+      if (type === "message") this.listeners.push(listener);
+    }
+    postMessage(request: unknown): void {
+      requests.push(request);
+      setTimeout(() =>
+        this.emit({ type: "result", wasm: atContext.wasm, meta, moduleSource: "/* module */" }),
+      );
+    }
+    terminate(): void {}
+    private emit(data: unknown): void {
+      for (const listener of this.listeners) listener({ data });
+    }
+  }
+  (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+  try {
+    const processor = {
+      ...tone,
+      worklet: {
+        ...tone.worklet,
+        moduleUrl: "/assets/tone.worklet.js",
+        wasmUrl: "/assets/tone.wasm",
+        processorName: "tone__abc",
+        displayName: "tone",
+        bakedSampleRate: 48000,
+        compileWorkerUrl: "/assets/tone.compile-worker.js",
+      },
+    };
+    const created = createNode({ ...h.context, sampleRate: 44100 } as never, processor);
+    for (let tries = 0; h.constructed.length === 0 && tries < 200; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    h.fireReady();
+    liveNodes.push(await created);
+    expect(requests).toEqual([
+      {
+        type: "compile",
+        id: 1,
+        sampleRate: 44100,
+        renderQuantumSize: 128,
+        processorName: "tone__abc@44100x128",
+      },
+    ]);
+    // The compiled module is registered from a Blob; the build's module and WASM are untouched.
+    expect(h.addModuleCalls).toEqual([expect.stringMatching(/^blob:/)]);
+    expect(h.fetchCalls).toEqual([]);
+    expect(h.constructed[0]!.name).toBe("tone__abc@44100x128");
+    const options = h.constructed[0]!.options.processorOptions as {
+      eventRings: Array<{ wasmRingBase: number }>;
+    };
+    expect(options.eventRings[0]!.wasmRingBase).toBe(
+      meta.layout.regions.eventRings.slots.meter!.base,
+    );
+  } finally {
+    delete (globalThis as { Worker?: unknown }).Worker;
+    h.cleanup();
+  }
+});
+
+test("a node compiled for another rate labels its snapshots with the compiled schema hash", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]));
+  // A buffer sized from the rate: the 44.1 kHz slot schema differs from the build's.
+  const delay = defineProcessor((ctx) => {
+    const out = audioOutput({ channels: 1, name: "main" });
+    state.buffer.f32({ size: Math.round(ctx.sampleRate / 100) }).named("line");
+    return { process: () => forSample((i) => out.ch(0).at(i).write(f32(0))) };
+  });
+  const atContext = await compile(delay, { sampleRate: 44100 });
+  expect(atContext.schemaHash).not.toBe(delay.schemaHash);
+  class FakeWorker {
+    private listeners: Array<(event: { data: unknown }) => void> = [];
+    constructor() {
+      setTimeout(() => this.emit({ type: "ready" }), 0);
+    }
+    addEventListener(type: string, listener: (event: { data: unknown }) => void): void {
+      if (type === "message") this.listeners.push(listener);
+    }
+    postMessage(): void {
+      setTimeout(() =>
+        this.emit({
+          type: "result",
+          wasm: atContext.wasm,
+          meta: extractWorkletMeta(
+            atContext.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
+          ),
+          moduleSource: "/* module */",
+          schemaHash: atContext.schemaHash,
+        }),
+      );
+    }
+    terminate(): void {}
+    private emit(data: unknown): void {
+      for (const listener of this.listeners) listener({ data });
+    }
+  }
+  (globalThis as { Worker?: unknown }).Worker = FakeWorker;
+  try {
+    const processor = {
+      ...delay,
+      worklet: {
+        ...delay.worklet,
+        moduleUrl: "/assets/delay.worklet.js",
+        wasmUrl: "/assets/delay.wasm",
+        processorName: "delay__abc",
+        bakedSampleRate: 48000,
+        compileWorkerUrl: "/assets/delay.compile-worker.js",
+      },
+    };
+    const created = createNode({ ...h.context, sampleRate: 44100 } as never, processor);
+    for (let tries = 0; h.constructed.length === 0 && tries < 200; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    h.fireReady();
+    const node = await created;
+    liveNodes.push(node);
+    autoAnswer(h.lastNode!, { applied: [], skipped: [], missing: [] });
+    const blob = await node.snapshot();
+    expect(decodeSnapshot(blob).schemaHash).toBe(atContext.schemaHash);
+    // The compiled hash is also restore's migration target: its own blob needs no migration.
+    const restored = await node.restore(blob);
+    expect(restored.ok).toBe(true);
+  } finally {
+    delete (globalThis as { Worker?: unknown }).Worker;
     h.cleanup();
   }
 });
@@ -3072,6 +3303,29 @@ test("node.midi.<in>.send: postMessage transport encodes to wire bytes and deliv
     expect(posted).toEqual([
       { kind: "midi", ringIndex: 0, item: { status: 0x93, data1: 60, data2: 100, atSample: 0 } },
     ]);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("node.midi.<in>.send clamps a future atTime to the last sample of the node's render quantum", async () => {
+  const h = installMockGlobals(new Uint8Array([0, 1, 2]), { crossOriginIsolated: "deleted" });
+  try {
+    const context = { ...h.context, renderQuantumSize: 32, sampleRate: 48000, currentTime: 0 };
+    const node = await startCreate(
+      () =>
+        createNode(
+          context as never,
+          makeMockProcessor({ midiRings: [midiInFixture], bakedRenderQuantumSize: 32 }),
+        ),
+      h.fireReady,
+    );
+    const posted: Array<{ item: { atSample: number } }> = [];
+    h.lastNode!.port.postMessage = (m: unknown) => posted.push(m as { item: { atSample: number } });
+    const noteOn = { type: "noteOn" as const, channel: 0, note: 60, velocity: 100 };
+    node.midi["in"]!.send(noteOn, 10 / 48000);
+    node.midi["in"]!.send(noteOn, 1);
+    expect(posted.map((m) => m.item.atSample)).toEqual([10, 31]);
   } finally {
     h.cleanup();
   }

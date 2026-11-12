@@ -47,6 +47,15 @@
       "development": "./src/dev.ts",
       "import": "./dist/dev.mjs"
     },
+    "./compile-worker": {
+      "types": "./src/compile-worker.ts",
+      "development": "./src/compile-worker.ts",
+      "import": "./dist/compile-worker.mjs"
+    },
+    "./worklet-runtime": {
+      "types": "./src/worklet-runtime.d.ts",
+      "import": "./dist/worklet-runtime.mjs"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -66,6 +75,14 @@
       "./dev": {
         "types": "./dist/dev.d.mts",
         "import": "./dist/dev.mjs"
+      },
+      "./compile-worker": {
+        "types": "./dist/compile-worker.d.mts",
+        "import": "./dist/compile-worker.mjs"
+      },
+      "./worklet-runtime": {
+        "types": "./dist/worklet-runtime.d.mts",
+        "import": "./dist/worklet-runtime.mjs"
       },
       "./package.json": "./package.json"
     },
@@ -88,6 +105,7 @@
     "@typescript/native-preview": "7.0.0-dev.20260509.2",
     "@unworklet/unplugin": "workspace:^",
     "bumpp": "^11.1.0",
+    "esbuild": "catalog:",
     "fast-check": "catalog:",
     "playwright": "catalog:",
     "typescript": "catalog:"

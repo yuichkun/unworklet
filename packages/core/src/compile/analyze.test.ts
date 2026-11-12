@@ -205,6 +205,32 @@ test("`analyze`: constant-truthy midiEmitIf cond literal inside forSample produc
   expect(diags[0]!.message).toMatch(/out/);
 });
 
+test("`analyze`: a sample loop inside forIndex loops is still checked for constant-truthy emits", () => {
+  // forIndex runs its body once per index per call, so a forSample nested in it
+  // still emits at sample rate — count times over.
+  const sampleLoop = (graph: CapturedGraph): AstNode => graph.statements[0]!;
+  const nested = (inner: AstNode): AstNode => ({
+    kind: "forIndex",
+    count: 2,
+    depth: 0,
+    body: [{ kind: "forIndex", count: 3, depth: 1, body: [inner] }],
+  });
+  for (const graph of [constantTruthyEmitInForSample, constantTruthyMidiEmitInForSample]) {
+    const diags = analyze({ ...graph, statements: [nested(sampleLoop(graph))] });
+    expect(diags.map((d) => d.id)).toEqual(["constant-truthy-emitif"]);
+  }
+});
+
+test("`analyze`: a constant-truthy emit in a forIndex outside every sample loop produces no error", () => {
+  // Once per index per call, like writing the emit `count` times at the top level.
+  const emit = (constantTruthyEmitInForSample.statements[0] as { body: AstNode[] }).body[0]!;
+  const diags = analyze({
+    ...constantTruthyEmitInForSample,
+    statements: [{ kind: "forIndex", count: 4, depth: 0, body: [emit] }],
+  });
+  expect(diags).toEqual([]);
+});
+
 test("`analyze`: constant-truthy midiEmitIf cond literal at per-block top level produces no error", () => {
   // A `midiEmitIf(true)` outside `forSample` (= handler / per-block top) is the
   // canonical 1:1 projection form and must not be rejected.

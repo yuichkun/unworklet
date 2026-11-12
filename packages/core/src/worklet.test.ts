@@ -17,12 +17,13 @@ import "./dsl/primitives.ts"; // method form (= `.mul`) registration side-effect
 import { expect, test, vi } from "vite-plus/test";
 
 import { compile } from "./compile/index.ts";
-import { CAPACITY_16, SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { CAPACITY_16, DEFAULT_RENDER_QUANTUM_SIZE } from "./dsl/constants.ts";
 import { egressPoolBufferBytes } from "./egressFrame.ts";
 import { f32, i32 } from "./dsl/constructors.ts";
 import { audioInput, audioOutput, event, param } from "./dsl/declarations.ts";
 import { forSample } from "./dsl/loop.ts";
 import { defineProcessor } from "./processor.ts";
+import { extractWorkletMeta, makeWorkletNamespaceFromMeta } from "./worklet.ts";
 
 type CollectedMessage = unknown;
 
@@ -230,16 +231,16 @@ test("`process(self, ...)` reuses pre-bound memory views across consecutive call
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
 
-  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const input = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5);
   const inputs = [[input]];
-  const outputsA = [[new Float32Array(SAMPLES_PER_BLOCK)]];
-  const outputsB = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputsA = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
+  const outputsB = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   const parameters = { gain: new Float32Array([2]) };
 
   monoGain.worklet.process(self, inputs, outputsA, parameters);
   monoGain.worklet.process(self, inputs, outputsB, parameters);
 
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(outputsB[0][0]![i]).toBeCloseTo(outputsA[0][0]![i]!);
     expect(outputsB[0][0]![i]).toBeCloseTo(1.0);
   }
@@ -250,8 +251,8 @@ test("`process(self, ...)` returns true to keep the node alive", async () => {
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
 
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   const parameters = { gain: new Float32Array([0.5]) };
 
   const ret = monoGain.worklet.process(self, inputs, outputs, parameters);
@@ -263,15 +264,15 @@ test("`process` runs WASM: input × k-rate gain (length-1 broadcast) = output", 
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
 
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   // k-rate: length-1, broadcast to every sample
   const parameters = { gain: new Float32Array([2]) };
 
   monoGain.worklet.process(self, inputs, outputs, parameters);
 
   const out0 = outputs[0][0]!;
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(out0[i]).toBeCloseTo(1.0);
   }
 });
@@ -281,23 +282,25 @@ test("`process` runs WASM: input × a-rate gain (length-128 per-sample) = output
   const self = makeMockSelf();
   stereoGain.worklet.initialize(self, { processorOptions: { wasm } });
 
-  const inputCh0 = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
-  const inputCh1 = new Float32Array(SAMPLES_PER_BLOCK).fill(0.25);
-  const gainAutomation = new Float32Array(SAMPLES_PER_BLOCK);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
-    gainAutomation[i] = i / SAMPLES_PER_BLOCK; // 0 .. ~1
+  const inputCh0 = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5);
+  const inputCh1 = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.25);
+  const gainAutomation = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE);
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
+    gainAutomation[i] = i / DEFAULT_RENDER_QUANTUM_SIZE; // 0 .. ~1
   }
   const inputs = [[inputCh0, inputCh1]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK), new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [
+    [new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE), new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)],
+  ];
   const parameters = { gain: gainAutomation };
 
   stereoGain.worklet.process(self, inputs, outputs, parameters);
 
   const outCh0 = outputs[0][0]!;
   const outCh1 = outputs[0][1]!;
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
-    expect(outCh0[i]).toBeCloseTo(0.5 * (i / SAMPLES_PER_BLOCK));
-    expect(outCh1[i]).toBeCloseTo(0.25 * (i / SAMPLES_PER_BLOCK));
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
+    expect(outCh0[i]).toBeCloseTo(0.5 * (i / DEFAULT_RENDER_QUANTUM_SIZE));
+    expect(outCh1[i]).toBeCloseTo(0.25 * (i / DEFAULT_RENDER_QUANTUM_SIZE));
   }
 });
 
@@ -306,15 +309,15 @@ test("`process` fills param view with declared default when host passes length-0
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
 
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(1)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(1)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   // length-0 = no automation. Default `0.5` from declaration should apply.
   const parameters = { gain: new Float32Array(0) };
 
   monoGain.worklet.process(self, inputs, outputs, parameters);
 
   const out0 = outputs[0][0]!;
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(out0[i]).toBeCloseTo(0.5);
   }
 });
@@ -326,14 +329,14 @@ test("`process` handles a disconnected input port (= empty channel array) as sil
 
   // Disconnected = port has zero channels in `inputs[portIdx]`.
   const inputs = [[]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(99)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(99)]];
   const parameters = { gain: new Float32Array([0.5]) };
 
   monoGain.worklet.process(self, inputs, outputs, parameters);
 
   const out0 = outputs[0][0]!;
   // Silent input × gain(0.5) = silence.
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(out0[i]).toBeCloseTo(0);
   }
 });
@@ -348,14 +351,16 @@ test("`process` up-mixes a mono input across a stereo-declared port (no left-onl
   const self = makeMockSelf();
   stereoGain.worklet.initialize(self, { processorOptions: { wasm } });
 
-  const mono = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const mono = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5);
   const inputs = [[mono]]; // ONE channel feeding a 2-channel input port
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK), new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [
+    [new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE), new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)],
+  ];
   const parameters = { gain: new Float32Array([2]) };
 
   stereoGain.worklet.process(self, inputs, outputs, parameters);
 
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(outputs[0][0]![i]).toBeCloseTo(1.0); // left  = 0.5 × 2
     expect(outputs[0][1]![i]).toBeCloseTo(1.0); // right = up-mixed 0.5 × 2 (currently 0)
   }
@@ -369,15 +374,15 @@ test("`process` on path-β escape hatch with missing `initialize(self, opts)` po
   // structured event once and then continues emitting silence.
   const self = makeMockSelf();
   // Note: NO `initialize(...)` call — emulates the path-β bug.
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(1)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(99)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(1)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(99)]];
   const parameters = { gain: new Float32Array([0.5]) };
 
   const ret = monoGain.worklet.process(self, inputs, outputs, parameters);
 
   expect(ret).toBe(true);
   // Silenced (= no throw on the audio thread).
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(outputs[0][0]![i]).toBe(0);
   }
   expect(self.messages).toContainEqual({
@@ -416,15 +421,15 @@ test("`process` catches WASM trap inside state.process() and posts `wasm-trap` +
     throw new Error("RuntimeError: out of bounds memory access");
   };
 
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(99)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(99)]];
   const parameters = { gain: new Float32Array([1]) };
 
   const ret = monoGain.worklet.process(self, inputs, outputs, parameters);
 
   expect(ret).toBe(true);
   // Silenced (= 00-foundations.md §5.1 invariant 3 + 05-client.md §4).
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(outputs[0][0]![i]).toBe(0);
   }
   const errorMessages = self.messages.slice(initialMessageCount);
@@ -439,7 +444,7 @@ test("`process` catches WASM trap inside state.process() and posts `wasm-trap` +
   // (= node stays connected with silence output, single failure event).
   outputs[0][0]!.fill(99);
   monoGain.worklet.process(self, inputs, outputs, parameters);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(outputs[0][0]![i]).toBe(0);
   }
   const errorMessagesAfter = self.messages.slice(initialMessageCount);
@@ -473,24 +478,61 @@ test("`process` on block-length mismatch emits silence + posts `block-length-mis
   expect(errorMessages).toContainEqual({
     kind: "error",
     code: "block-length-mismatch",
-    expected: SAMPLES_PER_BLOCK,
+    expected: DEFAULT_RENDER_QUANTUM_SIZE,
     received: wrongLen,
   });
 
   // docs/04-worklet-runtime.md §3 + §8 + Q75 = uniform "silence on every
   // quantum after first detection, until disposed". A subsequent quantum
-  // where the host returns to SAMPLES_PER_BLOCK must STILL emit silence
+  // where the host returns to DEFAULT_RENDER_QUANTUM_SIZE must STILL emit silence
   // (= node is permanently silenced + connected, not transiently).
-  const goodInputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(1)]];
-  const goodOutputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(99)]];
+  const goodInputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(1)]];
+  const goodOutputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(99)]];
   monoGain.worklet.process(self, goodInputs, goodOutputs, parameters);
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(goodOutputs[0][0]![i]).toBe(0);
   }
   // And no second `block-length-mismatch` event is posted (= single
   // event for the lifetime of the node, exact same shape as wasm-trap).
   const errorMessagesAfter = self.messages.slice(initialMessageCount);
   expect(errorMessagesAfter).toHaveLength(1);
+});
+
+test("a namespace built from a quantum-32 compile processes 32-sample blocks", async () => {
+  const result = await compile(monoGain, { renderQuantumSize: 32 });
+  const ns = makeWorkletNamespaceFromMeta(
+    extractWorkletMeta(result.graph as unknown as Parameters<typeof extractWorkletMeta>[0]),
+  );
+  expect(ns.bakedRenderQuantumSize).toBe(32);
+  const self = makeMockSelf();
+  ns.initialize(self, { processorOptions: { wasm: result.wasm } });
+  const inputs = [[new Float32Array(32).fill(1)]];
+  const outputs = [[new Float32Array(32)]];
+  ns.process(self, inputs, outputs, { gain: new Float32Array([0.5]) });
+  expect(Array.from(outputs[0]![0]!)).toEqual(Array.from({ length: 32 }, () => 0.5));
+});
+
+test("a quantum-32 namespace reports block-length-mismatch with expected 32 on a 128-sample block", async () => {
+  const result = await compile(monoGain, { renderQuantumSize: 32 });
+  const ns = makeWorkletNamespaceFromMeta(
+    extractWorkletMeta(result.graph as unknown as Parameters<typeof extractWorkletMeta>[0]),
+  );
+  const self = makeMockSelf();
+  ns.initialize(self, { processorOptions: { wasm: result.wasm } });
+  const before = self.messages.length;
+  ns.process(self, [[new Float32Array(128)]], [[new Float32Array(128)]], {
+    gain: new Float32Array([1]),
+  });
+  expect(self.messages.slice(before)).toContainEqual({
+    kind: "error",
+    code: "block-length-mismatch",
+    expected: 32,
+    received: 128,
+  });
+});
+
+test("the eager namespace of defineProcessor is sized for 128-sample blocks", () => {
+  expect(monoGain.worklet.bakedRenderQuantumSize).toBe(128);
 });
 
 test("`initialize` without `processorOptions.module` or `.wasm` posts a structured init-error", async () => {
@@ -515,12 +557,12 @@ test("`process` with no input port connected (= empty inputs[port]) emits silenc
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
   // Host hands us a length-0 outer array → portInput defaults to [].
   const inputs: Float32Array[][] = [];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(7)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(7)]];
   const parameters = { gain: new Float32Array([2]) };
   monoGain.worklet.process(self, inputs, outputs, parameters);
   // Silent input × gain = silence (verified independently in another test);
   // here we just confirm the path executes without throwing.
-  for (let i = 0; i < SAMPLES_PER_BLOCK; i++) {
+  for (let i = 0; i < DEFAULT_RENDER_QUANTUM_SIZE; i++) {
     expect(outputs[0][0]![i]).toBeCloseTo(0);
   }
 });
@@ -531,11 +573,14 @@ test("`process` skips output channels the host did not provide", async () => {
   const self = makeMockSelf();
   stereoGain.worklet.initialize(self, { processorOptions: { wasm } });
   const inputs = [
-    [new Float32Array(SAMPLES_PER_BLOCK).fill(1), new Float32Array(SAMPLES_PER_BLOCK).fill(1)],
+    [
+      new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(1),
+      new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(1),
+    ],
   ];
   // Provide only 1 channel of output where the processor declares 2 — the
   // missing channel slot is `undefined` and must be skipped without throwing.
-  const outputs: Float32Array[][] = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0)]];
+  const outputs: Float32Array[][] = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0)]];
   const parameters = { gain: new Float32Array([1]) };
   expect(() => stereoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
 });
@@ -621,7 +666,7 @@ test("`process` handles a missing output port (= outputs outer array shorter tha
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5)]];
   // Host hands us an empty outputs outer array even though monoGain declares
   // 1 output port = `outputs[0]` is undefined → `?? []` kicks in.
   const outputs: Float32Array[][] = [];
@@ -666,9 +711,9 @@ test("publish copy (sab mode): due tick at end of quantum copies value to SAB vi
   });
 
   // threshold = round(48000 / 30) = 1600; after 13 blocks, 1664 ≥ 1600 = due
-  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const input = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5);
   const inputs = [[input]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   for (let b = 0; b < 13; b++) {
     publishProc.worklet.process(self, inputs, outputs, {});
   }
@@ -698,9 +743,9 @@ test("publish copy (postMessage fallback): each due tick dispatched individually
   // publish messages are asserted below.
   self.messages.length = 0;
 
-  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const input = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5);
   const inputs = [[input]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   for (let b = 0; b < 13; b++) {
     publishProc.worklet.process(self, inputs, outputs, {});
   }
@@ -731,9 +776,9 @@ test("publish copy: view unchanged when block is not yet due (= skip path)", asy
   });
 
   // 12 block = counter 1536 < 1600 = not due
-  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.5);
+  const input = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5);
   const inputs = [[input]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   for (let b = 0; b < 12; b++) {
     publishProc.worklet.process(self, inputs, outputs, {});
   }
@@ -746,8 +791,8 @@ test("publish copy: processor without publishBuffer skips the publish path entir
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   const parameters = { gain: new Float32Array([2]) };
   expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
 });
@@ -819,9 +864,9 @@ test("event ring copy (sab mode): WASM emit reflected into SAB header + slots vi
       ingressAccessBuffer: new SharedArrayBuffer(8),
     },
   });
-  const input = new Float32Array(SAMPLES_PER_BLOCK).fill(0.25);
+  const input = new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.25);
   const inputs = [[input]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   eventEmitProc.worklet.process(self, inputs, outputs, {});
 
   const headView = new Int32Array(eventRingsBuffer, 0, 3);
@@ -908,8 +953,8 @@ test("event ring copy (postMessage fallback): new emits ride the pooled egress f
   });
   self.messages.length = 0;
 
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.25)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   eventEmitProc.worklet.process(self, inputs, outputs, {});
 
   const frames = postedEgressFrames(self);
@@ -938,8 +983,8 @@ test("egress frame (postMessage): a starved pool skips the post and the backlog 
     },
   });
   self.messages.length = 0;
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.25)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
 
   // No pool buffer yet: the quantum emits (128 emits, drop-oldest to 16) but
   // nothing can be posted — and the lastSent anchors must stay untouched.
@@ -1007,8 +1052,8 @@ test("egress frame (postMessage): process does not allocate Uint8Array/DataView 
     },
   }) as typeof DataView;
 
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.25)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   try {
     for (let q = 0; q < 4; q++) {
       eventEmitProc.worklet.process(self, inputs, outputs, {});
@@ -1046,8 +1091,8 @@ test("egress frame (postMessage): the message envelope and transfer list are reu
   self.messages.length = 0;
   self.sent.length = 0;
 
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.25)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   eventEmitProc.worklet.process(self, inputs, outputs, {});
   eventEmitProc.worklet.process(self, inputs, outputs, {});
 
@@ -1126,8 +1171,8 @@ test("egress-recycle: malformed or stale tail acks are ignored without throwing 
     kind: "egress-buffer",
     buffer: new ArrayBuffer(egressPoolBufferBytes(eventRings, [])),
   });
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.25)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   eventEmitProc.worklet.process(self, inputs, outputs, {});
 
   expect(() => {
@@ -1167,8 +1212,8 @@ test("event ring copy: processor without eventRingsBuffer skips the event path e
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   const parameters = { gain: new Float32Array([2]) };
   expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
 });
@@ -1221,8 +1266,8 @@ test("message ring mirror (sab mode): main SAB push → process mirrors into WAS
   const slotsView = new Float32Array(messageRingsBuffer, 12);
   slotsView[0] = 42;
   Atomics.store(headerView, 0, 1); // head = 1
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   messageRecvProc.worklet.process(self, inputs, outputs, {});
   // After drain, the SAB tail must be committed to match head.
   expect(Atomics.load(headerView, 1)).toBe(1);
@@ -1260,8 +1305,8 @@ test("message ring mirror (sab mode): head acquire-load occurs before slot copy 
   const loadSpy = vi.spyOn(Atomics, "load");
   const setSpy = vi.spyOn(Uint8Array.prototype, "set");
   try {
-    const inputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
-    const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+    const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
+    const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
     messageRecvProc.worklet.process(self, inputs, outputs, {});
   } finally {
     vi.restoreAllMocks();
@@ -1278,8 +1323,8 @@ test("message ring mirror: processor without messageRingsBuffer skips the messag
   const { wasm } = await compile(monoGain);
   const self = makeMockSelf();
   monoGain.worklet.initialize(self, { processorOptions: { wasm } });
-  const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.5)]];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.5)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   const parameters = { gain: new Float32Array([2]) };
   expect(() => monoGain.worklet.process(self, inputs, outputs, parameters)).not.toThrow();
 });
@@ -1343,7 +1388,7 @@ test("message inject (postMessage): firePortMessage pushes payload to queue; pro
   // process injects the message into the WASM ring; onReceive calls captured.write(42);
   // at the end of the due quantum the publish path notifies main via port.postMessage.
   const inputs: Float32Array[][] = [];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   // publish at 30fps = 1600-sample period; 13 blocks trigger the due tick.
   for (let b = 0; b < 13; b++) {
     messagePostProc.worklet.process(self, inputs, outputs, {});
@@ -1379,7 +1424,7 @@ test("message inject (postMessage): malformed messages are dropped and never pus
   firePortMessage(self, { kind: "message", ringIndex: "not-a-number", payload: { slot: 3 } });
   // Run process and confirm no publish fires (empty queue → no inject → captured stays 0).
   const inputs: Float32Array[][] = [];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   for (let b = 0; b < 13; b++) {
     messagePostProc.worklet.process(self, inputs, outputs, {});
   }
@@ -1408,7 +1453,7 @@ test("message inject (postMessage): capacity overflow triggers WASM drop-oldest 
     firePortMessage(self, { kind: "message", ringIndex: 0, payload: { slot: i } });
   }
   const inputs: Float32Array[][] = [];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   messagePostProc.worklet.process(self, inputs, outputs, {});
   // Exactly one overflow notification must be posted at the end of the quantum.
   const overflowMessages = self.messages.filter(
@@ -1436,7 +1481,7 @@ test("message overflow notify (postMessage): no overflow notification posted whe
   // contain no "message-overflow" entry.
   firePortMessage(self, { kind: "message", ringIndex: 0, payload: { slot: 1 } });
   const inputs: Float32Array[][] = [];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   messagePostProc.worklet.process(self, inputs, outputs, {});
   // No additional push in the next quantum = overflow count unchanged.
   messagePostProc.worklet.process(self, inputs, outputs, {});
@@ -1472,7 +1517,7 @@ test("message inject (postMessage): process does not allocate DataView per quant
   }) as typeof DataView;
 
   const inputs: Float32Array[][] = [];
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   try {
     // Inject a message every quantum to ensure the inject path (field writes via
     // ring view) is always exercised. The queue drains each process() call, so
@@ -1577,7 +1622,7 @@ test("fallback MIDI rejects malformed port traffic, bounds a burst, and ignores 
     kind: "egress-buffer",
     buffer: new ArrayBuffer(egressPoolBufferBytes([], midiRings)),
   });
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   processor.worklet.process(self, [], outputs, {});
   expect(outputs[0]![0]![0]).toBe(19);
   expect(self.messages).toContainEqual({
@@ -1648,7 +1693,7 @@ test("snapshot restore reports unknown buffers and omitted persistent buffers wi
     skipped: [],
     missing: ["stored", "rate"],
   });
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   processor.worklet.process(self, [], outputs, {});
   expect(outputs[0]![0]![0]).toBe(440);
 });
@@ -1660,8 +1705,8 @@ for (const omitted of ["start", "addEventListener"] as const) {
     Reflect.deleteProperty(self.port, omitted);
     ioOnly.worklet.initialize(self, { processorOptions: { wasm } });
     expect(self.messages).toContainEqual({ kind: "ready" });
-    const inputs = [[new Float32Array(SAMPLES_PER_BLOCK).fill(0.25)]];
-    const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+    const inputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE).fill(0.25)]];
+    const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
     expect(ioOnly.worklet.process(self, inputs, outputs, {})).toBe(true);
     expect(outputs[0]![0]![0]).toBe(0.25);
   });
@@ -1797,7 +1842,7 @@ test("restore skips prototype-property names without abandoning other valid slot
     skipped: ["constructor", "__proto__"],
     missing: [],
   });
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   processor.worklet.process(self, [], outputs, {});
   expect(outputs[0]![0]![0]).toBe(2);
 });
@@ -1876,7 +1921,7 @@ test("malformed typed-array and scalar message fields do not trap the audio proc
     ringIndex: 0,
     payload: { samples: null, value: "invalid" },
   });
-  const outputs = [[new Float32Array(SAMPLES_PER_BLOCK)]];
+  const outputs = [[new Float32Array(DEFAULT_RENDER_QUANTUM_SIZE)]];
   expect(processor.worklet.process(self, [], outputs, {})).toBe(true);
   expect(outputs[0]![0]!.every(Number.isFinite)).toBe(true);
   firePortMessage(self, {

@@ -20,7 +20,7 @@ import type { Node, TypedArrayFieldRef } from "../types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────
 // audio-sample-offset-out-of-range (Q68): JS-literal sample offset outside
-// [0, SAMPLES_PER_BLOCK - 1] (= 0..127) at an audio I/O / param `.at(k)`.
+// [0, DEFAULT_RENDER_QUANTUM_SIZE - 1] (= 0..127) at an audio I/O / param `.at(k)`.
 // ─────────────────────────────────────────────────────────────────────────
 
 test("audioInput .at(literal) above 127 is a capture-time error", () => {

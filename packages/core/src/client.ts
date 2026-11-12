@@ -28,7 +28,8 @@ import type {
   UnworkletNode,
 } from "./types.ts";
 import { midiEventToWire, wireToMidiEvent } from "./midiWire.ts";
-import { SAMPLES_PER_BLOCK } from "./dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "./dsl/constants.ts";
+import { compileForContext } from "./runtimeCompile.ts";
 import {
   EGRESS_HEADER_BYTES,
   EGRESS_POOL_COUNT,
@@ -324,6 +325,23 @@ const awaitReady = (node: AudioWorkletNode): Promise<void> =>
     }
   });
 
+/** Rate a compile targets when neither the context nor the namespace names one. */
+const DEFAULT_COMPILE_SAMPLE_RATE = 48000;
+
+/** "44100 Hz with 128-sample render quanta" — a compile target in error messages. */
+const describeTarget = (sampleRate: number, renderQuantumSize: number): string =>
+  `${sampleRate} Hz with ${renderQuantumSize}-sample render quanta`;
+
+/**
+ * Samples per render quantum of a context: `renderQuantumSize` where the engine
+ * exposes it (a context created with `renderSizeHint`), else the Web Audio
+ * default of 128.
+ */
+const contextRenderQuantumOf = (context: BaseAudioContext): number => {
+  const size = (context as unknown as { renderQuantumSize?: unknown }).renderQuantumSize;
+  return typeof size === "number" ? size : DEFAULT_RENDER_QUANTUM_SIZE;
+};
+
 /**
  * Contexts already warned about an unavailable SharedArrayBuffer, so the dev
  * notice fires once per AudioContext instead of once per node.
@@ -335,11 +353,10 @@ export async function createNode<C>(
   processor: CompiledProcessor<C>,
   options?: CreateNodeOptions<C>,
 ): Promise<UnworkletNode<C>> {
-  const ns = processor.worklet;
-  const moduleUrl = ns.moduleUrl;
-  const wasmUrl = ns.wasmUrl;
-  const processorName = ns.processorName;
-  const displayName = ns.displayName;
+  const built = processor.worklet;
+  const moduleUrl = built.moduleUrl;
+  const wasmUrl = built.wasmUrl;
+  const displayName = built.displayName;
   if (!moduleUrl) {
     throw new Error(
       "unworklet: createNode() requires processor.worklet.moduleUrl — import via `?worklet` or supply equivalent bundler URLs",
@@ -350,38 +367,74 @@ export async function createNode<C>(
       "unworklet: createNode() requires processor.worklet.wasmUrl — import via `?worklet` or supply equivalent bundler URLs",
     );
   }
-  if (!processorName) {
+  if (!built.processorName) {
     throw new Error(
       "unworklet: createNode() requires processor.worklet.processorName — import via `?worklet` or supply equivalent bundler URLs",
     );
   }
 
-  // The `?worklet` WASM bakes rate-dependent coefficients at build time, so a
-  // context running at a different rate would detune the output (and can push a
-  // coefficient-dependent IIR out of its stable region). Reject early. The future
-  // recompile-at-rate path replaces this throw with a main-thread recompile at
-  // `context.sampleRate` — `bakedSampleRate` on the namespace is the seam.
-  const bakedSampleRate = ns.bakedSampleRate;
-  const contextSampleRate = (context as unknown as { sampleRate?: number }).sampleRate;
-  if (
+  // The WASM fixes its compile target: rate-dependent coefficients (a filter's
+  // `tan(pi*fc/sr)`, a delay length, a phase increment) and the samples per call,
+  // which size its I/O scratch and loops (the worklet runtime silences the node on
+  // any other block length). A context created with a `renderSizeHint` renders
+  // `renderQuantumSize` samples per call (absent on engines without the hint = the
+  // Web Audio default of 128). A field the namespace lacks is not checked.
+  const bakedSampleRate = built.bakedSampleRate;
+  const bakedRenderQuantumSize = built.bakedRenderQuantumSize;
+  const contextSampleRateRaw = (context as unknown as { sampleRate?: unknown }).sampleRate;
+  const contextSampleRate =
+    typeof contextSampleRateRaw === "number" ? contextSampleRateRaw : undefined;
+  const contextRenderQuantumSize = contextRenderQuantumOf(context);
+  const rateDiffers =
     bakedSampleRate !== undefined &&
-    typeof contextSampleRate === "number" &&
-    contextSampleRate !== bakedSampleRate
-  ) {
-    throw new Error(
-      `unworklet: createNode() — this processor was compiled for ${bakedSampleRate} Hz but the ` +
-        `AudioContext runs at ${contextSampleRate} Hz. Its coefficients are baked at build time, so ` +
-        `running it at a different rate would detune the output. Create the node on an AudioContext at ` +
-        `${bakedSampleRate} Hz (e.g. \`new AudioContext({ sampleRate: ${bakedSampleRate} })\`). ` +
-        `Recompiling at the context rate is not yet supported.`,
-    );
-  }
+    contextSampleRate !== undefined &&
+    contextSampleRate !== bakedSampleRate;
+  const quantumDiffers =
+    bakedRenderQuantumSize !== undefined && contextRenderQuantumSize !== bakedRenderQuantumSize;
 
-  await addModuleOnce(
-    context as unknown as { audioWorklet: { addModule: (url: string) => Promise<void> } },
-    moduleUrl,
-  );
-  const wasmModule = await fetchAndCompileWasm(wasmUrl);
+  let ns = built;
+  let wasmModule: WebAssembly.Module;
+  // The slot schema this node's snapshots and restores are keyed to: the
+  // processor's own, or that of the declarations compiled for this context (a
+  // declaration sized from the rate or quantum changes it).
+  let nodeSchemaHash = processor.schemaHash;
+  if (rateDiffers || quantumDiffers) {
+    const target = {
+      sampleRate: contextSampleRate ?? bakedSampleRate ?? DEFAULT_COMPILE_SAMPLE_RATE,
+      renderQuantumSize: contextRenderQuantumSize,
+    };
+    if (built.compileWorkerUrl === undefined) {
+      const compiledFor = describeTarget(
+        bakedSampleRate ?? target.sampleRate,
+        bakedRenderQuantumSize ?? target.renderQuantumSize,
+      );
+      throw new Error(
+        `unworklet: createNode() — this processor was compiled for ${compiledFor}, but the ` +
+          `AudioContext runs at ${describeTarget(target.sampleRate, target.renderQuantumSize)}. ` +
+          `Its coefficients and loop lengths are fixed at compile time, and it carries no compile ` +
+          `worker (\`worklet.compileWorkerUrl\`) to rebuild it for this context. Import it with ` +
+          `\`?worklet\` (@unworklet/unplugin builds one), compile it for the context ` +
+          `(\`compile(processor, { sampleRate, renderQuantumSize })\`, or ` +
+          `\`compileSource(source, { sampleRate, renderQuantumSize })\` from @unworklet/lang/browser), ` +
+          `or create the context at ${compiledFor}.`,
+      );
+    }
+    // Compile for the context in the processor's compile worker; the returned
+    // namespace describes the compiled layout, so every descriptor below is its.
+    const compiled = await compileForContext(context, built, target);
+    ns = compiled.ns;
+    wasmModule = compiled.wasmModule;
+    nodeSchemaHash = compiled.schemaHash;
+  } else {
+    await addModuleOnce(
+      context as unknown as { audioWorklet: { addModule: (url: string) => Promise<void> } },
+      moduleUrl,
+    );
+    wasmModule = await fetchAndCompileWasm(wasmUrl);
+  }
+  const processorName = ns.processorName!;
+  // Samples per process() call of this node (bounds scheduled atSample offsets).
+  const nodeRenderQuantumSize = ns.bakedRenderQuantumSize ?? contextRenderQuantumSize;
 
   const inputs = ns.inputs;
   const outputs = ns.outputs;
@@ -856,7 +909,7 @@ export async function createNode<C>(
     if (atTime === undefined) return 0;
     const offset = Math.round((atTime - ctxTimeOf()) * sampleRateOf());
     if (offset <= 0) return 0;
-    return offset >= SAMPLES_PER_BLOCK ? SAMPLES_PER_BLOCK - 1 : offset;
+    return offset >= nodeRenderQuantumSize ? nodeRenderQuantumSize - 1 : offset;
   };
 
   // Decode a single 8-byte wire slot (= status/data1/data2 + atSample). For
@@ -1840,7 +1893,7 @@ export async function createNode<C>(
         resolve: (slots) =>
           resolve(
             encodeSnapshot(
-              processor.schemaHash,
+              nodeSchemaHash,
               profile ?? null,
               currentSnapshotSlots(slots, settings),
               processor.id ?? null,
@@ -1905,7 +1958,7 @@ export async function createNode<C>(
     }
     // Migrate the blob to the current schema first (`01-dsl.md` §8.3). A throwing
     // migrate step fails the whole restore = the live node keeps its current state.
-    const migrated = runMigrations(blob, processor.migrations ?? [], processor.schemaHash);
+    const migrated = runMigrations(blob, processor.migrations ?? [], nodeSchemaHash);
     if (!migrated.ok) {
       return {
         ok: false,
@@ -2088,7 +2141,7 @@ export async function createNode<C>(
       node: unworkletNode as UnworkletNode<unknown>,
       processorName,
       displayName: displayName ?? processorName,
-      schemaHash: processor.schemaHash,
+      schemaHash: nodeSchemaHash,
       midiPorts: midiRings.map((r) => ({ name: r.name, direction: r.direction })),
       devDump,
     };

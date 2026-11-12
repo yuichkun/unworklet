@@ -17,7 +17,7 @@
  */
 
 import type { AstNode, CapturedGraph } from "./ast.ts";
-import { everyNResetWords, type Layout } from "./layout.ts";
+import { everyNResetWords, layoutRenderQuantum, type Layout } from "./layout.ts";
 import { remainderFunction } from "./emit-remainder.ts";
 import { formatVerifyViolations, verifyRealtimeSafe } from "./verify.ts";
 import type { BufferElementType, ScalarType } from "../types.ts";
@@ -29,8 +29,12 @@ const BYTES_PER_F32 = 4;
 const BYTES_PER_F64 = 8;
 const BYTES_PER_I32 = 4;
 const BYTES_PER_I64 = 8;
-const CHANNEL_STRIDE_BYTES = 128 * BYTES_PER_F32;
 const PAGE_BYTES = 65536;
+
+/** Bytes between consecutive channels of one audio port: one call's samples. */
+function channelStrideBytes(layout: Layout): number {
+  return layoutRenderQuantum(layout) * BYTES_PER_F32;
+}
 type ProcessLocals = {
   types: number[];
   loops: Map<number, number>;
@@ -257,6 +261,7 @@ function collectTempLocals(graph: CapturedGraph, binaryen: BinaryenAPI): number[
         byId.set(s.tempId, s.valueType);
       } else if (
         s.kind === "forSample" ||
+        s.kind === "forIndex" ||
         s.kind === "everyNSamples" ||
         s.kind === "messageOnReceive" ||
         s.kind === "midiOnEvent"
@@ -279,8 +284,21 @@ export async function emit(
   layout: Layout,
   options: EmitOptions = {},
 ): Promise<Uint8Array> {
+  return emitWith((await import("binaryen")).default, graph, layout, options);
+}
+
+/**
+ * `emit` with a binaryen the caller already loaded. A bundled Web Worker imports
+ * binaryen statically and passes it here: a bundler's dynamic-import helper may
+ * assume a document, which a worker does not have.
+ */
+export function emitWith(
+  binaryen: BinaryenAPI,
+  graph: CapturedGraph,
+  layout: Layout,
+  options: EmitOptions = {},
+): Uint8Array {
   const sampleRate = options.sampleRate ?? DEFAULT_EMIT_SAMPLE_RATE;
-  const binaryen = (await import("binaryen")).default;
   const mod = new binaryen.Module();
   // buffer.copyFrom = memory.copy (= bulk-memory, Q31-c), SIMD = f32x4 (= §7).
   // Added on top of the default features (MVP) so that emitBinary can emit the opcodes.
@@ -372,11 +390,55 @@ export async function emit(
 }
 
 /**
+ * A counted loop: `counter` runs 0, step, 2·step, … while it is below `bound`
+ * (`forSample`: the render quantum and the stride; `forIndex`: the count and 1).
+ * Each nesting depth owns its counter local, read by `loopCounter` nodes.
+ */
+function emitCountedLoop(
+  depth: number,
+  bound: number,
+  step: number,
+  bodyNodes: readonly AstNode[],
+  layout: Layout,
+  mod: BinaryenModule,
+  binaryen: BinaryenAPI,
+): number {
+  const counterLocal = loopCounterLocal(mod, binaryen, depth);
+  const loopBody = bodyNodes.map((s) => emitStatement(s, layout, mod, binaryen));
+  // Depth 0 keeps the bare break/continue labels; nested levels get a per-depth
+  // suffix so a nested loop never aliases the outer targets. Label names are not
+  // in the WASM binary (branches encode as relative depths), so this is
+  // byte-identical to the single-loop form.
+  const brk = depth === 0 ? "break" : `break_${depth}`;
+  const cont = depth === 0 ? "continue" : `continue_${depth}`;
+  return mod.block(null, [
+    mod.local.set(counterLocal, mod.i32.const(0)),
+    mod.block(brk, [
+      mod.loop(
+        cont,
+        mod.block(null, [
+          mod.br_if(
+            brk,
+            mod.i32.ge_s(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(bound)),
+          ),
+          ...loopBody,
+          mod.local.set(
+            counterLocal,
+            mod.i32.add(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(step)),
+          ),
+          mod.br(cont),
+        ]),
+      ),
+    ]),
+  ]);
+}
+
+/**
  * publish scheduler emit (= sub-phase 7.3, `04-worklet-runtime.md` §7).
  *
  * For each state slot carrying a publish flag, inlined at the end of the process
- * function:
- * 1. counter = `i32.load(counterOffset) + SAMPLES_PER_BLOCK`
+ * function (`quantum` = samples per call):
+ * 1. counter = `i32.load(counterOffset) + quantum`
  * 2. if local >= threshold:
  *    - copy the state value into publishShared (= per-type load + store)
  *    - i32.store(versionOffset, i32.load(versionOffset) + 1)
@@ -384,7 +446,12 @@ export async function emit(
  *    else:
  *    - i32.store(counterOffset, local)
  *
- * threshold = `Math.round(sampleRate / rateFps)` = build-time const fold.
+ * threshold = `max(1, Math.round(sampleRate / rateFps))` = build-time const fold.
+ * When one call spans more than a period (quantum > threshold), the slot is due
+ * on every call and `local - threshold` would grow by `quantum - threshold` each
+ * call until it overflows; the due path then keeps `local % threshold` instead.
+ * At quantum <= threshold both forms are equal (local < 2 * threshold), so the
+ * subtraction is kept there.
  */
 function emitPublishScheduler(
   graph: CapturedGraph,
@@ -394,6 +461,7 @@ function emitPublishScheduler(
   binaryen: BinaryenAPI,
 ): number[] {
   const counterLocal = allocateLocal(mod, binaryen.i32);
+  const quantum = layoutRenderQuantum(layout);
   const blocks: number[] = [];
   for (const decl of graph.declarations) {
     if (decl.kind !== "state" || decl.publish === undefined) continue;
@@ -406,7 +474,13 @@ function emitPublishScheduler(
       throw new Error(`unknown publish slot: ${decl.name}`);
     }
     const versionOffset = counterOffset + 4;
-    const threshold = Math.round(sampleRate / decl.publish.rateFps);
+    // At least 1: a 0 threshold (rateFps above twice the rate) would make the
+    // remainder below divide by zero.
+    const threshold = Math.max(1, Math.round(sampleRate / decl.publish.rateFps));
+    const carry = (counter: number): number =>
+      quantum > threshold
+        ? mod.i32.rem_s(counter, mod.i32.const(threshold))
+        : mod.i32.sub(counter, mod.i32.const(threshold));
 
     // per-type load / store (= types carrying a publish flag are restricted to f32 / i32 / bool by Q42)
     const loadValue =
@@ -420,17 +494,17 @@ function emitPublishScheduler(
 
     blocks.push(
       mod.block(null, [
-        // local counterLocal = i32.load(counterOffset) + SAMPLES_PER_BLOCK
+        // local counterLocal = i32.load(counterOffset) + quantum
         mod.local.set(
           counterLocal,
           mod.i32.add(
             mod.i32.load(0, BYTES_PER_I32, mod.i32.const(counterOffset)),
-            mod.i32.const(128),
+            mod.i32.const(quantum),
           ),
         ),
         mod.if(
           mod.i32.ge_s(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(threshold)),
-          // due path: copy + version increment + counter -= threshold
+          // due path: copy + version increment + carry the counter past the threshold
           mod.block(null, [
             storeValueFn(loadValue),
             mod.i32.store(
@@ -446,7 +520,7 @@ function emitPublishScheduler(
               0,
               BYTES_PER_I32,
               mod.i32.const(counterOffset),
-              mod.i32.sub(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(threshold)),
+              carry(mod.local.get(counterLocal, binaryen.i32)),
             ),
           ]),
           // not due path: just save the new counter
@@ -1484,7 +1558,7 @@ function emitExpressionInScope(
       if (portBase === undefined) {
         throw new Error(`unknown audioInput port: ${node.portName}`);
       }
-      const channelBase = portBase + node.channel * CHANNEL_STRIDE_BYTES;
+      const channelBase = portBase + node.channel * channelStrideBytes(layout);
       const ptr = mod.i32.add(
         mod.i32.const(channelBase),
         mod.i32.mul(
@@ -1575,6 +1649,7 @@ function emitExpressionInScope(
       return emitMidiSysexLength(node, layout, mod, binaryen);
     case "audioOutWrite":
     case "forSample":
+    case "forIndex":
     case "stateStore":
     case "eventEmitIf":
     case "messageOnReceive":
@@ -1658,7 +1733,7 @@ function emitStatementInScope(
       if (portBase === undefined) {
         throw new Error(`unknown audioOutput port: ${node.portName}`);
       }
-      const channelBase = portBase + node.channel * CHANNEL_STRIDE_BYTES;
+      const channelBase = portBase + node.channel * channelStrideBytes(layout);
       const ptr = mod.i32.add(
         mod.i32.const(channelBase),
         mod.i32.mul(
@@ -1699,37 +1774,18 @@ function emitStatementInScope(
         mod.f32.store(0, BYTES_PER_F32, ptr, mod.select(getCond(), mod.f32.const(0), getValue())),
       ]);
     }
-    case "forSample": {
-      const depth = node.depth ?? 0;
-      const counterLocal = loopCounterLocal(mod, binaryen, depth);
-      const loopBody = node.body.map((s) => emitStatement(s, layout, mod, binaryen));
-      // Depth 0 keeps the bare break/continue labels; nested levels get a per-depth
-      // suffix so a nested loop never aliases the outer targets. Label names are not
-      // in the WASM binary (branches encode as relative depths), so this is
-      // byte-identical to the single-loop form.
-      const brk = depth === 0 ? "break" : `break_${depth}`;
-      const cont = depth === 0 ? "continue" : `continue_${depth}`;
-      return mod.block(null, [
-        mod.local.set(counterLocal, mod.i32.const(0)),
-        mod.block(brk, [
-          mod.loop(
-            cont,
-            mod.block(null, [
-              mod.br_if(
-                brk,
-                mod.i32.ge_s(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(128)),
-              ),
-              ...loopBody,
-              mod.local.set(
-                counterLocal,
-                mod.i32.add(mod.local.get(counterLocal, binaryen.i32), mod.i32.const(node.stride)),
-              ),
-              mod.br(cont),
-            ]),
-          ),
-        ]),
-      ]);
-    }
+    case "forSample":
+      return emitCountedLoop(
+        node.depth ?? 0,
+        layoutRenderQuantum(layout),
+        node.stride,
+        node.body,
+        layout,
+        mod,
+        binaryen,
+      );
+    case "forIndex":
+      return emitCountedLoop(node.depth, node.count, 1, node.body, layout, mod, binaryen);
     case "bufferWrite": {
       const base = layout.regions.buffers.slots[node.name];
       if (base === undefined) {
@@ -2804,6 +2860,7 @@ function collectUsedMathKinds(graph: CapturedGraph): Set<string> {
         visit(node.value);
         break;
       case "forSample":
+      case "forIndex":
       case "messageOnReceive":
       case "everyNSamples":
         node.body.forEach(visit);

@@ -16,7 +16,6 @@
  */
 
 import { compile } from "../../compile/index.ts";
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
 import type { CompiledProcessor } from "../../types.ts";
 
 export type RenderOptions = {
@@ -24,14 +23,16 @@ export type RenderOptions = {
   blocks?: number;
   /** Host sample rate baked into the WASM (default 48000). */
   sampleRate?: number;
-  /** Per-`audioInput` channel data, each spanning `blocks × SAMPLES_PER_BLOCK`. */
+  /** Samples per render quantum the WASM is compiled for (default 128). */
+  renderQuantumSize?: number;
+  /** Per-`audioInput` channel data, each spanning `blocks × renderQuantumSize`. */
   inputs?: Record<string, readonly Float32Array[]>;
   /** Per-`param` constant value, broadcast to every sample of every block. */
   params?: Record<string, number>;
 };
 
 export type RenderResult = {
-  /** Per-`audioOutput` channel data, each spanning `blocks × SAMPLES_PER_BLOCK`. */
+  /** Per-`audioOutput` channel data, each spanning `blocks × renderQuantumSize`. */
   outputs: Record<string, Float32Array[]>;
 };
 
@@ -42,9 +43,10 @@ export async function render<C>(
 ): Promise<RenderResult> {
   const blocks = options.blocks ?? 1;
   const sampleRate = options.sampleRate ?? 48000;
-  const total = blocks * SAMPLES_PER_BLOCK;
+  const quantum = options.renderQuantumSize ?? 128;
+  const total = blocks * quantum;
 
-  const { driver } = await compile(processor, { sampleRate });
+  const { driver } = await compile(processor, { sampleRate, renderQuantumSize: quantum });
   const instance = await driver.instantiate();
 
   const inPorts = instance.declarations.filter((d) => d.kind === "audioInput");
@@ -56,17 +58,17 @@ export async function render<C>(
     outputs[p.name] = Array.from({ length: p.channels }, () => new Float32Array(total));
   }
 
-  const scratch = new Float32Array(SAMPLES_PER_BLOCK);
-  const dest = new Float32Array(SAMPLES_PER_BLOCK);
+  const scratch = new Float32Array(quantum);
+  const dest = new Float32Array(quantum);
 
   for (let b = 0; b < blocks; b++) {
-    const off = b * SAMPLES_PER_BLOCK;
+    const off = b * quantum;
 
     for (const p of inPorts) {
       const channels = options.inputs?.[p.name] ?? [];
       for (let c = 0; c < p.channels; c++) {
         const src = channels[c];
-        for (let s = 0; s < SAMPLES_PER_BLOCK; s++) {
+        for (let s = 0; s < quantum; s++) {
           scratch[s] = src === undefined ? 0 : (src[off + s] ?? 0);
         }
         instance.writeInput(p.name, c, scratch);

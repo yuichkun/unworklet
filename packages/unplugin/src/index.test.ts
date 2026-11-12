@@ -314,14 +314,18 @@ test("emitted asset name omits the `.processor` suffix when present and keeps th
 // 5-E = 4 metadata artifact JSON emit
 // ─────────────────────────────────────────────────────────────────────────
 
-test("by default only the WASM asset + worklet entry chunk are emitted (analysis JSONs are opt-in, issue #40)", async () => {
+test("by default only the WASM asset, worklet entry and compile worker are emitted (analysis JSONs are opt-in, issue #40)", async () => {
   // The graph DAG scales with build-time-unrolled loops (a ~270 MB graph.json
   // in dist/ was measured in the wild) — diagnostic data must not ride into a
   // deployed bundle unless asked for.
   const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
 
   const names = ctx.calls.map((c) => c.name).sort((a, b) => a.localeCompare(b));
-  expect(names).toEqual(["01-stereo-gain.wasm", "01-stereo-gain.worklet"]);
+  expect(names).toEqual([
+    "01-stereo-gain.compile-worker",
+    "01-stereo-gain.wasm",
+    "01-stereo-gain.worklet",
+  ]);
 });
 
 test("`emitAnalysisArtifacts: true` emits the 4 metadata artifact JSON files", async () => {
@@ -331,6 +335,7 @@ test("`emitAnalysisArtifacts: true` emits the 4 metadata artifact JSON files", a
 
   const names = ctx.calls.map((c) => c.name).sort((a, b) => a.localeCompare(b));
   expect(names).toEqual([
+    "01-stereo-gain.compile-worker",
     "01-stereo-gain.diagnostics.json",
     "01-stereo-gain.graph.json",
     "01-stereo-gain.memory.json",
@@ -390,6 +395,45 @@ test("load returns JS that augments the processor with moduleUrl / wasmUrl / pro
   // The build-time sampleRate is baked into the namespace so createNode can
   // reject a context running at a different rate (gh#22). Default = 48000.
   expect(js).toMatch(/bakedSampleRate:\s*48000/);
+});
+
+test("load emits a compile worker chunk and the namespace carries its URL", async () => {
+  const { result, ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+  const worker = ctx.calls.find(
+    (c) =>
+      c.type === "chunk" && (c as { id?: string }).id?.startsWith("\0unworklet-compile-worker:"),
+  );
+  expect(worker).toMatchObject({
+    type: "chunk",
+    id: `\0unworklet-compile-worker:${FIXTURE_GAIN_PATH}`,
+    name: "01-stereo-gain.compile-worker",
+  });
+  expect(result as string).toMatch(/compileWorkerUrl:\s*import\.meta\.ROLLUP_FILE_URL_/);
+});
+
+test("the compile worker module serves the processor export the ?worklet load recorded", async () => {
+  const plugin = unworklet();
+  const load = plugin.load as unknown as LoadFn;
+  const ctx = makeMockEmitContext();
+  const workerId = `\0unworklet-compile-worker:${FIXTURE_GAIN_PATH}`;
+  // Nothing recorded yet: the id is not served.
+  expect(await load.call(ctx, workerId)).toBeNull();
+  await load.call(ctx, `${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`);
+  const code = (await load.call(ctx, workerId)) as string;
+  expect(code).toContain(
+    `import { stereoGain as __unworkletProcessor } from ${JSON.stringify(FIXTURE_GAIN_PATH)};`,
+  );
+  expect(code).toContain('import workletRuntime from "@unworklet/core/worklet-runtime";');
+  expect(code).toContain('import { serveCompileRequests } from "@unworklet/core/compile-worker";');
+  expect(code).toContain("serveCompileRequests(__unworkletProcessor, { workletRuntime });");
+  // A revision query does not change the module.
+  expect(await load.call(ctx, `${workerId}?v=0123abcd`)).toBe(code);
+});
+
+test("resolveId keeps compile worker ids as they are", () => {
+  const resolveId = unworklet().resolveId as unknown as (source: string) => unknown;
+  const id = `\0unworklet-compile-worker:${FIXTURE_GAIN_PATH}`;
+  expect(resolveId(id)).toBe(id);
 });
 
 test("two source files exporting the same identifier get distinct processorName suffixes", async () => {
@@ -692,14 +736,18 @@ test("emitted schema-hash JSON carries the same hash that compile() returned", a
   expect(JSON.parse(shCall!.source as string)).toEqual({ schemaHash: direct.schemaHash });
 });
 
-test("`emitAnalysisArtifacts: false` suppresses the 4 metadata JSON emits (= wasm + worklet entry only)", async () => {
+test("`emitAnalysisArtifacts: false` suppresses the 4 metadata JSON emits (= wasm, worklet entry and compile worker only)", async () => {
   const { ctx } = await callLoadWithMockContext(`${VIRTUAL_ID_PREFIX}${FIXTURE_GAIN_PATH}`, {
     emitAnalysisArtifacts: false,
   });
 
-  expect(ctx.calls).toHaveLength(2);
+  expect(ctx.calls).toHaveLength(3);
   const names = ctx.calls.map((c) => c.name).sort((a, b) => a.localeCompare(b));
-  expect(names).toEqual(["01-stereo-gain.wasm", "01-stereo-gain.worklet"]);
+  expect(names).toEqual([
+    "01-stereo-gain.compile-worker",
+    "01-stereo-gain.wasm",
+    "01-stereo-gain.worklet",
+  ]);
 });
 
 // ─────────────────────────────────────────────────────────────────────────

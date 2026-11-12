@@ -27,12 +27,12 @@ import wavefile from "wavefile";
 /**
  * What the audio matchers accept: a real `renderOffline` result, or a
  * hand-built result-shaped object. The matchers read outputs / events / state
- * / sampleRate only, so the render-health `diagnostics` block is optional here
- * — a fixture built in a test (a documented pattern) does not have to invent
- * one.
+ * / sampleRate only, so the render-health `diagnostics` block and the
+ * `renderQuantumSize` are optional here — a fixture built in a test (a
+ * documented pattern) does not have to invent them.
  */
-export type RenderResultLike = Omit<RenderOfflineResult, "diagnostics"> &
-  Partial<Pick<RenderOfflineResult, "diagnostics">>;
+export type RenderResultLike = Omit<RenderOfflineResult, "diagnostics" | "renderQuantumSize"> &
+  Partial<Pick<RenderOfflineResult, "diagnostics" | "renderQuantumSize">>;
 
 export type AudioMatchOptions = {
   /**

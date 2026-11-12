@@ -74,14 +74,15 @@ function renderOffline<C>(
 `RenderOfflineConfig`:
 
 - `sampleRate: number`
-- `duration: number` — seconds; rounded UP to a 128-sample block (`SAMPLES_PER_BLOCK=128`, [cite: packages/core/src/dsl/constants.ts :: `export const SAMPLES_PER_BLOCK = 128 as const;`]).
+- `duration: number` — seconds; rounded UP to a whole number of render quanta.
+- `renderQuantumSize?: number` — samples per `process()` call (default 128), as an `AudioContext` created with a `renderSizeHint` renders. The processor is compiled for it (`ctx.renderQuantumSize`); a positive integer, else `compile` throws `TypeError`.
 - `inputs?: Record<string, Float32Array[]>` — key = `audioInput({name})` port; value = per-channel arrays.
 - `params?: Record<string, number[]>` — key = `param.named(...)`. `[]` / omitted = declared default; length 1 = constant; length > 1 = per-sample automation.
-- `messages?: { name: string; payload: unknown; atQuantum?: number }[]` — main→worklet (block index, default 0).
+- `messages?: { name: string; payload: unknown; atQuantum?: number }[]` — main→worklet (index of the `renderQuantumSize`-sample call, default 0).
 - `events?: { name: string; payload: unknown; atSample: number }[]` — inbound events / MIDI; `atSample` is ABSOLUTE.
 - `profile?: string`, `restore?: Uint8Array` (initial-state injection + migration).
 
-Duration rounds up to whole 128-sample quanta. Durations expressed as an exact
+Duration rounds up to whole quanta of `renderQuantumSize` samples. Durations expressed as an exact
 quantum sample count divided by the sample rate retain that count despite floating-point
 roundoff. Rounding compares the original duration with that sample-count/rate
 boundary, without an epsilon: even the next representable duration above a boundary
@@ -90,9 +91,10 @@ rounds up to another quantum.
 `RenderOfflineResult`:
 
 - `outputs: Record<string, Float32Array[]>` — per `audioOutput({name})` port.
-- `events: { name: string; payload: unknown; atSample: number }[]` — emitted (worklet→main + `midiOutput`). `atSample` is BLOCK-LOCAL (0..127), NOT absolute. Outbound event and MIDI drains preserve order and terminate across signed 32-bit ring-counter wrap.
+- `events: { name: string; payload: unknown; atSample: number }[]` — emitted (worklet→main + `midiOutput`). `atSample` is BLOCK-LOCAL (0..renderQuantumSize − 1), NOT absolute. Outbound event and MIDI drains preserve order and terminate across signed 32-bit ring-counter wrap.
 - `state: Uint8Array` — end-of-render snapshot blob (persistent slots).
 - `sampleRate: number` — carried through from config.
+- `renderQuantumSize: number` — samples per call the render ran at.
 - `diagnostics.scrubbedSamples: number` — output samples the compiled processor's
   non-finite scrub replaced with 0 (a NaN / ±Inf the DSP produced: `0/0`, `x/0`,
   a runaway accumulator). `0` for a healthy render; assert it when a processor
@@ -389,8 +391,11 @@ gate false. The browser regression verifies an actual emitted worklet bundle wit
 the checker removed and no diagnostic for the same injected malformed header,
 including when a realm global is true. These guarantees concern the Vite plugin
 pipeline. A standalone packed core runtime or `@unworklet/lang/browser` Blob is
-not covered by that production-removal guarantee. The packed-consumer matrix covers
-dev and production on Vite 7.3.5 and 8.0.16.
+not covered by that production-removal guarantee. A node that `createNode`
+compiles for another sample rate or render quantum also runs from a Blob, with
+the inline runtime of `@unworklet/core/worklet-runtime`; the dev replacement does
+not reach it, so its checks stay off, in dev as in production. The packed-consumer
+matrix covers dev and production on Vite 7.3.5 and 8.0.16.
 
 Sources: `packages/unplugin/src/selfcheck-define.ts`,
 `packages/unplugin/src/selfcheck.browser.test.ts`,

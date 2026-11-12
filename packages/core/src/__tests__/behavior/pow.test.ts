@@ -10,7 +10,7 @@
 
 import { expect, test } from "vite-plus/test";
 
-import { SAMPLES_PER_BLOCK } from "../../dsl/constants.ts";
+import { DEFAULT_RENDER_QUANTUM_SIZE } from "../../dsl/constants.ts";
 import { f32, f64, i32 } from "../../dsl/constructors.ts";
 import { audioInput, audioOutput } from "../../dsl/declarations.ts";
 import { forSample } from "../../dsl/loop.ts";
@@ -29,9 +29,9 @@ async function run(
   pairs: readonly Pair[],
   build: (base: Node<"f32">, exponent: Node<"f32">) => Node<"f32"> = pow,
 ): Promise<Outcome[]> {
-  const blocks = Math.ceil(pairs.length / SAMPLES_PER_BLOCK);
-  const base = new Float32Array(blocks * SAMPLES_PER_BLOCK);
-  const exponent = new Float32Array(blocks * SAMPLES_PER_BLOCK);
+  const blocks = Math.ceil(pairs.length / DEFAULT_RENDER_QUANTUM_SIZE);
+  const base = new Float32Array(blocks * DEFAULT_RENDER_QUANTUM_SIZE);
+  const exponent = new Float32Array(blocks * DEFAULT_RENDER_QUANTUM_SIZE);
   pairs.forEach(([b, e], k) => {
     base[k] = b;
     exponent[k] = e;

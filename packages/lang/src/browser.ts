@@ -16,7 +16,8 @@
  * plugin, no bundler lock-in).
  */
 import { compile, emitWorkletModuleSource, extractWorkletMeta } from "@unworklet/core";
-import type { CompiledProcessor } from "@unworklet/core";
+import type { CompileOptions, CompiledProcessor } from "@unworklet/core";
+import { makeWorkletNamespaceFromMeta } from "@unworklet/core/worklet";
 
 import { lowerToProcessor as lowerWith } from "./eval-lowered.ts";
 import type { FsSnapshot } from "./program.ts";
@@ -42,12 +43,22 @@ export function lowerToProcessor(source: string): CompiledProcessor<unknown> {
 /**
  * Compile a `.uwk.ts` source string to a playable processor in the browser.
  * Pass the result straight to `createNode(ctx, proc)`.
+ *
+ * `options` is the compile target — pass the context's values,
+ * `{ sampleRate: ctx.sampleRate, renderQuantumSize: ctx.renderQuantumSize ?? 128 }`
+ * (defaults 48000 and 128). `createNode` rejects a context whose rate or render
+ * quantum differs from the target.
  */
-export async function compileSource(source: string): Promise<CompiledProcessor<unknown>> {
+export async function compileSource(
+  source: string,
+  options: CompileOptions = {},
+): Promise<CompiledProcessor<unknown>> {
   const processor = lowerToProcessor(source);
-  const { wasm, sampleRate } = await compile(processor);
+  const result = await compile(processor, options);
+  const { wasm, sampleRate } = result;
+  // The worklet and the node run on the layout of the graph these bytes came from.
   const meta = extractWorkletMeta(
-    (processor as unknown as { graph: Parameters<typeof extractWorkletMeta>[0] }).graph,
+    result.graph as unknown as Parameters<typeof extractWorkletMeta>[0],
   );
   const processorName = `uwk-runtime-${counter++}`;
   const moduleSource = emitWorkletModuleSource(meta, {
@@ -58,8 +69,11 @@ export async function compileSource(source: string): Promise<CompiledProcessor<u
   const wasmUrl = URL.createObjectURL(new Blob([wasm as BlobPart], { type: "application/wasm" }));
   return {
     ...(processor as object),
+    // Snapshots and restores key to the compiled slot schema: a declaration sized
+    // from the target's rate or quantum differs from the eager 48000 Hz / 128 one.
+    schemaHash: result.schemaHash,
     worklet: {
-      ...(processor as unknown as { worklet: object }).worklet,
+      ...makeWorkletNamespaceFromMeta(meta),
       moduleUrl,
       wasmUrl,
       processorName,

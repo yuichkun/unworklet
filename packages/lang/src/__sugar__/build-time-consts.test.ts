@@ -351,19 +351,19 @@ test("number const + number const (both JS) inside an outer node add — inner a
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// 9. SAMPLES_PER_BLOCK / CAPACITY_* — these are number-literal-typed ambients;
+// 9. CAPACITY_* — these are number-literal-typed ambients;
 //    arithmetic on them is build-time and must stay JS.
 // ───────────────────────────────────────────────────────────────────────────
 
-test("SAMPLES_PER_BLOCK * 2 stays JS (number-literal const), folds to 256", async () => {
-  const got = await out0("const N = SAMPLES_PER_BLOCK * 2;", W(`${A} + N`), 0);
+test("CAPACITY_128 * 2 stays JS (number-literal const), folds to 256", async () => {
+  const got = await out0("const N = CAPACITY_128 * 2;", W(`${A} + N`), 0);
   expect(got).toBe(add32(fr(0), 256));
 });
 
-test("structural: SAMPLES_PER_BLOCK - 1 ≡ folded literal 127 inside an add", async () => {
+test("structural: CAPACITY_128 - 1 ≡ folded literal 127 inside an add", async () => {
   await expectSameLowering(
-    mono("", W(`${A} + (SAMPLES_PER_BLOCK - 1)`)),
-    mono("", W(`${A}.add(SAMPLES_PER_BLOCK - 1)`)),
+    mono("", W(`${A} + (CAPACITY_128 - 1)`)),
+    mono("", W(`${A}.add(CAPACITY_128 - 1)`)),
   );
 });
 

@@ -1,14 +1,19 @@
 /**
- * Build-time constants exported from `@unworklet/core`.
+ * Build-time constants.
  *
- * - `SAMPLES_PER_BLOCK` — render quantum length fixed by the Web Audio spec.
- *   See `01-dsl.md` §1.7 and `decisions-log.md` Q35.
- * - `CAPACITY_*` — power-of-two ringbuffer capacity tokens for
- *   `event<T>` / `message<T>` / `midiInput` / `midiOutput`.
+ * - `CAPACITY_*` (exported from `@unworklet/core`) — power-of-two ringbuffer
+ *   capacity tokens for `event<T>` / `message<T>` / `midiInput` / `midiOutput`.
  *   See `02-messaging.md` §3 and `decisions-log.md` Q44.
+ * - The rest are internal.
  */
 
-export const SAMPLES_PER_BLOCK = 128 as const;
+/**
+ * Render quantum a compile targets when none is given — the Web Audio default.
+ * Internal: an AudioContext may render in any quantum (`renderSizeHint`), so the
+ * quantum is part of each compile target (`ctx.renderQuantumSize`), not a
+ * library-wide constant.
+ */
+export const DEFAULT_RENDER_QUANTUM_SIZE = 128;
 
 /**
  * Elements one `f32x4` lane window covers — the span a `loadVec` / `storeVec`
@@ -17,6 +22,12 @@ export const SAMPLES_PER_BLOCK = 128 as const;
  * factories and its analyzer backstop.
  */
 export const SIMD_LANE_COUNT = 4 as const;
+
+/**
+ * Largest `forIndex` count: the loop counter is an i32 that must reach `count`.
+ * Internal (not re-exported): the shared bound behind `illegal-forindex-count`.
+ */
+export const FOR_INDEX_MAX_COUNT = 2 ** 31 - 1;
 
 export const CAPACITY_16 = 16 as const;
 export const CAPACITY_32 = 32 as const;

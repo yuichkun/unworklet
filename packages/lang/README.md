@@ -222,21 +222,24 @@ browser, so a `.uwk.ts` source **string** becomes a playable processor at runtim
 import { createNode, replaceProcessor } from "@unworklet/core";
 import { compileSource } from "@unworklet/lang/browser";
 
-const ctx = new AudioContext({ sampleRate: 48000 });
-let node = await createNode(ctx, await compileSource(editor.value));
+const ctx = new AudioContext();
+// compile for the context it will play on: its rate and samples per render quantum
+const target = { sampleRate: ctx.sampleRate, renderQuantumSize: ctx.renderQuantumSize ?? 128 };
+let node = await createNode(ctx, await compileSource(editor.value, target));
 node.outputs.main.connect(ctx.destination);
 
 // recompile the edited source and hot-swap it, live:
 runButton.onclick = async () => {
-  const swapped = await replaceProcessor(node, await compileSource(editor.value));
+  const swapped = await replaceProcessor(node, await compileSource(editor.value, target));
   node = swapped.node;
 };
 ```
 
-`compileSource(source)` bakes 48000 Hz coefficients and returns a `CompiledProcessor`
-ready for `createNode`. Request `new AudioContext({ sampleRate: 48000 })`; a
-different context rate is rejected before loading the worklet module. Browser
-compilation does not accept a sample-rate option.
+`compileSource(source, { sampleRate, renderQuantumSize })` compiles for that
+target (defaults 48000 and 128; `ctx.sampleRate` and `ctx.renderQuantumSize` are
+the values the processor body sees) and returns a `CompiledProcessor` ready for
+`createNode`. Pass the context's values: a context whose rate or render quantum
+differs is rejected before the worklet module loads.
 
 `lowerToProcessor(source)` stops at the processor (no worklet module) for an
 in-browser headless render. (For Node, import `lowerToProcessor` from the root
