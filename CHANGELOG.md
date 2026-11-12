@@ -7,7 +7,15 @@ lockstep, so one entry covers all of them.
 This project is pre-1.0: the minor is the breaking-change axis, matching npm's
 `^0.1.0` range semantics (`^0.1.0` accepts `0.1.x` and refuses `0.2.0`).
 
-## Unreleased
+## 0.6.0 — 2026-11-12
+
+`?worklet` processors play on an `AudioContext` at any sample rate and render
+quantum, and `forIndex` keeps fixed-length loops independent of the quantum.
+This release includes compatibility changes: `SAMPLES_PER_BLOCK` is removed,
+Node 20 and Vite 6 are no longer supported, and several forms that type-checked
+or declared without error but could not work are now rejected. Review the
+migrations below when upgrading from 0.5.x, and update all installed
+`@unworklet/*` packages together to 0.6.0.
 
 ### Breaking
 
@@ -33,8 +41,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   `abs(i32(-7))` or `sin(f64(0.5))`, rather than a result annotation or generic
   argument to select integer or double-precision math. `Node<T> | number`
   inputs return `Node<T> | Node<"f32">`; normalize the operand explicitly when
-  a single result type is required. Runtime behavior is unchanged. This type
-  correction requires the next minor release under the pre-1.0 policy.
+  a single result type is required. Runtime behavior is unchanged.
 
 - **The `.expose(options)` preservation bug fix restores core validation for
   non-literal options.** For example, variable options with
@@ -42,8 +49,7 @@ This project is pre-1.0: the minor is the breaking-change axis, matching npm's
   arguments fail instead of being silently discarded. Use a positive finite
   scalar publish rate, remove buffer publishing (use `node.snapshot()` or publish
   scalar slots), and pass a valid options object. Valid nameless options keep
-  their inferred binding name. This restored validation requires the next minor
-  release under the pre-1.0 compatibility policy.
+  their inferred binding name.
 
 - **`NodeErrorEvent` no longer includes `{ code: "queue-overflow" }`.** The
   runtime never delivered it to `onError`. Remove any `queue-overflow` case and
