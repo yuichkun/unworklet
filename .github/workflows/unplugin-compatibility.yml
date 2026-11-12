@@ -40,7 +40,11 @@ jobs:
             (cd "packages/$package" && vp pm pack --pack-destination "$fixture")
           done
           FIXTURE="$fixture" vp exec node --input-type=module -e 'import { readdirSync, writeFileSync } from "node:fs"; const dependencies = { vite: process.env.VITE_VERSION }; for (const name of ["core", "lang", "unplugin"]) dependencies[`@unworklet/${name}`] = `file:${readdirSync(process.env.FIXTURE).find(file => file.startsWith(`unworklet-${name}-`) && file.endsWith(".tgz"))}`; writeFileSync(`${process.env.FIXTURE}/package.json`, JSON.stringify({ private:true, type:"module", packageManager:"pnpm@11.3.0", dependencies }));'
-          printf 'allowBuilds:\n  esbuild: true\n' > "$fixture/pnpm-workspace.yaml"
+          # @unworklet/unplugin depends on @unworklet/lang. Without this override pnpm
+          # resolves that dependency from the registry rather than the packed tarball:
+          # the check then runs an older lang, and fails outright for an unpublished one.
+          lang_tarball="$(basename "$fixture"/unworklet-lang-*.tgz)"
+          printf 'allowBuilds:\n  esbuild: true\noverrides:\n  "@unworklet/lang": "file:%s"\n' "$lang_tarball" > "$fixture/pnpm-workspace.yaml"
           cd "$fixture"
           vp install
           vp exec node --input-type=module -e 'import { writeFileSync } from "node:fs"; import { createRequire } from "node:module"; import { version } from "vite"; import { strict as assert } from "node:assert"; assert.equal(version, process.env.VITE_VERSION); const pluginRequire = createRequire(import.meta.resolve("@unworklet/unplugin")); assert.ok(pluginRequire.resolve("magic-string")); console.log(`Consumer Vite ${version}; declared magic-string resolves from installed plugin`); writeFileSync(process.env.GITHUB_ENV, `UWK_SELFCHECK_VITE_MODULE=${import.meta.resolve("vite")}\nUWK_SELFCHECK_CONSUMER_ROOT=${process.cwd()}\n`, {flag:"a"});'
