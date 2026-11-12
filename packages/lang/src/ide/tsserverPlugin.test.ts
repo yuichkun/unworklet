@@ -79,7 +79,7 @@ const LIB_SUBGRAPH = `export const onepole = defineSubgraph((coef: Node<"f32">) 
 const SUBGRAPH_CONSUMER = `import { onepole } from "./lib-subgraph.uwk.ts";
 const input = audioInput({ channels: 1, name: "main" });
 const out = audioOutput({ channels: 1, name: "main" });
-const lpf = instantiate(onepole, 0.2, { name: "lpf" });
+const lpf = instantiate(onepole, f32(0.2), { name: "lpf" });
 process(() => {
   forSample((i) => {
     out.ch(0)[i] = lpf.tick(input.ch(0)[i]);

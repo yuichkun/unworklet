@@ -6,14 +6,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  node20:
-    name: Packed lang on Node 20.0.0
+  minimum-node:
+    name: Packed lang on Node 22.18.0
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20.0.0"
+          node-version: "22.18.0"
       - name: Record consumer runtime
         run: echo "UWK_TEST_NODE=$(command -v node)" >> "$GITHUB_ENV"
       - uses: voidzero-dev/setup-vp@v1

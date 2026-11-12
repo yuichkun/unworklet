@@ -234,22 +234,26 @@ export function f(): void {
 `,
   );
 
-  // instantiate(subgraph, ...args) constrains the lambda args to the subgraph's
-  // declared tuple (each Node arg also accepting its liftable primitive — the
-  // sugar `instantiate(sg, 0.5)`), plus an optional trailing options. A wrong
-  // type and a missing arg are compile errors; a plain-number subgraph arg
-  // stays a plain number.
+  // instantiate(subgraph, ...args) takes the subgraph's declared tuple plus an
+  // optional trailing options. A Node arg takes a Node: a bare number or
+  // boolean is a compile error, like a wrong type or a missing arg. A
+  // plain-number subgraph arg takes a number.
   writeFileSync(
     path.join(dir, "instantiate-args.ts"),
-    `import { instantiate, defineSubgraph, f32 } from "@unworklet/core";
+    `import { instantiate, defineSubgraph, bool, f32 } from "@unworklet/core";
 import type { Node } from "@unworklet/core";
 const onepole = defineSubgraph((coef: Node<"f32">) => ({ value: coef }));
+const gate = defineSubgraph((open: Node<"bool">) => ({ value: open }));
 const peaking = defineSubgraph((sr: number) => ({ rate: f32(sr) }));
 export function f(): void {
   instantiate(onepole, f32(0.5), { name: "lp" });
-  instantiate(onepole, 0.5);
+  instantiate(gate, bool(true));
   instantiate(peaking, 48000);
-  // @ts-expect-error wrong arg type (string where Node<"f32"> / number expected)
+  // @ts-expect-error a Node arg takes a Node, not a bare number
+  instantiate(onepole, 0.5);
+  // @ts-expect-error a Node arg takes a Node, not a bare boolean
+  instantiate(gate, true);
+  // @ts-expect-error wrong arg type (string where Node<"f32"> expected)
   instantiate(onepole, "nope");
   // @ts-expect-error missing required arg
   instantiate(onepole);

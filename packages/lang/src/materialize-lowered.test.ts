@@ -1,16 +1,9 @@
 /**
  * `materializeLowered` writes the temp modules that `loadUwkProcessor` (and the
- * Vite plugin's dev path) hand to a dynamic `import()`. Those temps must be
- * loadable by plain Node across the range `packages/lang/package.json` declares
- * it supports — `"node": ">=20"`.
- *
- * That is not a given: the lowered output is TypeScript, and Node only learned to
- * strip types natively in 22.18 / 23.6. On Node 20 an `import()` of a `.ts` file
- * throws `ERR_UNKNOWN_FILE_EXTENSION` before the processor is ever evaluated.
- * Nothing in CI catches it — every job pins Node 24 — so the regression is
- * pinned here instead, by running the produced temp in a child process with
- * native stripping switched off. That is precisely what Node 20 offers: no
- * stripping at all.
+ * Vite plugin's dev path) hand to a dynamic `import()`. The lowered output is
+ * TypeScript, but the temps must load without Node's native type stripping,
+ * which a process can switch off. These tests import the produced temp in a
+ * child process with stripping switched off.
  *
  * Reported by @codex on #43.
  */
@@ -52,7 +45,7 @@ function importWithoutTypeStripping(temp: string): { code: number; output: strin
   return { code: r.status ?? -1, output: `${r.stdout}${r.stderr}` };
 }
 
-test("a single-file processor's temp loads on a Node without native type-stripping (= Node 20)", async () => {
+test("a single-file processor's temp loads on a Node without native type-stripping", async () => {
   dir = mkdtempSync(path.join(LANG, ".mat-single-"));
   const src = path.join(dir, "synth.uwk.ts");
   writeFileSync(
@@ -151,11 +144,9 @@ process(() => {
 });`,
   );
 
-  // Node 20 does not merely disable the capability — `process.features.typescript`
-  // is ABSENT there, so it reads `undefined`, not `false`. Both shapes are covered:
-  // deleting the property (what Node 20 actually looks like) and a modern Node with
-  // stripping switched off. Testing only the latter is what let a `=== false` check
-  // pass while missing the runtime it was written for.
+  // A runtime without the capability may not define `process.features.typescript`
+  // at all, so both shapes are covered: the property deleted, and stripping
+  // switched off.
   const body = `
     const { materializeLowered } = await import(${JSON.stringify(pathToFileURL(path.join(LANG, "dist/index.mjs")).href)});
     try {
@@ -164,10 +155,7 @@ process(() => {
     } catch (e) { console.log("THREW:" + e.message); }
   `;
   const cases: [string, string[]][] = [
-    [
-      "absent (Node 20)",
-      ["--input-type=module", "-e", `delete process.features.typescript;${body}`],
-    ],
+    ["absent", ["--input-type=module", "-e", `delete process.features.typescript;${body}`]],
     ["disabled", ["--no-experimental-strip-types", "--input-type=module", "-e", body]],
   ];
   for (const [label, args] of cases) {
@@ -348,7 +336,7 @@ test("a helper needing a real TypeScript transform is reported, not left as ERR_
   // Node" way out can still end in a Node-level syntax error the consumer has no
   // reason to connect with this toolchain. Reported by @codex on #43.
   //
-  // Runs in a child process for the same reason the Node-20 cases above do: the
+  // Runs in a child process for the same reason the cases above do: the
   // `import()` has to be Node's. In-process it would be Vite's module runner,
   // which transforms an enum happily and never reaches the failure.
   dir = mkdtempSync(path.join(LANG, ".mat-enum-"));

@@ -171,7 +171,7 @@ test("Vite composes the runtime edit map with its TypeScript transform", async (
   }
 });
 
-for (const version of ["6.4.3", "7.3.5", "8.0.16"]) {
+for (const version of ["7.3.5", "8.0.16"]) {
   test(`optimizer self-check define follows Vite ${version}'s compiler without unrelated defines`, async () => {
     const { selfcheckOptimizerOptions } = await import("./selfcheck-define.ts");
     expect(selfcheckOptimizerOptions(version)).toEqual(

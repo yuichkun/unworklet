@@ -14,11 +14,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Packed Vite 6 production is tracked separately in issue #165.
-          - vite: 6.4.3
-            boundary: dev
-            tests: serve.*packed
-            compileWorkerTests: dev server
           - vite: 7.3.5
             boundary: dev+production
             tests: packed

@@ -1485,7 +1485,6 @@ export async function createNode<C>(
    */
   const KNOWN_ERROR_CODES = new Set<NodeErrorEvent["code"]>([
     "wasm-trap",
-    "queue-overflow",
     "sab-unavailable",
     "block-length-mismatch",
     "worklet-initialize-not-called",

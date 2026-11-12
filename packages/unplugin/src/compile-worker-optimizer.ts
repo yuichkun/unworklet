@@ -26,8 +26,8 @@ export const COMPILE_WORKER_DEPS = [
  *   the worker is started from a URL the scan cannot see, and discovering its
  *   imports only when it loads makes Vite re-optimize and reload the page.
  * - Binaryen, which the compile worker imports, evaluates with a top-level
- *   await. The esbuild optimizer (Vite 6 and 7) keeps the app's target but is
- *   told the browser supports that one feature: Vite 6's default target
+ *   await. The esbuild optimizer (Vite 7) keeps the app's target but is told
+ *   the browser supports that one feature: a target older than top-level await
  *   (chrome87, safari14, …) otherwise rejects it and the optimizer, and with it
  *   the dev server, fails. Vite 8 optimizes with Rolldown.
  */

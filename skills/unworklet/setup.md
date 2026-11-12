@@ -40,7 +40,7 @@ npm install -D @unworklet/offline @unworklet/test
   lowering resolves it transitively, but the editor plugin
   `@unworklet/lang/typescript-plugin` and the `unworklet-tsc` bin
   [cite: packages/lang/package.json :: `"unworklet-tsc": "./dist/unworklet-tsc.mjs"`] must resolve from _your_ project.
-- `vite` (`^6 || ^7 || ^8`) and `@unworklet/core` are `@unworklet/unplugin` peer
+- `vite` (`^7 || ^8`) and `@unworklet/core` are `@unworklet/unplugin` peer
   deps — your app already brings both. (`packages/unplugin/package.json` →
   `peerDependencies`)
 
